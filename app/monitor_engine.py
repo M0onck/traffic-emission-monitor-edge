@@ -226,50 +226,31 @@ class TrafficMonitorEngine:
         )
         return self.visualizer.render(frame, detections, label_data_list)
 
-    def _handle_plate_classification(self, frame, frame_id, detections, landmarks_dict):
-        """
-        [混合架构优化] 处理车牌分类。
-        直接使用底层传来的关键点进行透视变换，并在 Python 层推理轻量级分类模型。
-        """
-        from perception.plate_classifier.core.tools_process import get_rotate_crop_image
+    def _handle_plate_classification(self, frame, frame_id, detections):
+        """修正：将车身裁剪出来交给 Python 层的 y5fu 处理"""
         img_h, img_w = frame.shape[:2]
-        
-        # 降频触发以节省 CPU 算力
         if frame_id % self.cfg.OCR_INTERVAL != 0:
             return
 
         for tid, box in zip(detections.tracker_id, detections.xyxy):
-            # 1. 冷却机制
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
                 continue
             
-            # 2. 几何筛选 (仅对画面中央、正对镜头且置信度高的目标透视)
             x1, y1, x2, y2 = map(int, box)
             cx, cy = (x1+x2)/2, (y1+y2)/2
             if not (0.2*img_w < cx < 0.8*img_w and 0.4*img_h < cy < 0.95*img_h):
                 continue
-
-            # 3. 提取 4 个车牌关键点
-            if tid not in landmarks_dict:
-                continue
-            points = landmarks_dict[tid]
+                
+            # 裁剪整辆车的小图
+            vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
             
-            try:
-                # 4. 透视变换 (Python层执行，调用 OpenCV)
-                pad_img = get_rotate_crop_image(frame, points)
-                
-                # 5. 推理轻量级分类模型 (如 96x96 的车牌颜色分类)
-                # 假设 plate_classifier 实现了 predict(img) 返回颜色和置信度
-                color_type, conf = self.plate_classifier.predict(pad_img)
-                
+            if vehicle_crop.size > 0:
+                # 调用恢复双模型的 Pipeline
+                color_type, conf, _ = self.plate_classifier.process(vehicle_crop)
                 if conf > self.cfg.OCR_CONF_THRESHOLD:
                     self.registry.add_plate_history(tid, color_type, 1.0, conf)
                     self.plate_cache[tid] = color_type
                     self.plate_retry[tid] = frame_id
-                    
-            except Exception as e:
-                # 忽略因关键点不准确导致的透视变换失败
-                pass
 
     def _handle_exits(self, frame_id):
         """

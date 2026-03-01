@@ -1,0 +1,95 @@
+{
+  "system": {
+    "video_path": "video/input_video.MP4",
+    "target_video_path": "video/output_video.MP4",
+    "db_path": "data/traffic_data.db",
+    "fps": 30,
+    "debug_mode": true
+  },
+  "switches": {
+    "enable_motion": true,
+    "enable_ocr": true,
+    "enable_emission": true
+  },
+  "kinematics": {
+    "speed_window": 11,
+    "accel_window": 15,
+    "border_margin": 20,
+    "min_tracking_frames": 10,
+    "max_physical_accel": 6.0,
+    "min_survival_frames": 30,
+    "exit_threshold": 30
+  },
+  "ocr_params": {
+    "min_plate_area": 3000,
+    "retry_cooldown": 5,
+    "run_interval": 5,
+    "confidence_threshold": 0.4
+  },
+  "yolo_classes": {
+    "yolo_class_car": 2,
+    "yolo_class_bus": 5,
+    "yolo_class_truck": 7
+  },
+  "emission_params": {
+    "braking_decel_threshold": -0.89,
+    "idling_speed_threshold": 0.45,
+    "low_speed_threshold": 11.17,
+    "accel_mild_threshold": 0.25,
+    "accel_hard_threshold": 1.50,
+    "mass_factor_ev": 1.25,
+    "road_grade_percent": 0.0
+  },
+  "vsp_coefficients": {
+    "car":   {"a_m": 0.1564, "b_m": 0.0020, "c_m": 0.00049},
+    "bus":   {"a_m": 0.1000, "b_m": 0.0000, "c_m": 0.00030},
+    "truck": {"a_m": 0.0920, "b_m": 0.0000, "c_m": 0.00021},
+    "default": {"a_m": 0.1564, "b_m": 0.0020, "c_m": 0.00049}
+  },
+  "brake_wear_coefficients": {
+    "CAR": {
+      "0": 0.600, "1": 0.026, "11": 0.011, "21": 0.005,
+      "33": 0.002, "35": 0.000, "37": 0.000
+    },
+    "BUS": { 
+      "0": 1.900, "1": 0.030, "11": 0.023, "21": 0.010,
+      "33": 0.004, "35": 0.000, "37": 0.000
+    },
+    "TRUCK": { 
+      "0": 1.900, "1": 0.030, "11": 0.028, "21": 0.013,
+      "33": 0.005, "35": 0.000, "37": 0.000
+    }
+  },
+  "tire_wear_coefficients": {
+    "CAR": {
+      "0": 0.650, "1": 0.000, "11": 0.050, "21": 0.180,
+      "33": 0.180, "35": 0.450, "37": 1.300
+    },
+    "BUS": {
+      "0": 2.500, "1": 0.000, "11": 0.200, "21": 0.720,
+      "33": 0.720, "35": 1.800, "37": 5.200
+    },
+    "TRUCK": {
+      "0": 3.000, "1": 0.000, "11": 0.250, "21": 0.900,
+      "33": 0.900, "35": 2.200, "37": 6.500
+    }
+  },
+  "type_map": {
+    "car,Blue": "Car-gasoline",
+    "bus,Blue": "Bus-gasoline",
+    "truck,Blue": "Truck-gasoline",
+    "car,Yellow": "Car-diesel",
+    "bus,Yellow": "Bus-diesel",
+    "truck,Yellow": "Truck-diesel",
+    "car,Green": "Car-electric",
+    "bus,Green": "Bus-electric",
+    "truck,Green": "Truck-electric",
+    "Default_Car": "LDV-gasoline",
+    "Default_Heavy": "HDV-diesel"
+  },
+  "quality_control": {
+    "min_valid_trajectory_points": 15,
+    "min_survival_frames": 30,
+    "min_moving_distance_m": 2.0
+  }
+}

@@ -19,11 +19,13 @@ from ui.renderer import Visualizer
 from ui.calibration_window import CalibrationUI
 from ui.console_reporter import Reporter
 
-# --- 新增的边缘端感知组件 ---
-# 注意：假设之前重构的 GStreamer 管理器存放在 perception.camera 中
-from perception.camera import GstPipelineManager
+# --- 新增/保留的边缘端感知组件 ---
+# 1. 硬件加速管道管理器
+from perception.gst_pipeline import GstPipelineManager
+# 2. 恢复保留的车牌检测与分类模型 (运行在 Python 端 CPU)
+from perception.plate_classifier.core.multitask_detect import MultiTaskDetectorORT
 from perception.plate_classifier.core.classification import ClassificationORT
-from perception.plate_classifier.pipeline import EdgePlateClassifier
+from perception.plate_classifier.pipeline import EdgePlateClassifierPipeline
 
 def main():
     SystemOptimizer.set_cpu_affinity("main")
@@ -56,7 +58,7 @@ def main():
         # 共享 OpMode 计算器
         opmode_calculator = MovesOpModeCalculator(config=cfg._e)
 
-        # 刹车模型配置
+        # 刹车与轮胎模型配置
         brake_emission_config = {
             "braking_decel_threshold": cfg.BRAKING_DECEL_THRESHOLD,
             "idling_speed_threshold": cfg.IDLING_SPEED_THRESHOLD,
@@ -65,7 +67,6 @@ def main():
             "brake_wear_coefficients": cfg.BRAKE_WEAR_COEFFICIENTS 
         }
 
-        # 轮胎模型配置
         tire_emission_config = {
             "tire_wear_coefficients": cfg.TIRE_WEAR_COEFFICIENTS,
             "emission_params": cfg._e
@@ -79,21 +80,20 @@ def main():
                 "border_margin": cfg.BORDER_MARGIN,
                 "min_tracking_frames": cfg.MIN_TRACKING_FRAMES,
                 "max_physical_accel": cfg.MAX_PHYSICAL_ACCEL,
-                "poly_order": cfg.KINEMATICS_POLY_ORDER
+                "poly_order": getattr(cfg, "KINEMATICS_POLY_ORDER", 3)
             }
         }
 
-        # --- 初始化 GStreamer 管道 ---
+        # --- 初始化 GStreamer 管道 (使用官方 YOLOv8 抓车辆) ---
         gst_config = {
             "video_path": cfg.VIDEO_PATH,
-            "hef_path": getattr(cfg, "HEF_PATH", "cpp_postprocess/y5fu_320x_sim.hef"),
-            "post_so_path": getattr(cfg, "POST_SO_PATH", "cpp_postprocess/build/liby5fu_post.so")
+            "hef_path": getattr(cfg, "HEF_PATH", "resources/yolov8m.hef"),
+            "post_so_path": getattr(cfg, "POST_SO_PATH", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
         }
         camera_manager = GstPipelineManager(gst_config)
 
         # --- 组件字典大换血 ---
         components = {
-            # 移除了 'model' 和 'tracker'，替换为硬件管道管理器
             'camera': camera_manager,
             'smoother': sv.DetectionsSmoother(length=3),
             'transformer': ViewTransformer(source_points, target_points),
@@ -125,10 +125,13 @@ def main():
             components['tire_model'] = TireEmissionModel(tire_emission_config, opmode_calculator)
             
         if cfg.ENABLE_OCR:
-            # 替换原有的 AsyncOCRManager 为边缘端轻量级分类器
-            onnx_path = getattr(cfg, "LITEMODEL_PATH", "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx")
-            ort_classifier = ClassificationORT(onnx_path)
-            components['plate_classifier'] = EdgePlateClassifier(ort_classifier)
+            # --- 恢复双模型架构的轻量级调用 (Python端) ---
+            y5fu_path = getattr(cfg, "Y5FU_PATH", "perception/plate_classifier/models/y5fu_320x_sim.onnx")
+            litemodel_path = getattr(cfg, "LITEMODEL_PATH", "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx")
+            
+            detector = MultiTaskDetectorORT(y5fu_path)
+            classifier = ClassificationORT(litemodel_path)
+            components['plate_classifier'] = EdgePlateClassifierPipeline(detector, classifier)
 
         engine = TrafficMonitorEngine(cfg, components)
         engine.run()

@@ -1,34 +1,26 @@
 traffic-emission-monitor/
-├── 🟡 bootstrap.py                  # 添加 GStreamer 初始化代码
-├── 🟡 config.json                   # 更改模型路径为 .hef 路径，配置管道参数
-├── domain/                          # 🟢 领域驱动层（完全无硬件依赖，全部保留）
-│   ├── physics/                     
-│   │   ├── brake_emission_model.py  # 🟢 保持不变
-│   │   ├── opmode_calculator.py     # 🟢 保持不变
-│   │   ├── tire_emission_model.py   # 🟢 保持不变
-│   │   └── vsp_calculator.py        # 🟢 保持不变
-│   └── vehicle/                     # 🟢 保持不变
+├── ✅ bootstrap.py                  # [已完成] 替换感知组件，恢复双模型管线。
+├── 🟡 config.json                   # [待修改] 需增加 HEF_PATH、POST_SO_PATH 等边缘端特有字段。
+├── domain/                          # 🟢 [保留不变] 领域驱动层全部保留。
 ├── infra/
-│   ├── ⚪ concurrency/ocr_worker.py # 废弃：因为新的分类器直接处理车牌类型，无需完整 OCR
-│   ├── 🟢 config/loader.py          # 保持不变
-│   ├── 🟢 store/                    # 数据库逻辑保持不变
-│   └── 🟡 sys/process_optimizer.py  # 微调：适配树莓派的 CPU 核心绑定（如将 GStreamer 绑在大核）
+│   ├── ⚪ concurrency/ocr_worker.py # [已废弃] 完全删除，由主线程的小图直接跑 ONNX 替代。
+│   ├── 🟡 config/loader.py          # [待修改] 配合 config.json，新增特有字段的解析读取。
+│   ├── 🟢 store/                    # [保留不变] 数据库逻辑保留。
+│   └── 🟡 sys/process_optimizer.py  # [待修改] 需重构以绑定树莓派 5 的 4 个 Cortex-A76 核心。
 ├── perception/
-│   ├── 🔴 camera.py                 # 重构为 GStreamer 管道管理器 (GstPipelineManager)
-│   ├── 🟡 kinematics_estimator.py   # 微调：移除内部追踪逻辑，改为接收 HailoTracker 传来的 ID
-│   ├── ⚪ math/kalman_filter.py     # 废弃：硬件层的 hailotracker 已内置更高效的追踪
-│   ├── 🟢 math/geometry.py          # 保持不变
-│   ├── 🟡 lpr_adaptor.py            # 微调：对接分类结果
-│   ├── plate_classifier/            # 🔴 推理核心目录（大改）
-│   │   ├── 🔴 core/multitask_detect.py  # 移除：ONNX 推理和 NMS 被 C++ 后处理库取代
-│   │   ├── 🔴 core/classification.py    # 保留并修改：只留下轻量级的 ONNX 运行逻辑
-│   │   ├── 🟢 core/tools_process.py     # 保留核心：关键点透视变换 `get_rotate_crop_image` 需要继续在 Python 层使用
-│   │   └── 🔴 pipeline.py               # 重构：接收 appsink 数据，执行透视变换和分类
-│   └── cpp_postprocess/             # 🆕 新增：存放 C++ 后处理源码和 CMakeLists.txt
-│       ├── y5fu_postprocess.cpp
-│       └── CMakeLists.txt
-├── 🔴 app/monitor_engine.py         # 重构：主循环由“主动拉流”改为“从 appsink 拉取并解析 Metadata”
+│   ├── ✅ gst_pipeline.py           # [已完成] 新建，作为底层车流抓取的发动机 (代替原 camera.py)。
+│   ├── ✅ kinematics_estimator.py   # [已完成] 剔除了卡尔曼滤波，降级为轻量级坐标差分。
+│   ├── ⚪ math/kalman_filter.py     # [已废弃] 硬件已包含过滤机制，直接删除。
+│   ├── 🟢 math/geometry.py          # [保留不变] 透视变换工具保留。
+│   ├── ⚪ lpr_adaptor.py            # [已废弃] 分类逻辑已打通，此中间件可删除。
+│   ├── plate_classifier/            # 🟡 推理核心目录 (待最后修补)
+│   │   ├── 🟢 core/multitask_detect.py  # [撤销重构，保留不变] 恢复保留！需要在 Python 端抓车牌四个角点。
+│   │   ├── 🟢 core/classification.py    # [保留不变] 依然用于颜色分类。
+│   │   ├── 🟢 core/tools_process.py     # [保留不变] 透视变换所需。
+│   │   └── 🟡 pipeline.py               # [待修改] 替换为我在上一次对话中发给你的修正版 `EdgePlateClassifierPipeline`。
+│   └── ⚪ cpp_postprocess/             # [方案取消！] 直接使用 Hailo 官方 yolov8 的 .so 库即可，不用自己写 C++！
+├── ✅ app/monitor_engine.py         # [已完成] 改为 appsink 被动接收模式，并修正了传入车辆裁剪小图的逻辑。
 └── ui/
-    ├── 🟢 calibration_window.py     # 保持不变
-    ├── 🟢 console_reporter.py       # 保持不变
-    └── 🟡 renderer.py               # 微调：改为解析 Hailo Metadata 来画框，而不是解析原有模型的张量
+    ├── 🟢 calibration_window.py     # [保留不变] 
+    ├── 🟢 console_reporter.py       # [保留不变] 
+    └── 🟢 renderer.py               # [好消息：保留不变] 因为数据结构对齐了，可视化层可以直接复用。

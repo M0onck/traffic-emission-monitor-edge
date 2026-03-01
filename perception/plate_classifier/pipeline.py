@@ -1,55 +1,47 @@
 import numpy as np
 from .core.typedef import *
+from .core.tools_process import get_rotate_crop_image
 
-class EdgePlateClassifier:
+class EdgePlateClassifierPipeline:
     """
-    [边缘端适配] 轻量级车牌分类器
-    功能：仅负责对传入的、已经完成透视变换和裁剪的车牌小图进行颜色分类。
-    说明：目标检测和关键点提取已交由底层 Hailo 硬件完成。
+    [边缘端修正版] 车牌识别全流程
+    在 Python 端接收车辆小图，使用 y5fu 找牌，透视变换后用 litemodel 分类。
     """
-    def __init__(self, classifier):
-        # 这里的 classifier 是 core.classification.ClassificationORT 的实例
-        # 检测器 (detector) 已被彻底移除
+    def __init__(self, detector, classifier):
+        # 这里的 detector 就是原版的 MultiTaskDetectorORT (跑 y5fu)
+        # 这里的 classifier 就是原版的 ClassificationORT (跑 litemodel)
+        self.detector = detector
         self.classifier = classifier
 
-    def predict(self, pad_image: np.ndarray) -> tuple[int, float]:
+    def process(self, vehicle_crop: np.ndarray):
         """
-        执行轻量级分类推断
-        Args:
-            pad_image: 经过透视变换后的车牌图像 (通常为 96x96 的 np.ndarray)
-        Returns:
-            (plate_type, confidence): 车牌类型的枚举常数, 置信度得分
+        处理单张车辆裁剪图
         """
-        if len(pad_image.shape) != 3 or pad_image is None:
-            return UNKNOWN, 0.0
+        # 1. 寻找车牌及关键点
+        bboxes, landmarks = self.detector(vehicle_crop)
+        if len(bboxes) == 0:
+            return UNKNOWN, 0.0, None
             
-        # 1. 直接执行分类推断 (调用 ONNXRuntime)
-        cls_result = self.classifier(pad_image)
+        # 取置信度最高的车牌框
+        best_idx = np.argmax(bboxes[:, 4])
+        plate_box = bboxes[best_idx]
+        plate_points = landmarks[best_idx]
         
-        # 2. 优化后的分类映射逻辑（降序寻找合法类型 + 兜底）
+        # 2. 透视变换抠图
+        pad_image = get_rotate_crop_image(vehicle_crop, plate_points)
+        
+        # 3. 车牌分类
+        cls_result = self.classifier(pad_image)
         plate_type = UNKNOWN
         flatten_result = cls_result.flatten()
         sorted_indices = np.argsort(flatten_result)[::-1]
-        
-        # 提取最高得分作为置信度
         confidence = float(flatten_result[sorted_indices[0]])
         
-        for idx in sorted_indices:
-            idx = int(idx)
-            if idx == PLATE_TYPE_YELLOW:
-                # 边缘端简化：由于去除了原先检测器的多类别输出，这里统一映射为单层黄牌。
-                # 如果业务极其依赖单双层区分，后续可以根据传入图片的宽高比 (pad_image.shape) 进行辅助判断。
-                plate_type = YELLOW_SINGLE 
-                break
-            elif idx == PLATE_TYPE_BLUE:
-                plate_type = BLUE
-                break
-            elif idx == PLATE_TYPE_GREEN:
-                plate_type = GREEN
-                break
-                
-        # 针对黄绿牌/新能源的绝对兜底逻辑
-        if plate_type == UNKNOWN:
-            plate_type = GREEN
+        # 简化的类型映射...
+        idx = int(sorted_indices[0])
+        if idx == PLATE_TYPE_YELLOW: plate_type = YELLOW_SINGLE 
+        elif idx == PLATE_TYPE_BLUE: plate_type = BLUE
+        elif idx == PLATE_TYPE_GREEN: plate_type = GREEN
+        if plate_type == UNKNOWN: plate_type = GREEN
 
-        return plate_type, confidence
+        return plate_type, confidence, plate_box

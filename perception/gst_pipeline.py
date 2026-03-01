@@ -21,8 +21,8 @@ class GstPipelineManager:
 
         # 从配置中读取路径 (开发阶段可先硬编码测试)
         self.video_path = config.get("video_path", "resources/test_traffic.mp4")
-        self.hef_path = config.get("hef_path", "cpp_postprocess/y5fu_320x_sim.hef")
-        self.post_so_path = config.get("post_so_path", "cpp_postprocess/build/liby5fu_post.so")
+        self.hef_path = config.get("hef_path", "resources/yolov8m.hef")
+        self.post_so_path = config.get("post_so_path", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
         
         # 管道构建逻辑
         self.pipeline_string = self._build_pipeline()
