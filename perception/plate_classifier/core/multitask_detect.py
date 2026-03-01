@@ -95,8 +95,9 @@ class MultiTaskDetectorORT(HamburgerABC):
         self.outputs_option = self.session.get_outputs()
         input_option = self.inputs_option[0]
         input_size_ = tuple(input_option.shape[2:])
-        self.input_size = tuple(self.input_size)
-        if not self.input_size:
+        if self.input_size is not None:
+            self.input_size = tuple(self.input_size)
+        else:
             self.input_size = input_size_
         assert self.input_size == input_size_, 'The dimensions of the input do not match the model expectations.'
         assert self.input_size[0] == self.input_size[1]
