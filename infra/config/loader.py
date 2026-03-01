@@ -110,3 +110,10 @@ for key_str, type_val in _type_map_raw.items():
         except ValueError: pass
     else:
         TYPE_MAP[key_str] = type_val
+
+# --- 4. 边缘端特有模型路径 ---
+_edge = _cfg.get("edge_models", {})
+HEF_PATH = _edge.get("hef_path", "resources/yolov8m.hef")
+POST_SO_PATH = _edge.get("post_so_path", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
+Y5FU_PATH = _edge.get("y5fu_path", "perception/plate_classifier/models/y5fu_320x_sim.onnx")
+LITEMODEL_PATH = _edge.get("litemodel_path", "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx")
