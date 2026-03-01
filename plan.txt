@@ -1,0 +1,34 @@
+traffic-emission-monitor/
+├── 🟡 bootstrap.py                  # 添加 GStreamer 初始化代码
+├── 🟡 config.json                   # 更改模型路径为 .hef 路径，配置管道参数
+├── domain/                          # 🟢 领域驱动层（完全无硬件依赖，全部保留）
+│   ├── physics/                     
+│   │   ├── brake_emission_model.py  # 🟢 保持不变
+│   │   ├── opmode_calculator.py     # 🟢 保持不变
+│   │   ├── tire_emission_model.py   # 🟢 保持不变
+│   │   └── vsp_calculator.py        # 🟢 保持不变
+│   └── vehicle/                     # 🟢 保持不变
+├── infra/
+│   ├── ⚪ concurrency/ocr_worker.py # 废弃：因为新的分类器直接处理车牌类型，无需完整 OCR
+│   ├── 🟢 config/loader.py          # 保持不变
+│   ├── 🟢 store/                    # 数据库逻辑保持不变
+│   └── 🟡 sys/process_optimizer.py  # 微调：适配树莓派的 CPU 核心绑定（如将 GStreamer 绑在大核）
+├── perception/
+│   ├── 🔴 camera.py                 # 重构为 GStreamer 管道管理器 (GstPipelineManager)
+│   ├── 🟡 kinematics_estimator.py   # 微调：移除内部追踪逻辑，改为接收 HailoTracker 传来的 ID
+│   ├── ⚪ math/kalman_filter.py     # 废弃：硬件层的 hailotracker 已内置更高效的追踪
+│   ├── 🟢 math/geometry.py          # 保持不变
+│   ├── 🟡 lpr_adaptor.py            # 微调：对接分类结果
+│   ├── plate_classifier/            # 🔴 推理核心目录（大改）
+│   │   ├── 🔴 core/multitask_detect.py  # 移除：ONNX 推理和 NMS 被 C++ 后处理库取代
+│   │   ├── 🔴 core/classification.py    # 保留并修改：只留下轻量级的 ONNX 运行逻辑
+│   │   ├── 🟢 core/tools_process.py     # 保留核心：关键点透视变换 `get_rotate_crop_image` 需要继续在 Python 层使用
+│   │   └── 🔴 pipeline.py               # 重构：接收 appsink 数据，执行透视变换和分类
+│   └── cpp_postprocess/             # 🆕 新增：存放 C++ 后处理源码和 CMakeLists.txt
+│       ├── y5fu_postprocess.cpp
+│       └── CMakeLists.txt
+├── 🔴 app/monitor_engine.py         # 重构：主循环由“主动拉流”改为“从 appsink 拉取并解析 Metadata”
+└── ui/
+    ├── 🟢 calibration_window.py     # 保持不变
+    ├── 🟢 console_reporter.py       # 保持不变
+    └── 🟡 renderer.py               # 微调：改为解析 Hailo Metadata 来画框，而不是解析原有模型的张量
