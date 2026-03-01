@@ -110,7 +110,19 @@ class MultiTaskDetectorORT(HamburgerABC):
 
     def _postprocess(self, data):
         r, left, top = self.tmp_pack
-        return post_precessing(data, r, left, top)
+        output = post_precessing(data, r, left, top)
+        
+        # 核心修复：如果没有检测到车牌，安全地返回两个空列表
+        if len(output) == 0:
+            return [], []
+            
+        # 分离数据：提取前 5 列为检测框 (x1, y1, x2, y2, score)
+        bboxes = output[:, :5]
+        
+        # 分离数据：提取 5-12 列为关键点，并重塑为 (N, 4, 2) 的标准坐标系结构
+        landmarks = output[:, 5:13].reshape(-1, 4, 2)
+        
+        return bboxes, landmarks
 
     def _preprocess(self, image):
         img, r, left, top = detect_pre_precessing(image, self.input_size)

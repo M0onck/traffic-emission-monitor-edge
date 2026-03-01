@@ -71,6 +71,11 @@ class TrafficMonitorEngine:
         print(f">>> [Engine] 等待视频流接入...")
         
         try:
+            # 初始化 FPS 计算变量
+            prev_time = time.time()
+            frame_count = 0
+            current_fps = 0.0
+
             while True:
                 # 1. 阻塞拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
@@ -81,6 +86,14 @@ class TrafficMonitorEngine:
                     continue
                 
                 frame_id += 1
+
+                # 计算每秒的实时帧率 (平滑显示，避免数值疯狂闪烁)
+                frame_count += 1
+                now = time.time()
+                if now - prev_time >= 1.0:
+                    current_fps = frame_count / (now - prev_time)
+                    prev_time = now
+                    frame_count = 0
                 
                 # 2. 延迟初始化 VideoSink (因为需要确切知道输出的分辨率)
                 if video_info is None:
@@ -91,7 +104,7 @@ class TrafficMonitorEngine:
                     print(f">>> [Engine] 视频流已接入: {w}x{h} @ {self.cfg.FPS}fps")
 
                 # --- 核心处理流水线 ---
-                annotated_frame = self.process_frame(frame, buffer, frame_id)
+                annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps)
                 
                 # --- 写入结果视频 ---
                 if sink:
@@ -110,7 +123,7 @@ class TrafficMonitorEngine:
                 sink.__exit__(None, None, None)
             self.cleanup(frame_id)
 
-    def process_frame(self, frame, buffer, frame_id):
+    def process_frame(self, frame, buffer, frame_id, current_fps=0.0):
         """
         单帧处理流水线 (混合架构版)。
         """
@@ -138,9 +151,12 @@ class TrafficMonitorEngine:
                 
                 if track_id == -1: continue # 跳过没有追踪ID的目标
                 
-                # 获取标签映射
+                # 获取标签，并进行严格的白名单过滤
                 label = det.get_label()
-                cid = self.label_map.get(label, self.cfg.YOLO_CLASS_CAR)
+                if label not in self.label_map:
+                    continue  # 直接丢弃所有非 car/bus/truck 的目标（如 person, bicycle 等）
+                    
+                cid = self.label_map[label]
                 
                 # 获取关键点 (在 C++ .so 中挂载的)
                 lm_pts = []
@@ -234,7 +250,7 @@ class TrafficMonitorEngine:
             emission_data,
             realtime_opmodes
         )
-        return self.visualizer.render(frame, detections, label_data_list)
+        return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
 
     def _handle_plate_classification(self, frame, frame_id, detections, landmarks_dict=None):
         """修正：将车身裁剪出来交给 Python 层的 y5fu 处理"""

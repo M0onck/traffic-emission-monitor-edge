@@ -77,7 +77,7 @@ class Visualizer:
             thickness=2, trace_length=trace_length, position=sv.Position.BOTTOM_CENTER
         )
 
-    def render(self, frame: np.ndarray, detections: sv.Detections, label_data_list: list) -> np.ndarray:
+    def render(self, frame: np.ndarray, detections: sv.Detections, label_data_list: list, fps: float) -> np.ndarray:
         """
         [修改版] 绘制单帧画面
         特性：
@@ -143,6 +143,12 @@ class Visualizer:
         if self.label_annotator:
             # 传入刚才构造好的新 labels 列表
             scene = self.label_annotator.annotate(scene=scene, detections=detections, labels=labels)
+
+        # 在画面左上角绘制 FPS
+        if fps is not None and fps > 0:
+            fps_text = f"FPS: {fps:.1f}"
+            # 使用醒目的绿色，加粗显示
+            cv2.putText(scene, fps_text, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3, cv2.LINE_AA)
         
         return scene
 
