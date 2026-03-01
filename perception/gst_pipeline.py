@@ -43,18 +43,18 @@ class GstPipelineManager:
             
             # ================= 分支 1：高分辨率原画直出 =================
             # drop=false 保证 GStreamer 绝对不丢帧，等待 Python 同步拉取
-            f"t. ! queue max-size-buffers=3 leaky=no ! "
+            f"t. ! queue max-size-buffers=30 leaky=no ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=3 drop=false sync=false "
+            f"appsink name=sink_video emit-signals=false max-buffers=30 drop=false sync=false "
             
             # ================= 分支 2：AI 推理输出元数据 =================
-            f"t. ! queue max-size-buffers=3 leaky=no ! "
+            f"t. ! queue max-size-buffers=30 leaky=no ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
             f"hailonet hef-path={self.hef_path} ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
             f"hailotracker name=hailo_tracker keep-tracked-frames=3 class-id=-1 ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=3 drop=false sync=false "
+            f"appsink name=sink_meta emit-signals=false max-buffers=30 drop=false sync=false "
         )
         return pipeline
 

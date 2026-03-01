@@ -50,6 +50,12 @@ class TrafficMonitorEngine:
             "truck": self.cfg.YOLO_CLASS_TRUCK
         }
 
+        # 分类器引用更新：原先完整的 OCR 已被替换为仅针对车牌属性的小模型分类器
+        self.plate_classifier = components.get('plate_classifier') 
+        
+        # 修复潜在的 AttributeError: 恢复对基础车型分类器(用于解析车辆类型逻辑)的引用
+        self.classifier = components.get('classifier')
+
     def run(self):
         """
         启动基于 GStreamer 轮询的主处理循环。
@@ -161,8 +167,12 @@ class TrafficMonitorEngine:
                 class_id=np.array(class_ids, dtype=int),
                 tracker_id=np.array(tracker_ids, dtype=int)
             )
+            detections = detections.with_nms(threshold=0.6, class_agnostic=True)
         else:
             detections = sv.Detections.empty()
+            detections.tracker_id = np.array([], dtype=int)
+            detections.class_id = np.array([], dtype=int)
+            detections.confidence = np.array([], dtype=np.float32)
 
         # --- Step 2: 注册表更新 (Registry Update) ---
         # 移除了 self.model 参数，因为车辆图片特征提取已交由前端模型完成
@@ -226,7 +236,7 @@ class TrafficMonitorEngine:
         )
         return self.visualizer.render(frame, detections, label_data_list)
 
-    def _handle_plate_classification(self, frame, frame_id, detections):
+    def _handle_plate_classification(self, frame, frame_id, detections, landmarks_dict=None):
         """修正：将车身裁剪出来交给 Python 层的 y5fu 处理"""
         img_h, img_w = frame.shape[:2]
         if frame_id % self.cfg.OCR_INTERVAL != 0:

@@ -21,7 +21,7 @@ class VehicleRegistry:
         self.min_valid_trajectory_points = min_valid_pts # 最小有效轨迹点数
         self.min_moving_distance_m = min_moving_dist     # 最小移动距离 (过滤静止车辆)
 
-    def update(self, detections, frame_id, model):
+    def update(self, detections, frame_id, model=None):
         """
         根据 YOLO 检测结果更新车辆列表
         更新逻辑：
@@ -29,6 +29,10 @@ class VehicleRegistry:
         2. 更新活跃状态 (last_seen)
         3. 投票确认车型 (Class Voting)
         """
+        # 双重保险：拦截空检测，防止无效计算
+        if detections is None or detections.tracker_id is None or len(detections.tracker_id) == 0:
+            return
+
         for tid, cid, conf, box in zip(
                 detections.tracker_id, 
                 detections.class_id, 
@@ -43,11 +47,14 @@ class VehicleRegistry:
             height = box[3] - box[1]
             area = width * height
             weight = conf * math.sqrt(area) 
+            
+            # 动态获取类名，防止 model 为 None 时引发 AttributeError
+            class_name = model.names[cid] if model and hasattr(model, 'names') else f"Class_{cid}"
 
             if tid not in self.records:
                 self.records[tid] = {
                     'class_id': cid,
-                    'class_name': model.names[cid],
+                    'class_name': class_name,
                     'class_votes': defaultdict(float),
                     'trajectory': [],
                     'valid_samples_count': 0,
@@ -73,7 +80,9 @@ class VehicleRegistry:
             # 更新主要车型判定 (Majority Vote)
             best_class = max(rec['class_votes'], key=rec['class_votes'].get)
             rec['class_id'] = best_class
-            rec['class_name'] = model.names[best_class]
+            
+            # 更新投票处，同样进行安全获取
+            rec['class_name'] = model.names[best_class] if model and hasattr(model, 'names') else f"Class_{best_class}"
 
             if conf > rec['max_conf']:
                 rec['max_conf'] = conf
