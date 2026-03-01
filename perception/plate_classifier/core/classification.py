@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from .base import HamburgerABC
-from hyperlpr3.common.tools_process import cost
 
 
 def encode_images(image: np.ndarray):

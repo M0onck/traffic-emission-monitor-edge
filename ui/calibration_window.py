@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from perception.camera import CameraPreprocessor
 
 class CalibrationUI:
     """
@@ -19,8 +18,7 @@ class CalibrationUI:
         # --- 图像去畸变 ---
         # 确保 UI 显示的画面与 Engine 处理的画面完全一致
         # 如果您的 CameraPreprocessor 需要 config，这里可以传入 {} 或 None (取决于您之前的实现是否支持默认参数)
-        preprocessor = CameraPreprocessor(config={}) 
-        self.frame = preprocessor.preprocess(raw_frame)
+        self.frame = self.frame = cv2.resize(raw_frame, (1920, 1080))
         
         self.img_h, self.img_w = self.frame.shape[:2]
         self.window_name = "Calibration: Left=ROI, Right=BEV (Enter to confirm)"
