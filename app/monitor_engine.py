@@ -19,9 +19,11 @@ class TrafficMonitorEngine:
     负责协调透视变换、车牌分类、物理估算、排放计算及数据存储等各个子模块。
     """
 
-    def __init__(self, config, components):
+    def __init__(self, config, components, frame_callback=None):
         self.cfg = config
         self.comps = components
+        self.frame_callback = frame_callback  # 保存回调函数
+        self._is_running = True # 增加运行状态标志位，用于安全退出
         
         # --- 核心组件引用 ---
         # 注意：model (YOLO) 和 tracker (ByteTrack) 已被移除，交由硬件管道完成
@@ -32,10 +34,6 @@ class TrafficMonitorEngine:
 
         # 替换掉了原来的 plate_classifier
         self.plate_worker = components.get('plate_worker') 
-        
-        # 绑定主进程到 Core 2
-        from infra.sys.process_optimizer import SystemOptimizer
-        SystemOptimizer.optimize_main_process()
         
         # --- 状态缓存 ---
         self.plate_cache = {} 
@@ -106,6 +104,20 @@ class TrafficMonitorEngine:
                     sink = sv.VideoSink(self.cfg.TARGET_VIDEO_PATH, video_info=video_info)
                     sink.__enter__()
                     print(f">>> [Engine] 视频流已接入: {w}x{h} @ {self.cfg.FPS}fps")
+                
+                    #  第一帧到达时，动态适配底层坐标系
+                    if 'norm_source_points' in self.comps:
+                        # 拿到 0~1 的归一化点，乘以底层管道输出的真实宽高
+                        pts = self.comps['norm_source_points'].copy()
+                        pts[:, 0] *= w
+                        pts[:, 1] *= h
+                        
+                        # 把算好的绝对坐标塞回绘图器
+                        self.visualizer.calibration_points = pts.astype(np.int32)
+                        
+                        # 重新初始化视角转换器，确保物理速度/位移计算正确
+                        from perception.math.geometry import ViewTransformer
+                        self.comps['transformer'] = ViewTransformer(pts, self.comps['target_points'])
 
                 # --- 核心处理流水线 ---
                 annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps)
@@ -115,9 +127,12 @@ class TrafficMonitorEngine:
                     sink.write_frame(annotated_frame)
                 
                 # --- 实时预览 ---
-                display = resize_with_pad(annotated_frame, (1280, 720))
-                cv2.imshow("Traffic Emission Edge Monitor", display)
-                if cv2.waitKey(1) == ord('q'):
+                if self.frame_callback:
+                    # 为了性能，直接在 Engine 端缩放到树莓派屏幕尺寸 800x480
+                    display = resize_with_pad(annotated_frame, (800, 480))
+                    self.frame_callback(display)
+                
+                if not getattr(self, '_is_running', True):
                     break
                     
         except KeyboardInterrupt:
@@ -696,7 +711,6 @@ class TrafficMonitorEngine:
     def cleanup(self, final_frame_id):
         print("\n[Engine] 正在清理资源...")
         self.camera.stop()  # 停止 GStreamer 管道
-        cv2.destroyAllWindows()
         
         print("[Engine] 保存剩余车辆数据...")
         self._handle_exits(final_frame_id + 1000)

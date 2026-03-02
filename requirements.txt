@@ -5,3 +5,4 @@ supervision
 ultralytics
 plotext
 onnxruntime
+PyQt5
