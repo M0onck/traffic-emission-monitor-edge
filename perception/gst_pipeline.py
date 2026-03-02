@@ -51,7 +51,7 @@ class GstPipelineManager:
             f"t. ! queue max-size-buffers=30 leaky=no ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
-            f"hailonet hef-path={self.hef_path} ! "
+            f"hailonet hef-path={self.hef_path} vdevice-group-id=1 ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
             f"hailotracker name=hailo_tracker keep-tracked-frames=3 class-id=-1 ! "
             f"appsink name=sink_meta emit-signals=false max-buffers=30 drop=false sync=false "
