@@ -13,23 +13,22 @@ from domain.vehicle.classifier import VehicleClassifier
 import infra.config.loader as cfg
 from infra.store.sqlite_manager import DatabaseManager
 from infra.sys.process_optimizer import SystemOptimizer
+from infra.concurrency.plate_worker import PlateClassifierWorker
 from perception.math.geometry import ViewTransformer
 from perception.kinematics_estimator import KinematicsEstimator
 from ui.renderer import Visualizer
 from ui.calibration_window import CalibrationUI
 from ui.console_reporter import Reporter
 
-# --- 新增/保留的边缘端感知组件 ---
-# 1. 硬件加速管道管理器
+# --- 边缘端感知组件 ---
 from perception.gst_pipeline import GstPipelineManager
-# 2. 恢复保留的车牌检测与分类模型 (运行在 Python 端 CPU)
-from perception.plate_classifier.core.multitask_detect import MultiTaskDetectorORT
-from perception.plate_classifier.core.classification import ClassificationORT
-from perception.plate_classifier.pipeline import EdgePlateClassifierPipeline
 
 def main():
-    SystemOptimizer.set_cpu_affinity("main")
+    # 调用全新的主进程专属优化器 (绑定至 Core 2 并提权)
+    SystemOptimizer.optimize_main_process()
     print(f"\n>>> [System] Initializing Traffic Monitor (Edge Version)...", flush=True)
+
+    plate_worker = None  # 提前声明，方便在 finally 中清理
 
     try:
         calibrator = CalibrationUI(cfg.VIDEO_PATH)
@@ -84,7 +83,7 @@ def main():
             }
         }
 
-        # --- 初始化 GStreamer 管道 (使用官方 YOLOv8 抓车辆) ---
+        # --- 初始化 GStreamer 管道 ---
         gst_config = {
             "video_path": cfg.VIDEO_PATH,
             "hef_path": getattr(cfg, "HEF_PATH", "resources/yolov8m.hef"),
@@ -92,7 +91,7 @@ def main():
         }
         camera_manager = GstPipelineManager(gst_config)
 
-        # --- 组件字典大换血 ---
+        # --- 基础组件字典 ---
         components = {
             'camera': camera_manager,
             'smoother': sv.DetectionsSmoother(length=3),
@@ -124,14 +123,19 @@ def main():
             components['brake_model'] = BrakeEmissionModel(brake_emission_config)
             components['tire_model'] = TireEmissionModel(tire_emission_config, opmode_calculator)
             
+        # 按需初始化多进程 Worker，彻底删除旧版同步模型
         if cfg.ENABLE_OCR:
-            # --- 恢复双模型架构的轻量级调用 (Python端) ---
             y5fu_path = getattr(cfg, "Y5FU_PATH", "perception/plate_classifier/models/y5fu_320x_sim.onnx")
             litemodel_path = getattr(cfg, "LITEMODEL_PATH", "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx")
             
-            detector = MultiTaskDetectorORT(y5fu_path)
-            classifier = ClassificationORT(litemodel_path)
-            components['plate_classifier'] = EdgePlateClassifierPipeline(detector, classifier)
+            plate_worker = PlateClassifierWorker(
+                detector_path=y5fu_path,
+                classifier_path=litemodel_path,
+                max_queue_size=10
+            )
+            plate_worker.start()
+            # 将 worker 注入组件字典，供 monitor_engine 调用
+            components['plate_worker'] = plate_worker
 
         engine = TrafficMonitorEngine(cfg, components)
         engine.run()
@@ -142,6 +146,11 @@ def main():
         import traceback
         traceback.print_exc()
         if 'engine' in locals(): engine.cleanup(0)
+    finally:
+        # 无论程序是正常结束还是报错崩溃，确保杀掉独立的 OCR 子进程
+        if plate_worker is not None:
+            print("\n>>> [System] 正在安全关闭异步分类子进程...", flush=True)
+            plate_worker.stop()
 
 if __name__ == "__main__":
     main()

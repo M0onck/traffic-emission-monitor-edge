@@ -29,9 +29,13 @@ class TrafficMonitorEngine:
         self.registry = components['registry']      # 车辆注册表 (内存数据库)
         self.visualizer = components['visualizer']  # 可视化渲染器
         self.db = components['db']                  # 持久化存储 (SQLite)
+
+        # 替换掉了原来的 plate_classifier
+        self.plate_worker = components.get('plate_worker') 
         
-        # 分类器引用更新：原先完整的 OCR 已被替换为仅针对车牌属性的小模型分类器
-        self.plate_classifier = components.get('plate_classifier') 
+        # 绑定主进程到 Core 2
+        from infra.sys.process_optimizer import SystemOptimizer
+        SystemOptimizer.optimize_main_process()
         
         # --- 状态缓存 ---
         self.plate_cache = {} 
@@ -195,9 +199,12 @@ class TrafficMonitorEngine:
         self.registry.update(detections, frame_id, None)
         self._handle_exits(frame_id)
         
-        # --- Step 3: 车牌分类 (轻量级推理) ---
-        if self.ocr_on and self.plate_classifier:
-            self._handle_plate_classification(frame, frame_id, detections, landmarks_dict)
+        # --- Step 3: 异步车牌分类 ---
+        if self.ocr_on and self.plate_worker:
+            # 1. 投递新任务
+            self._dispatch_plate_tasks(frame, frame_id, detections)
+            # 2. 收割已完成的结果 (不阻塞)
+            self._collect_plate_results()
 
         # --- Step 4: 物理参数估算 (Kinematics) ---
         # (这部分代码与原版保持完全一致，因为它依赖于 Detections 格式)
@@ -252,13 +259,14 @@ class TrafficMonitorEngine:
         )
         return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
 
-    def _handle_plate_classification(self, frame, frame_id, detections, landmarks_dict=None):
-        """修正：将车身裁剪出来交给 Python 层的 y5fu 处理"""
+    def _dispatch_plate_tasks(self, frame, frame_id, detections):
+        """派发任务给子进程：将车身裁剪出来，非阻塞地放入队列"""
         img_h, img_w = frame.shape[:2]
         if frame_id % self.cfg.OCR_INTERVAL != 0:
             return
 
         for tid, box in zip(detections.tracker_id, detections.xyxy):
+            # 冷却检查
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
                 continue
             
@@ -267,16 +275,22 @@ class TrafficMonitorEngine:
             if not (0.2*img_w < cx < 0.8*img_w and 0.4*img_h < cy < 0.95*img_h):
                 continue
                 
-            # 裁剪整辆车的小图
-            vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
-            
-            if vehicle_crop.size > 0:
-                # 调用恢复双模型的 Pipeline
-                color_type, conf, _ = self.plate_classifier.process(vehicle_crop)
-                if conf > self.cfg.OCR_CONF_THRESHOLD:
-                    self.registry.add_plate_history(tid, color_type, 1.0, conf)
-                    self.plate_cache[tid] = color_type
-                    self.plate_retry[tid] = frame_id
+            # 动态缩放面积阈值 (假设已适配720p或1080p)
+            scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
+            if (x2-x1)*(y2-y1) > scaled_min_area:
+                vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
+                if vehicle_crop.size > 0:
+                    # 尝试将裁剪后的图像推入队列
+                    if self.plate_worker.push_task(tid, vehicle_crop):
+                        self.plate_retry[tid] = frame_id # 只有成功推入才刷新冷却时间
+
+    def _collect_plate_results(self):
+        """非阻塞地从子进程收取计算结果并入库"""
+        results = self.plate_worker.get_results()
+        for tid, color_type, conf in results:
+            if conf > self.cfg.OCR_CONF_THRESHOLD:
+                self.registry.add_plate_history(tid, color_type, 1.0, conf)
+                self.plate_cache[tid] = color_type
 
     def _handle_exits(self, frame_id):
         """
