@@ -33,17 +33,23 @@ class GstPipelineManager:
             f"videoconvert ! video/x-raw, format=NV12 ! "
             f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! tee name=t "
             
-            f"t. ! queue max-size-buffers=10 leaky=2 ! "
+            # --- 视频画面分支 ---
+            # 【修改点 1】去掉 leaky=2，改为阻塞等待
+            f"t. ! queue max-size-buffers=3 ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=5 drop=true sync=false "
+            # 【修改点 2】设置 drop=false，限制 max-buffers=2
+            f"appsink name=sink_video emit-signals=false max-buffers=2 drop=false sync=false "
             
-            f"t. ! queue max-size-buffers=10 leaky=2 ! "
+            # --- 硬件推理分支 ---
+            # 【修改点 3】同样去掉 leaky=2
+            f"t. ! queue max-size-buffers=3 ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
             f"hailonet hef-path={self.hef_path} vdevice-group-id=1 ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
             f"hailotracker name=hailo_tracker keep-tracked-frames=3 class-id=-1 ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=5 drop=true sync=false "
+            # 【修改点 4】设置 drop=false，限制 max-buffers=2
+            f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=false sync=false "
         )
         return pipeline
 
