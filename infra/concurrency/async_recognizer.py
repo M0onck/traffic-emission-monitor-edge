@@ -106,9 +106,13 @@ class AsyncPlateRecognizer:
                 color_idx = np.argmax(probs)
                 conf = float(probs[color_idx])
 
+                # 计算车牌在车辆截图中的相对比例坐标 (0.0 ~ 1.0)
+                h, w = vehicle_img.shape[:2]
+                rel_landmarks = landmarks / np.array([w, h], dtype=np.float32)
+
                 # 🚨 降低子进程的拦截阈值，只要有一点倾向性就发回给主进程处理
                 if conf > 0.3:
-                    result_queue.put_nowait((track_id, colors[color_idx], conf))
+                    result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
 
             except Exception as e:
                 # 静默捕获避免刷屏

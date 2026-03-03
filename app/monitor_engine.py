@@ -313,14 +313,17 @@ class TrafficMonitorEngine:
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
-        for tid, color_type, conf in results:
+        for tid, color_type, conf, rel_landmarks in results:
             # 🚀 探针 3：查看主进程收到的数据和配置的阈值冲突
             print(f"[Engine Probe] <- 收到后台结果 ID: {tid}, 颜色: {color_type}, Conf: {conf:.3f}, 配置文件阈值: {self.cfg.OCR_CONF_THRESHOLD}", flush=True)
             
             # 暂时将阈值强行设为极低，确保数据能流进去
             if conf > -999.0: 
                 self.registry.add_plate_history(tid, color_type, 1.0, conf)
-                self.plate_cache[tid] = color_type
+                self.plate_cache[tid] = {
+                    'color': color_type,
+                    'rel_landmarks': rel_landmarks
+                }
             else:
                 print(f"[Engine Probe] X 结果被拦截！", flush=True)
 
@@ -516,34 +519,36 @@ class TrafficMonitorEngine:
 
     def _prepare_labels(self, detections, landmarks_dict=None):
         """
-        [UI 数据适配] 准备渲染标签。
-        
-        策略:
-        1. 优先显示实时工况 (OpMode)，隐藏跳动的速度值。
-        2. 整合排放模型输出的详细信息。
+        [修改版 UI 数据适配] 专为极简显示设计 + 动态车牌锚定
         """
         labels = []
-        for tid, raw_class_id in zip(detections.tracker_id, detections.class_id):
+        # 注意这里加了 enumerate(zip(...)) 以便获取当前车辆的索引 i
+        for i, (tid, raw_class_id) in enumerate(zip(detections.tracker_id, detections.class_id)):
             record = self.registry.get_record(tid)
             voted_class_id = record['class_id'] if record else int(raw_class_id)
 
             data = LabelData(track_id=tid, class_id=voted_class_id)
             
             # --- 1. 强制设定极简英文分类 ---
-            if voted_class_id == self.cfg.YOLO_CLASS_CAR:
-                data.display_type = "car"
-            elif voted_class_id == self.cfg.YOLO_CLASS_BUS:
-                data.display_type = "bus"
-            elif voted_class_id == self.cfg.YOLO_CLASS_TRUCK:
-                data.display_type = "truck"
-            else:
-                data.display_type = "vehicle"
+            if voted_class_id == self.cfg.YOLO_CLASS_CAR: data.display_type = "car"
+            elif voted_class_id == self.cfg.YOLO_CLASS_BUS: data.display_type = "bus"
+            elif voted_class_id == self.cfg.YOLO_CLASS_TRUCK: data.display_type = "truck"
+            else: data.display_type = "vehicle"
                 
-            # --- 2. 挂载底层的车牌框点位与异步缓存的颜色 ---
-            if landmarks_dict and tid in landmarks_dict:
-                data.plate_points = landmarks_dict[tid]
-            
-            data.plate_color = self.plate_cache.get(tid) 
+            # --- 2. 动态计算车牌框 (相对坐标映射核心逻辑) ---
+            plate_info = self.plate_cache.get(tid)
+            if plate_info:
+                data.plate_color = plate_info['color']
+                
+                # 获取该车在【当前这刚刚到来的一帧】里的最新检测框
+                x1, y1, x2, y2 = detections.xyxy[i]
+                vw = x2 - x1
+                vh = y2 - y1
+                
+                # 将 0~1 的相对坐标放大到当前车身尺寸，并加上车身的左上角偏移
+                rel_lms = plate_info['rel_landmarks']
+                abs_lms = rel_lms * np.array([vw, vh]) + np.array([x1, y1])
+                data.plate_points = abs_lms
             
             labels.append(data)
             
