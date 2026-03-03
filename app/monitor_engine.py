@@ -279,9 +279,7 @@ class TrafficMonitorEngine:
         # --- Step 6: 可视化渲染 ---
         label_data_list = self._prepare_labels(
             detections,
-            kinematics_data,
-            emission_data,
-            realtime_opmodes
+            landmarks_dict
         )
         return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
 
@@ -516,7 +514,7 @@ class TrafficMonitorEngine:
                 self.plate_cache[tid] = color
                 if tid in self.plate_retry: del self.plate_retry[tid]
 
-    def _prepare_labels(self, detections, kinematics_data, emission_data, realtime_opmodes=None):
+    def _prepare_labels(self, detections, landmarks_dict=None):
         """
         [UI 数据适配] 准备渲染标签。
         
@@ -531,40 +529,24 @@ class TrafficMonitorEngine:
 
             data = LabelData(track_id=tid, class_id=voted_class_id)
             
-            # --- 优先处理实时工况 ---
-            if realtime_opmodes and tid in realtime_opmodes:
-                op = realtime_opmodes[tid]
-                data.speed = None  # 显式隐藏速度
-                
-                # 注入 OpMode 信息供 Renderer 使用
-                if tid in emission_data:
-                    data.emission_info = emission_data[tid]
-                    data.emission_info['op_mode'] = op
-                else:
-                    data.emission_info = {'op_mode': op}
-            
-            # --- 回退显示速度 (兼容逻辑) ---
-            elif tid in kinematics_data:
-                data.speed = kinematics_data[tid]['speed']
-            
-            # --- 车型描述文本 ---
-            if tid in emission_data:
-                d = emission_data[tid]
-                data.display_type = d.get('type_str', '')
-                if not self.ocr_on and "(Def)" not in data.display_type:
-                    data.display_type += "(Def)"
+            # --- 1. 强制设定极简英文分类 ---
+            if voted_class_id == self.cfg.YOLO_CLASS_CAR:
+                data.display_type = "car"
+            elif voted_class_id == self.cfg.YOLO_CLASS_BUS:
+                data.display_type = "bus"
+            elif voted_class_id == self.cfg.YOLO_CLASS_TRUCK:
+                data.display_type = "truck"
             else:
-                hist = self.registry.get_history(tid)
-                color = self.plate_cache.get(tid)
-                _, data.display_type = self.classifier.resolve_type(
-                    voted_class_id, plate_history=hist, plate_color_override=color
-                )
-
-                # 强效显眼包：只要缓存中得到了颜色，直接强制拼接在标签里显示！
-                if color and color != "Unknown":
-                    data.display_type += f" [{color}]"
+                data.display_type = "vehicle"
+                
+            # --- 2. 挂载底层的车牌框点位与异步缓存的颜色 ---
+            if landmarks_dict and tid in landmarks_dict:
+                data.plate_points = landmarks_dict[tid]
+            
+            data.plate_color = self.plate_cache.get(tid) 
             
             labels.append(data)
+            
         return labels
 
     def _refine_trajectory_global(self, trajectory, class_id):
