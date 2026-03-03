@@ -47,7 +47,7 @@ class AsyncPlateRecognizer:
         sess_y5fu = ort.InferenceSession(y5fu_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
         sess_lite = ort.InferenceSession(lite_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
 
-        colors = ["蓝牌", "绿牌", "黄牌", "白牌", "黑牌"]
+        colors = ["blue", "green", "yellow", "white", "black"]
         dst_pts = np.array([[0, 0], [96, 0], [96, 32], [0, 32]], dtype=np.float32)
 
         while True:
