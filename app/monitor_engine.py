@@ -297,7 +297,7 @@ class TrafficMonitorEngine:
             x1, y1, x2, y2 = map(int, box)
             cx, cy = (x1+x2)/2, (y1+y2)/2
 
-            # 🚨 放宽判定区域，让车刚进镜头就开始被截取，留给后台充足的计算时间！
+            # 放宽判定区域，让车刚进镜头就开始被截取，留给后台充足的计算时间！
             if not (0.1*img_w < cx < 0.9*img_w and 0.2*img_h < cy < 0.95*img_h):
                 continue
                 
