@@ -94,16 +94,20 @@ class Visualizer:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
             
             # [绘制 C] 车牌关键点检测框
-            if data and data.plate_points is not None and data.plate_color:
-                p_color_str = data.plate_color.lower()
-                p_color = (0, 255, 0) # 默认使用绿色
-                for k, v in plate_color_map.items():
-                    if k in p_color_str:
-                        p_color = v
-                        break
+            if data and data.plate_points is not None:
+                # 1. 设置默认颜色（在还没识别出颜色时显示，比如设为白色）
+                p_color = (255, 255, 255) 
                 
-                # 车牌 landmarks 通常是 4 个角点，构成多边形
-                pts = data.plate_points.astype(np.int32)
+                # 2. 如果后台缓存里已经拿到了识别出的颜色，则替换默认颜色
+                if data.plate_color:
+                    p_color_str = data.plate_color.lower()
+                    for k, v in plate_color_map.items():
+                        if k in p_color_str:
+                            p_color = v
+                            break
+                
+                # 3. 绘制多边形 (增加 reshape 保证 OpenCV 兼容性最佳)
+                pts = data.plate_points.astype(np.int32).reshape((-1, 1, 2))
                 cv2.polylines(scene, [pts], isClosed=True, color=p_color, thickness=2)
 
         # 4. 在画面左上角绘制 FPS
