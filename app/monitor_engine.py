@@ -559,8 +559,8 @@ class TrafficMonitorEngine:
                 _, data.display_type = self.classifier.resolve_type(
                     voted_class_id, plate_history=hist, plate_color_override=color
                 )
-                
-                # 🚨 强效显眼包：只要缓存中得到了颜色，直接强制拼接在标签里显示！
+
+                # 强效显眼包：只要缓存中得到了颜色，直接强制拼接在标签里显示！
                 if color and color != "Unknown":
                     data.display_type += f" [{color}]"
             
