@@ -78,7 +78,13 @@ class TrafficMonitorEngine:
             frame_count = 0
             current_fps = 0.0
 
+            # 🚨 软件级限速计算器
+            target_delay = 1.0 / self.cfg.FPS
+
             while True:
+                # 记录循环开始时间
+                loop_start = time.time()
+
                 # 1. 阻塞拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
                 
@@ -134,6 +140,11 @@ class TrafficMonitorEngine:
                 
                 if not getattr(self, '_is_running', True):
                     break
+
+                # 🚨 终极软件限速：如果处理得比 30FPS 快，就等一会儿，防止画面快进！
+                elapsed = time.time() - loop_start
+                if elapsed < target_delay:
+                    time.sleep(target_delay - elapsed)
                     
         except KeyboardInterrupt:
             print("\n>>> [Engine] 接收到退出信号...")
@@ -287,7 +298,9 @@ class TrafficMonitorEngine:
             
             x1, y1, x2, y2 = map(int, box)
             cx, cy = (x1+x2)/2, (y1+y2)/2
-            if not (0.2*img_w < cx < 0.8*img_w and 0.4*img_h < cy < 0.95*img_h):
+
+            # 🚨 放宽判定区域，让车刚进镜头就开始被截取，留给后台充足的计算时间！
+            if not (0.1*img_w < cx < 0.9*img_w and 0.2*img_h < cy < 0.95*img_h):
                 continue
                 
             # 动态缩放面积阈值 (假设已适配720p或1080p)
@@ -303,9 +316,15 @@ class TrafficMonitorEngine:
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
         for tid, color_type, conf in results:
-            if conf > self.cfg.OCR_CONF_THRESHOLD:
+            # 🚀 探针 3：查看主进程收到的数据和配置的阈值冲突
+            print(f"[Engine Probe] <- 收到后台结果 ID: {tid}, 颜色: {color_type}, Conf: {conf:.3f}, 配置文件阈值: {self.cfg.OCR_CONF_THRESHOLD}", flush=True)
+            
+            # 暂时将阈值强行设为极低，确保数据能流进去
+            if conf > -999.0: 
                 self.registry.add_plate_history(tid, color_type, 1.0, conf)
                 self.plate_cache[tid] = color_type
+            else:
+                print(f"[Engine Probe] X 结果被拦截！", flush=True)
 
     def _handle_exits(self, frame_id):
         """
@@ -540,6 +559,10 @@ class TrafficMonitorEngine:
                 _, data.display_type = self.classifier.resolve_type(
                     voted_class_id, plate_history=hist, plate_color_override=color
                 )
+                
+                # 🚨 强效显眼包：只要缓存中得到了颜色，直接强制拼接在标签里显示！
+                if color and color != "Unknown":
+                    data.display_type += f" [{color}]"
             
             labels.append(data)
         return labels

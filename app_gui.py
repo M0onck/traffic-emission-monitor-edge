@@ -17,6 +17,7 @@ from domain.physics.tire_emission_model import TireEmissionModel
 from domain.vehicle.classifier import VehicleClassifier
 from infra.store.sqlite_manager import DatabaseManager
 from infra.sys.process_optimizer import SystemOptimizer
+from infra.concurrency.async_recognizer import AsyncPlateRecognizer
 from perception.math.geometry import ViewTransformer
 from perception.kinematics_estimator import KinematicsEstimator
 from ui.renderer import Visualizer
@@ -193,10 +194,12 @@ class EngineWorker(QThread):
             components['kinematics'] = KinematicsEstimator({"fps": cfg.FPS, "kinematics": {"speed_window": 15, "accel_window": 15}})
         
         if getattr(cfg, "ENABLE_OCR", False):
-            from infra.concurrency.plate_worker import PlateClassifierWorker
-            pw = PlateClassifierWorker(cfg.Y5FU_PATH, cfg.LITEMODEL_PATH)
-            pw.start()
-            components['plate_worker'] = pw
+            # 挂载 ONNX 异步引擎
+            async_worker = AsyncPlateRecognizer(
+                y5fu_onnx_path="perception/plate_classifier/models/y5fu_320x_sim.onnx",
+                litemodel_onnx_path="perception/plate_classifier/models/litemodel_cls_96x_r1.onnx"
+            )
+            components['plate_worker'] = async_worker
 
         self.engine = TrafficMonitorEngine(cfg, components, frame_callback=self.emit_frame)
         self.engine.run()
