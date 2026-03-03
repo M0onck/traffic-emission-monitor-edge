@@ -43,8 +43,8 @@ class VehicleRegistry:
             conf = float(conf)
             
             # 使用面积加权置信度进行投票
-            width = box[2] - box[0]
-            height = box[3] - box[1]
+            width = max(0.0, float(box[2] - box[0]))
+            height = max(0.0, float(box[3] - box[1]))
             area = width * height
             weight = conf * math.sqrt(area) 
             

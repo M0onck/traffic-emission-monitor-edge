@@ -170,8 +170,12 @@ class TrafficMonitorEngine:
             for det in hailo_detections:
                 # 获取检测框
                 bbox = det.get_bbox()
-                x1, y1 = int(bbox.xmin() * w), int(bbox.ymin() * h)
-                x2, y2 = int(bbox.xmax() * w), int(bbox.ymax() * h)
+                raw_x1, raw_y1 = int(bbox.xmin() * w), int(bbox.ymin() * h)
+                raw_x2, raw_y2 = int(bbox.xmax() * w), int(bbox.ymax() * h)
+                
+                # 安全过滤：确保 x1 < x2 且 y1 < y2，防止硬件输出异常坐标导致下游崩溃
+                x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
+                y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
                 
                 # 获取 Tracking ID (由底层的 hailotracker 挂载)
                 track_id = -1
