@@ -31,7 +31,6 @@ DEBUG_MODE = _sys["debug_mode"]
 _sw = _cfg["switches"]
 ENABLE_MOTION = _sw["enable_motion"]
 ENABLE_OCR = _sw["enable_ocr"]
-ENABLE_EMISSION = _sw["enable_emission"]
 
 _k = _cfg["kinematics"]
 SPEED_WINDOW = _k.get("speed_window", 15)
@@ -49,12 +48,9 @@ OCR_RETRY_COOLDOWN = _o["retry_cooldown"]
 OCR_INTERVAL = _o["run_interval"]
 OCR_CONF_THRESHOLD = _o["confidence_threshold"]
 
-_e = _cfg["emission_params"]
-BRAKING_DECEL_THRESHOLD = _e["braking_decel_threshold"]
-IDLING_SPEED_THRESHOLD = _e["idling_speed_threshold"]
-LOW_SPEED_THRESHOLD = _e["low_speed_threshold"]
-MASS_FACTOR_EV = _e["mass_factor_ev"]
-ROAD_GRADE_PERCENT = _e["road_grade_percent"]
+_p = _cfg.get("physics_params", {})
+MASS_FACTOR_EV = _p.get("mass_factor_ev", 1.25)
+ROAD_GRADE_PERCENT = _p.get("road_grade_percent", 0.0)
 
 # 质量控制参数
 _qc = _cfg.get("quality_control", {})
@@ -83,20 +79,6 @@ VSP_COEFFS["default"] = _vsp_raw.get("default", {"a_m": 0.156, "b_m": 0.002, "c_
 for sem_key, coeff_data in _vsp_raw.items():
     if sem_key in VEHICLE_SEMANTIC_MAP:
         VSP_COEFFS[VEHICLE_SEMANTIC_MAP[sem_key]] = coeff_data
-
-# 3.2 刹车磨损系数
-BRAKE_WEAR_COEFFICIENTS = {}
-_brake_raw = _cfg.get("brake_wear_coefficients", {})
-for cat, rates in _brake_raw.items():
-    if not isinstance(rates, dict): continue
-    BRAKE_WEAR_COEFFICIENTS[cat] = {int(op): val for op, val in rates.items()}
-
-# 3.3 轮胎磨损系数
-TIRE_WEAR_COEFFICIENTS = {}
-_tire_raw = _cfg.get("tire_wear_coefficients", {})
-for cat, rates in _tire_raw.items():
-    if not isinstance(rates, dict): continue
-    TIRE_WEAR_COEFFICIENTS[cat] = {int(op): val for op, val in rates.items()}
 
 # 3.4 车型映射
 TYPE_MAP = {}

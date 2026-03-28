@@ -6,3 +6,4 @@ ultralytics
 plotext
 onnxruntime
 PyQt5
+ntplib

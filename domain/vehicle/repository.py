@@ -87,17 +87,18 @@ class VehicleRegistry:
             if conf > rec['max_conf']:
                 rec['max_conf'] = conf
 
-    def append_kinematics(self, tid, frame_id, speed, accel, raw_x=None, raw_y=None, pixel_x=None, pixel_y=None):
+    def append_kinematics(self, tid, frame_id, speed, accel, raw_x=None, raw_y=None, pixel_x=None, pixel_y=None, timestamp=None):
         """
         记录单帧运动学数据
         :param tid: Tracker ID
         :param frame_id: 当前帧号
         :param speed: 实时速度 (m/s)
         :param accel: 实时加速度 (m/s^2)
-        :param raw_x: 物理坐标 X (经过卡尔曼滤波/平滑后的值)
-        :param raw_y: 物理坐标 Y (经过卡尔曼滤波/平滑后的值)
+        :param raw_x: 物理坐标 X (经过逆透视变换/平滑后的值)
+        :param raw_y: 物理坐标 Y (经过逆透视变换/平滑后的值)
         :param pixel_x: 原始像素坐标 X (用于几何测距)
         :param pixel_y: 原始像素坐标 Y (用于几何测距)
+        :param timestamp: 当前帧的精确绝对时间戳 (NTP对齐)
         """
         if tid in self.records:
             rec = self.records[tid]
@@ -110,13 +111,20 @@ class VehicleRegistry:
                 'raw_x': raw_x,
                 'raw_y': raw_y,
                 'pixel_x': pixel_x,
-                'pixel_y': pixel_y
+                'pixel_y': pixel_y,
+                'timestamp': timestamp  # 保存精确时间戳
             })
             rec['valid_samples_count'] = rec.get('valid_samples_count', 0) + 1
 
-            # 实时累计仍保留速度积分法，仅用于 min_moving_dist 门控
-            # 最终准确里程将在离场时通过 pixel_x/y 重算
-            dt = 1.0 / self.fps
+            # --- 动态 dt 距离估算 (用于静止车辆过滤) ---
+            # 如果传入了时间戳，并且轨迹中至少有两个点，则计算真实的动态 dt
+            if timestamp is not None and len(rec['trajectory']) >= 2:
+                dt = timestamp - rec['trajectory'][-2]['timestamp']
+                # 避免由于数据异常导致 dt 出现负数或过大
+                dt = max(0.001, min(dt, 0.5)) 
+            else:
+                dt = 1.0 / self.fps # 回退到默认固定帧率
+                
             rec['total_distance_m'] = rec.get('total_distance_m', 0.0) + (speed * dt)
             
             # 统计最大速度和平均速度辅助数据

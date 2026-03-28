@@ -4,6 +4,7 @@ import supervision as sv
 import time
 from collections import defaultdict
 from ui.renderer import resize_with_pad, LabelData
+from infra.time.ntp_sync import TimeSynchronizer
 
 # 引入 Hailo 元数据解析库 (需要在运行环境/设备端安装有 tappas 的 python 绑定)
 try:
@@ -24,6 +25,7 @@ class TrafficMonitorEngine:
         self.comps = components
         self.frame_callback = frame_callback  # 保存回调函数
         self._is_running = True # 增加运行状态标志位，用于安全退出
+        self.time_sync = TimeSynchronizer() # 初始化时钟同步器
         
         # --- 核心组件引用 ---
         # 注意：model (YOLO) 和 tracker (ByteTrack) 已被移除，交由硬件管道完成
@@ -78,7 +80,7 @@ class TrafficMonitorEngine:
             frame_count = 0
             current_fps = 0.0
 
-            # 🚨 软件级限速计算器
+            # 软件级限速计算器
             target_delay = 1.0 / self.cfg.FPS
 
             while True:
@@ -87,6 +89,9 @@ class TrafficMonitorEngine:
 
                 # 1. 阻塞拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
+
+                # 拿到帧的同时打上时间戳
+                frame_timestamp = self.time_sync.get_precise_timestamp()
                 
                 if frame is None or buffer is None:
                     # 如果流未就绪，稍微休眠防止 CPU 空转
@@ -126,7 +131,7 @@ class TrafficMonitorEngine:
                         self.comps['transformer'] = ViewTransformer(pts, self.comps['target_points'])
 
                 # --- 核心处理流水线 ---
-                annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps)
+                annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
                 
                 # --- 写入结果视频 ---
                 if sink:
@@ -141,7 +146,7 @@ class TrafficMonitorEngine:
                 if not getattr(self, '_is_running', True):
                     break
 
-                # 🚨 终极软件限速：如果处理得比 30FPS 快，就等一会儿，防止画面快进！
+                # 软件限速：如果处理得比 30FPS 快，就等一会儿，防止画面快进！
                 elapsed = time.time() - loop_start
                 if elapsed < target_delay:
                     time.sleep(target_delay - elapsed)
@@ -153,7 +158,7 @@ class TrafficMonitorEngine:
                 sink.__exit__(None, None, None)
             self.cleanup(frame_id)
 
-    def process_frame(self, frame, buffer, frame_id, current_fps=0.0):
+    def process_frame(self, frame, buffer, frame_id, current_fps=0.0, frame_timestamp=0.0):
         """
         单帧处理流水线 (混合架构版)。
         """
@@ -237,7 +242,6 @@ class TrafficMonitorEngine:
             self._collect_plate_results()
 
         # --- Step 4: 物理参数估算 (Kinematics) ---
-        # (这部分代码与原版保持完全一致，因为它依赖于 Detections 格式)
         kinematics_data = {}
         realtime_opmodes = {}
         
@@ -247,7 +251,7 @@ class TrafficMonitorEngine:
             roi_bounds = self.comps['transformer'].get_roi_vertical_bounds()
             
             kinematics_data = self.comps['kinematics'].update(
-                detections, transformed, frame.shape, roi_y_range=roi_bounds
+                detections, transformed, frame.shape, frame_timestamp, roi_y_range=roi_bounds
             )
             
             vsp_calc = self.comps.get('vsp_calculator')
@@ -274,7 +278,8 @@ class TrafficMonitorEngine:
                         tid, frame_id, 
                         k_data['speed'], k_data['accel'],
                         raw_x=k_data['curr_x'], raw_y=k_data['curr_y'],
-                        pixel_x=raw_point[0], pixel_y=raw_point[1]
+                        pixel_x=raw_point[0], pixel_y=raw_point[1],
+                        timestamp=frame_timestamp
                     )
 
         # --- Step 5: 排放模型 ---
@@ -725,6 +730,11 @@ class TrafficMonitorEngine:
     def cleanup(self, final_frame_id):
         print("\n[Engine] 正在清理资源...")
         self.camera.stop()  # 停止 GStreamer 管道
+
+        # 停止 NTP 时钟同步器的后台线程
+        if hasattr(self, 'time_sync'):
+            self.time_sync.stop()
+            print("[Engine] 时钟同步守护线程已停止。")
         
         print("[Engine] 保存剩余车辆数据...")
         self._handle_exits(final_frame_id + 1000)
