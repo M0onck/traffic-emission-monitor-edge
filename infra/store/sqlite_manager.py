@@ -81,25 +81,25 @@ class DatabaseManager:
         return queries
 
     def insert_micro(self, fid: int, tid: int, payload: dict):
+        # 强制转化为 Python 原生类型，防止 Numpy 类型污染数据库
         params = (
-            tid,
-            fid,
-            payload.get('timestamp', 0.0),
-            payload.get('ipm_x', 0.0),
-            payload.get('ipm_y', 0.0),
-            payload.get('speed', 0.0),
-            payload.get('accel', 0.0),
-            payload.get('vsp', 0.0)
+            int(tid),
+            int(fid),
+            float(payload.get('timestamp', 0.0)),
+            float(payload.get('ipm_x', 0.0)),
+            float(payload.get('ipm_y', 0.0)),
+            float(payload.get('speed', 0.0)),
+            float(payload.get('accel', 0.0)),
+            float(payload.get('vsp', 0.0))
         )
         self.micro_buffer.append(params)
-        if len(self.micro_buffer) >= self.batch_size:
+        if len(self.micro_buffer) >= self.BATCH_SIZE:
             self.flush_micro_buffer()
 
     def flush_micro_buffer(self):
         """强制写入微观数据缓冲区"""
         if not self.micro_buffer: return
         
-        # 使用 self.queries 字典获取 SQL
         sql = self.queries.get('insert_micro')
         if not sql:
             print("[Database Error] SQL模板 'insert_micro' 未定义")
@@ -122,19 +122,29 @@ class DatabaseManager:
         if record.get('plate_history'):
              plate_color = record['plate_history'][-1].get('color', 'Unknown')
 
+        # 全面类型强转，并修复 final_type_str 未被使用的逻辑 Bug
         params = (
-            tid,
-            record.get('first_frame', 0),
-            record.get('last_seen_frame', 0),
-            record.get('class_id', -1),
-            record.get('class_name', 'Unknown'),
-            final_plate,
-            plate_color,
-            record.get('max_speed', 0.0),
-            avg_speed,
-            record.get('total_distance_m', 0.0)
+            int(tid),                                    # INTEGER PRIMARY KEY 必须是纯正的 int
+            int(record.get('first_frame', 0)),
+            int(record.get('last_seen_frame', 0)),
+            int(record.get('class_id', -1)),
+            str(final_type_str),                         # 使用传入的准确车型，替换掉之前的 get('class_name')
+            str(final_plate),
+            str(plate_color),
+            float(record.get('max_speed', 0.0)),
+            float(avg_speed),
+            float(record.get('total_distance_m', 0.0))
         )
-        self._execute_query('insert_macro', params)
+        
+        sql = self.queries.get('insert_macro')
+        if sql:
+            try:
+                self.cursor.execute(sql, params)
+                self.conn.commit()
+            except Exception as e:
+                print(f"[Database Error] insert_macro 失败: {e}")
+        else:
+            print("[Database Error] SQL模板 'insert_macro' 未定义")
 
     def close(self):
         self.flush_micro_buffer()
