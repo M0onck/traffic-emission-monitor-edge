@@ -243,7 +243,6 @@ class TrafficMonitorEngine:
 
         # --- Step 4: 物理参数估算 (Kinematics) ---
         kinematics_data = {}
-        realtime_opmodes = {}
         
         if self.motion_on and self.comps.get('kinematics'):
             points = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
@@ -253,19 +252,6 @@ class TrafficMonitorEngine:
             kinematics_data = self.comps['kinematics'].update(
                 detections, transformed, frame.shape, frame_timestamp, roi_y_range=roi_bounds
             )
-            
-            vsp_calc = self.comps.get('vsp_calculator')
-            brake_model = self.comps.get('brake_model')
-            opmode_calc = getattr(brake_model, 'opmode_calculator', None) if brake_model else None
-            
-            if vsp_calc and opmode_calc:
-                for tid, k_data in kinematics_data.items():
-                    mask = detections.tracker_id == tid
-                    if not np.any(mask): continue
-                    class_id = int(detections.class_id[mask][0])
-                    v, a = k_data['speed'], k_data['accel']
-                    vsp = vsp_calc.calculate(v, a, class_id)
-                    realtime_opmodes[tid] = opmode_calc.get_opmode(v, a, vsp)
 
             # 记录原始轨迹点
             tid_to_pixel = {tid: pt for tid, pt in zip(detections.tracker_id, points)}
@@ -392,13 +378,7 @@ class TrafficMonitorEngine:
     def _calculate_and_save_history(self, tid, record, final_type_str):
         """
         [核心逻辑] 离场后微观数据结算 (Post-departure Settlement)
-
-        流程：
-        1. 轨迹清洗 (Trimming): 去除进出画面边缘的不稳定数据。
-        2. 全局重构 (Global Refinement): 后处理运动轨迹，生成符合物理规律的速度/加速度曲线。
-        3. 参数计算 (Physics): 计算 VSP 和 原始 OpMode。
-        4. 序列清洗 (Sequence Cleaning): 使用状态机消除非法的工况跳变。
-        5. 排放计算 (Emission): 查表计算最终排放量并入库。
+        重构版：移除所有排放与工况模型，仅负责轨迹清洗、VSP提取与高频原始时序数据入库。
         """
         trajectory = record.get('trajectory', [])
 
@@ -410,82 +390,35 @@ class TrafficMonitorEngine:
         else:
             return # 轨迹太短，放弃计算
 
-        # Step 2. 全局轨迹重构 (Global Refinement)
+        # Step 2. 全局轨迹重构 (Global Refinement - 保持物理平滑)
         if len(trajectory) > 10 and 'raw_x' in trajectory[0]:
              trajectory = self._refine_trajectory_global(trajectory, record['class_id']) 
 
-        # Step 3. 参数计算 (Physics)
-        # --- 组件检查 ---
+        # Step 3. 物理特征提取与入库
         vsp_calc = self.comps.get('vsp_calculator')
-        brake_model = self.comps.get('brake_model')
-        tire_model = self.comps.get('tire_model')
-        opmode_calc = getattr(brake_model, 'opmode_calculator', None)
-        
-        if not (vsp_calc and brake_model and tire_model and opmode_calc):
+        if not vsp_calc:
             return
 
-        # --- 准备计算参数 ---
         final_class_id = record['class_id']
-        category = 'CAR'
-        if final_class_id == self.cfg.YOLO_CLASS_BUS: category = 'BUS'
-        elif final_class_id == self.cfg.YOLO_CLASS_TRUCK: category = 'TRUCK'
-        is_electric = "electric" in final_type_str
-        dt = 1.0 / self.cfg.FPS
-
-        # --- 物理参数预计算 ---
-        pre_calc_data = []
-        raw_opmodes = []
 
         for point in trajectory:
             v = point['speed']
             a = point['accel']
             fid = point['frame_id']
             
-            # 计算 VSP 和 原始 OpMode
+            # 实时计算当前点的 VSP
             vsp = vsp_calc.calculate(v, a, final_class_id)
-            raw_op = opmode_calc.get_opmode(v, a, vsp)
             
-            pre_calc_data.append({'fid': fid, 'v': v, 'a': a, 'vsp': vsp})
-            raw_opmodes.append(raw_op)
-
-        # Step 4. OpMode 序列清洗
-        clean_opmodes = self._clean_opmode_sequence(raw_opmodes)
-
-        # Step 5. 排放结算与入库
-        for i, data in enumerate(pre_calc_data):
-            op_mode = clean_opmodes[i]
-            v, a, vsp = data['v'], data['a'], data['vsp']
-            
-            # Step 5.1. 刹车排放 (含 EV 再生制动修正)
-            brake_res = brake_model.calculate_single_point(
-                v, a, vsp, final_class_id, dt, type_str=final_type_str
-            )
-            brake_emission = brake_res['emission_mass']
-
-            # Step 5.2. 轮胎排放 (含 EV 重量惩罚)
-            tire_base = tire_model._get_rate(category, op_mode)
-            tire_factor = self.cfg.MASS_FACTOR_EV if is_electric else 1.0
-            tire_emission = tire_base * tire_factor * dt
-
-            # Step 5.3. 统计累加
-            if hasattr(self.registry, 'accumulate_opmode'):
-                self.registry.accumulate_opmode(record, op_mode)
-                self.registry.accumulate_brake_emission(record, brake_emission)
-                self.registry.accumulate_tire_emission(record, tire_emission)
-            else:
-                self.registry.update_emission_stats(record, op_mode, brake_emission)
-                self.registry.update_tire_stats(record, tire_emission)
-
-            # Step 5.4. 入库 (微观表)
+            # 构建精简后的微观表 Payload，注入精确时间戳与 IPM 坐标
             db_payload = {
-                'type_str': final_type_str,
-                'plate_color': "Resolved",
-                'speed': v, 'accel': a, 'vsp': vsp,
-                'op_mode': op_mode,
-                'brake_emission': brake_emission,
-                'tire_emission': tire_emission
+                'timestamp': point.get('timestamp', 0.0),
+                'ipm_x': point.get('raw_x', 0.0),
+                'ipm_y': point.get('raw_y', 0.0),
+                'speed': v, 
+                'accel': a, 
+                'vsp': vsp
             }
-            self.db.insert_micro(data['fid'], tid, db_payload)
+            self.db.insert_micro(fid, tid, db_payload)
             
         # --- 强制刷写缓冲区 ---
         self.db.flush_micro_buffer()
@@ -696,36 +629,6 @@ class TrafficMonitorEngine:
             p['accel'] = float(final_accel[i])
 
         return trajectory
-
-    def _clean_opmode_sequence(self, opmodes):
-        """
-        [数据清洗] OpMode 序列状态机
-        
-        基于物理约束对工况序列进行后处理，消除不合理的跳变。
-        
-        规则:
-        1. 消除短时毛刺 (Spike Removal)。
-        2. 禁止非法转移 (e.g., Brake -> Hard Accel 直接跳变)。
-        """
-        if not opmodes: return []
-        
-        cleaned = np.array(opmodes, dtype=int)
-        n = len(cleaned)
-        
-        # 策略 1: 消除单帧毛刺 (A-B-A -> A-A-A)
-        for i in range(1, n - 1):
-            prev, curr, next_ = cleaned[i-1], cleaned[i], cleaned[i+1]
-            if prev == next_ and curr != prev:
-                cleaned[i] = prev
-
-        # 策略 2: 强制平滑过渡
-        # 物理事实: 刹车(0) 不能瞬间变为 急加速(37)，中间必须经过缓加速
-        for i in range(1, n):
-            prev, curr = cleaned[i-1], cleaned[i]
-            if prev == 0 and curr == 37:
-                cleaned[i] = 35 
-            
-        return cleaned.tolist()
 
     def cleanup(self, final_frame_id):
         print("\n[Engine] 正在清理资源...")

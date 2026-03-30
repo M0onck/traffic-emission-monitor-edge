@@ -80,37 +80,29 @@ class DatabaseManager:
             
         return queries
 
-    def insert_micro(self, frame_id: int, tid: int, data: Dict[str, Any]):
-        """添加一条微观记录到缓冲区"""
-        try:
-            # 准备数据 Tuple (逻辑不变)
-            row = (
-                int(frame_id),
-                int(tid),
-                str(data.get('type_str', 'Unknown')),
-                str(data.get('plate_color', 'Unknown')),
-                float(round(data.get('speed', 0.0), 2)),
-                float(round(data.get('accel', 0.0), 2)),
-                float(round(data.get('vsp', 0.0), 2)),
-                int(data.get('op_mode', -1)),
-                float(round(data.get('brake_emission', 0.0), 4)),
-                float(round(data.get('tire_emission', 0.0), 4))
-            )
-            self.micro_buffer.append(row)
-            
-            if len(self.micro_buffer) >= self.BATCH_SIZE:
-                self.flush_micro_buffer()
-        except Exception as e:
-            print(f"[Database Warning] Failed to prepare micro log row: {e}")
+    def insert_micro(self, fid: int, tid: int, payload: dict):
+        params = (
+            tid,
+            fid,
+            payload.get('timestamp', 0.0),
+            payload.get('ipm_x', 0.0),
+            payload.get('ipm_y', 0.0),
+            payload.get('speed', 0.0),
+            payload.get('accel', 0.0),
+            payload.get('vsp', 0.0)
+        )
+        self.micro_buffer.append(params)
+        if len(self.micro_buffer) >= self.batch_size:
+            self.flush_micro_buffer()
 
     def flush_micro_buffer(self):
         """强制写入微观数据缓冲区"""
         if not self.micro_buffer: return
         
         # 使用 self.queries 字典获取 SQL
-        sql = self.queries.get('insert_micro_log')
+        sql = self.queries.get('insert_micro')
         if not sql:
-            print("[Database Error] SQL模板 'insert_micro_log' 未定义")
+            print("[Database Error] SQL模板 'insert_micro' 未定义")
             return
             
         try:
@@ -120,44 +112,29 @@ class DatabaseManager:
         except Exception as e:
             print(f"[Database Error] Batch insert failed: {e}")
 
-    def insert_macro(self, tid: int, record: Dict[str, Any], final_type: str, final_plate: str):
-        """车辆离场时，写入宏观统计数据"""
-        # 使用 self.queries 字典获取 SQL
-        sql = self.queries.get('insert_macro_summary')
-        if not sql:
-            print("[Database Error] SQL模板 'insert_macro_summary' 未定义")
-            return
+    def insert_macro(self, tid: int, record: dict, final_type_str: str, final_plate: str):
+        # 计算平均速度
+        speed_count = record.get('speed_count', 0)
+        avg_speed = record.get('speed_sum', 0.0) / speed_count if speed_count > 0 else 0.0
+        
+        # 尝试获取最终的车牌颜色
+        plate_color = "Unknown"
+        if record.get('plate_history'):
+             plate_color = record['plate_history'][-1].get('color', 'Unknown')
 
-        try:
-            # 准备数据
-            life_span_frames = record['last_seen_frame'] - record['first_frame']
-            duration_sec = life_span_frames / self.fps
-            dist_m = record.get('total_distance_m', 0.0)
-            avg_speed = (dist_m / duration_sec) if duration_sec > 0 else 0.0
-            max_speed = record.get('max_speed', 0.0)
-            
-            dist_km = dist_m / 1000.0
-            total_brake = record.get('brake_emission_mg', 0)
-            total_tire = record.get('tire_emission_mg', 0)
-            brake_per_km = (total_brake / dist_km) if dist_km > 0.01 else 0.0
-            tire_per_km = (total_tire / dist_km) if dist_km > 0.01 else 0.0
-
-            stats_dict = {int(k): int(v) for k, v in record.get('op_mode_stats', {}).items()}
-            op_stats_json = json.dumps(stats_dict)
-            
-            # 执行插入
-            self.cursor.execute(sql, (
-                int(tid), str(final_type), str(final_plate),
-                int(record['first_frame']), int(record['last_seen_frame']),
-                float(round(duration_sec, 2)), float(round(dist_m, 2)),
-                float(round(avg_speed, 2)), float(round(max_speed, 2)), 
-                float(round(total_brake, 2)), float(round(total_tire, 2)),
-                float(round(brake_per_km, 2)), float(round(tire_per_km, 2)),
-                op_stats_json
-            ))
-            self.conn.commit()
-        except Exception as e:
-            print(f"[Database Error] Macro insert failed for ID {tid}: {e}")
+        params = (
+            tid,
+            record.get('first_frame', 0),
+            record.get('last_seen_frame', 0),
+            record.get('class_id', -1),
+            record.get('class_name', 'Unknown'),
+            final_plate,
+            plate_color,
+            record.get('max_speed', 0.0),
+            avg_speed,
+            record.get('total_distance_m', 0.0)
+        )
+        self._execute_query('insert_macro', params)
 
     def close(self):
         self.flush_micro_buffer()
