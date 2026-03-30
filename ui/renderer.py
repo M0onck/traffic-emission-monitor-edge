@@ -18,7 +18,6 @@ class LabelData:
     track_id: int
     class_id: int
     speed: float = None
-    emission_info: dict = None
     display_type: str = None
     plate_points: np.ndarray = None 
     plate_color: str = None
@@ -27,7 +26,7 @@ class Visualizer:
     """
     核心渲染器
     """
-    def __init__(self, calibration_points: np.ndarray, trace_length: int = 30, opmode_calculator=None):
+    def __init__(self, calibration_points: np.ndarray, trace_length: int = 30):
         """
         初始化渲染器
         :param calibration_points: 标定区域点集

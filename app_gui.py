@@ -11,9 +11,6 @@ import infra.config.loader as cfg
 from app.monitor_engine import TrafficMonitorEngine
 from domain.vehicle.repository import VehicleRegistry
 from domain.physics.vsp_calculator import VSPCalculator
-from domain.physics.opmode_calculator import MovesOpModeCalculator
-from domain.physics.brake_emission_model import BrakeEmissionModel
-from domain.physics.tire_emission_model import TireEmissionModel
 from domain.vehicle.classifier import VehicleClassifier
 from infra.store.sqlite_manager import DatabaseManager
 from infra.sys.process_optimizer import SystemOptimizer
@@ -170,7 +167,6 @@ class EngineWorker(QThread):
         # 初始占位符，由 Engine 获取第一帧时动态还原真实分辨率坐标
         dummy_pts = np.zeros((4, 2), dtype=np.float32)
 
-        opmode_calculator = MovesOpModeCalculator(config=cfg._e)
         gst_config = {"video_path": cfg.VIDEO_PATH}
         camera_manager = GstPipelineManager(gst_config)
 
@@ -181,8 +177,7 @@ class EngineWorker(QThread):
             'transformer': ViewTransformer(dummy_pts, target_points),
             'visualizer': Visualizer(
                 calibration_points=dummy_pts,
-                trace_length=cfg.FPS,
-                opmode_calculator=opmode_calculator
+                trace_length=cfg.FPS
             ),
             'registry': VehicleRegistry(fps=cfg.FPS, min_survival_frames=cfg.MIN_SURVIVAL_FRAMES),
             'db': DatabaseManager(cfg.DB_PATH, cfg.FPS),

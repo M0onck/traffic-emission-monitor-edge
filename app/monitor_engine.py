@@ -45,7 +45,6 @@ class TrafficMonitorEngine:
         self.debug_mode = config.DEBUG_MODE
         self.motion_on = config.ENABLE_MOTION       
         self.ocr_on = config.ENABLE_OCR             
-        self.emission_req = config.ENABLE_EMISSION  
 
         # --- 标签到 ID 的映射字典 (适配原有逻辑) ---
         self.label_map = {
@@ -268,9 +267,6 @@ class TrafficMonitorEngine:
                         timestamp=frame_timestamp
                     )
 
-        # --- Step 5: 排放模型 ---
-        emission_data = {}
-
         # --- Step 6: 可视化渲染 ---
         label_data_list = self._prepare_labels(
             detections,
@@ -335,8 +331,8 @@ class TrafficMonitorEngine:
             # Step 2. 几何距离重算
             self._recalculate_distance_geometric(record)
 
-            # Step 3. 微观排放结算 (核心逻辑)
-            if self.emission_req and 'trajectory' in record:
+            # Step 3. 微观时空轨迹与 VSP 结算 (核心逻辑)
+            if 'trajectory' in record:
                 self._calculate_and_save_history(tid, record, final_type_str)
 
             # Step 4. 宏观数据入库
@@ -390,11 +386,7 @@ class TrafficMonitorEngine:
         else:
             return # 轨迹太短，放弃计算
 
-        # Step 2. 全局轨迹重构 (Global Refinement - 保持物理平滑)
-        if len(trajectory) > 10 and 'raw_x' in trajectory[0]:
-             trajectory = self._refine_trajectory_global(trajectory, record['class_id']) 
-
-        # Step 3. 物理特征提取与入库
+        # Step 2. 物理特征提取与入库
         vsp_calc = self.comps.get('vsp_calculator')
         if not vsp_calc:
             return
@@ -495,140 +487,6 @@ class TrafficMonitorEngine:
             labels.append(data)
             
         return labels
-
-    def _refine_trajectory_global(self, trajectory, class_id):
-        """
-        [算法核心] 全局轨迹重构优化器
-
-        本函数是数据后处理的核心，负责将原始的、带有噪声的轨迹点转化为符合物理规律的光滑曲线。
-        核心思想是"在宏观匀速的假设下，敏锐捕捉真实的微观变速"。
-
-        核心策略:
-        1. 洛伦兹函数融合加权:
-           - 建立一个"绝对匀速"的参考模型。
-           - 计算二者偏差，应用洛伦兹函数 (1/(1+x^2)) 动态分配权重。
-           - 偏差小 (Cruising) -> 权重趋近 1.0 -> 强力吸附在匀速线上 (极致平滑)。
-           - 偏差大 (Braking)  -> 权重趋近 0.0 -> 快速逃逸并跟随观测值 (捕捉急刹)。
-
-        2. 边缘透视补偿:
-           - 问题: 车辆刚进入或离开画面边缘时，由于透视畸变，往往会出现系统性误差。
-           - 方案: 对轨迹首尾两端 (约前/后25%) 应用正弦加权 (Sine-Ramp)，
-             将边缘速度强制收敛至全过程的"平均速度"，消除进出场的跳变噪声。
-
-        3. 宽窗微分加速度:
-           - 问题: 直接对速度求导 (30 fps 时 dt=0.033s) 会极度放大高频噪声，导致加速度剧烈抖动。
-           - 方案: 采用跨度为9帧的中心差分窗口。
-           - 公式: a[i] = (v[i+k] - v[i-k]) / (t[i+k] - t[i-k])
-           - 效果: 物理上等效于计算稍大时间窗口内的平均加速度，彻底抹平瞬时抖动，且保留了真实的加减速趋势。
-
-        Args:
-            trajectory (list): 原始轨迹点列表，包含 ['raw_x', 'raw_y', 'frame_id']。
-            class_id (int): 车型ID，用于确定物理加速度上限 (如卡车 2.0m/s²)。
-
-        Returns:
-            list: 包含 ['speed', 'accel', 'op_mode'...] 的重构后轨迹列表。
-        """
-        # Step 1. 数据准备和预处理
-        # --- 放弃处理过短的轨迹 ---
-        if len(trajectory) < 5: return trajectory
-
-        # --- 物理加速度限幅 ---
-        ACCEL_LIMITS = {
-            self.cfg.YOLO_CLASS_CAR: 5.0,
-            self.cfg.YOLO_CLASS_BUS: 2.5,
-            self.cfg.YOLO_CLASS_TRUCK: 2.0
-        }
-        phys_limit = ACCEL_LIMITS.get(class_id, 5.0)
-        dt = 1.0 / self.cfg.FPS
-        
-        # --- 提取原始坐标 ---
-        raw_x = np.array([p['raw_x'] for p in trajectory])
-        raw_y = np.array([p['raw_y'] for p in trajectory])
-        n_points = len(raw_x)
-
-        # --- 内部辅助函数: 双向卷积平滑 (零相位滞后) ---
-        def bidirectional_smooth(data, window):
-            if len(data) < window: window = len(data) if len(data) % 2 == 1 else len(data) - 1
-            if window < 3: return data
-            pad_width = window // 2
-            padded = np.pad(data, (pad_width, pad_width), mode='edge')
-            kernel = np.ones(window) / window
-            fwd = np.convolve(padded, kernel, mode='valid')
-            padded_rev = np.pad(data[::-1], (pad_width, pad_width), mode='edge')
-            bwd = np.convolve(padded_rev, kernel, mode='valid')[::-1]
-            return (fwd + bwd) / 2.0
-
-        # --- 基础位置平滑 ---
-        pos_window = 31 
-        smooth_x = bidirectional_smooth(raw_x, window=pos_window)
-        smooth_y = bidirectional_smooth(raw_y, window=pos_window)
-        
-        # Step 2. 磁性融合核心逻辑
-        # --- 绝对匀速模型 (Magnet) ---
-        t_axis = np.arange(n_points) * dt
-        coeff_x = np.polyfit(t_axis, smooth_x, 1) # 线性拟合
-        coeff_y = np.polyfit(t_axis, smooth_y, 1)
-        const_speed_val = np.sqrt(coeff_x[0]**2 + coeff_y[0]**2) 
-        speed_linear = np.full(n_points, const_speed_val)
-        
-        # --- 局部观测速度 (Reality) ---
-        grads_x = np.gradient(smooth_x, dt)
-        grads_y = np.gradient(smooth_y, dt)
-        inst_speed = np.sqrt(grads_x**2 + grads_y**2)
-        speed_local = bidirectional_smooth(inst_speed, window=21) # 可缩短窗口以提升对变速事件的响应灵敏度
-        
-        # --- 计算洛伦兹权重 ---
-        deviation = np.abs(speed_local - speed_linear)
-        MAGNET_SIGMA = 1.0 # 逃逸阈值: 1.0 m/s (超过此值即视为真实变速)
-        magnet_weight = 1.0 / (1.0 + (deviation / MAGNET_SIGMA) ** 2)
-        
-        # --- 加权融合 ---
-        corrected_speed = magnet_weight * speed_linear + (1.0 - magnet_weight) * speed_local
-
-        # Step 3. 边缘透视补偿 (Fade-in)
-        # 解决车辆刚进入画面时因透视关系导致的速度虚高
-        path_len = np.sum(np.sqrt(np.diff(smooth_x)**2 + np.diff(smooth_y)**2))
-        duration = (n_points - 1) * dt
-        avg_speed = path_len / duration if duration > 0 else 0
-        
-        if avg_speed > 1.5 and n_points > self.cfg.FPS * 1.5: 
-            EDGE_RATIO = 0.25 
-            weights = np.ones(n_points)
-            fade_len = int(n_points * EDGE_RATIO)
-            if fade_len > 0:
-                ramp = np.linspace(0, 1, fade_len)
-                fade_curve = 0.0 + (1.0 - 0.0) * np.sin(ramp * np.pi / 2)
-                weights[:fade_len] = fade_curve
-                weights[-fade_len:] = fade_curve[::-1]
-            corrected_speed = weights * corrected_speed + (1 - weights) * avg_speed
-
-        # Step 4. 加速度计算 (宽窗微分)
-        # 使用稍窄的窗口以捕捉瞬时急刹 (k=9)
-        k = 9  
-        dense_accel = np.zeros(n_points)
-        
-        for i in range(n_points):
-            idx_start = max(0, i - k)
-            idx_end = min(n_points - 1, i + k)
-            dv = corrected_speed[idx_end] - corrected_speed[idx_start]
-            dt_span = (idx_end - idx_start) * dt
-            
-            if dt_span > 1e-4:
-                val = dv / dt_span
-                dense_accel[i] = np.clip(val, -phys_limit, phys_limit)
-            else:
-                dense_accel[i] = 0.0
-
-        final_accel = bidirectional_smooth(dense_accel, window=31)
-
-        # Step 5. 回写结果
-        for i, p in enumerate(trajectory):
-            p['rt_speed'] = float(inst_speed[i]) 
-            p['rt_accel'] = float(dense_accel[i])
-            p['speed'] = float(corrected_speed[i])
-            p['accel'] = float(final_accel[i])
-
-        return trajectory
 
     def cleanup(self, final_frame_id):
         print("\n[Engine] 正在清理资源...")
