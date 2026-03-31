@@ -410,94 +410,93 @@ class TrafficMonitorEngine:
     
     def _recalculate_distance_geometric(self, record):
         """
-        [算法优化] 基于几何路径重算总里程。
+        [算法优化] 基于降维后的 1D 几何路径重算总里程。
         
-        使用原始像素点的透视变换结果累加欧氏距离。
-        相比于实时速度积分 (\int_{0}^{t} v(t) \, \mathrm{dt})，该方法不受滤波滞后和起步噪声影响，
-        能更真实地反映车辆的物理位移。
+        直接使用被 _calculate_and_save_history 强制拉直为 1D 直线后的物理坐标。
+        彻底消除了海岸线悖论，即使不裁剪首尾帧，测算出的物理距离依然绝对精准。
         """
         trajectory = record.get('trajectory', [])
         if len(trajectory) < 2: return
 
-        # Step 1. 提取有效像素点
-        pixels = []
+        # Step 1. 提取已被拉直和 S-G 平滑过的纯净物理坐标
+        pts_phys = []
         for p in trajectory:
-            if p.get('pixel_x') is not None and p.get('pixel_y') is not None:
-                pixels.append([p['pixel_x'], p['pixel_y']])
+            if p.get('raw_x') is not None and p.get('raw_y') is not None:
+                pts_phys.append([p['raw_x'], p['raw_y']])
         
-        if len(pixels) < 2: return
+        if len(pts_phys) < 2: return
         
-        # Step 2. 批量透视变换 (Pixel -> Meter)
-        pts_phys = self.comps['transformer'].transform_points(np.array(pixels))
+        # 转换为 NumPy 数组
+        pts_phys = np.array(pts_phys)
         
-        # Step 3. 累加线段长度
+        # Step 2. 累加 1D 线段的长度 
+        # (此时由于所有点的 X 坐标相同，这本质上就是计算 Y 轴绝对位移的总和)
         diffs = pts_phys[1:] - pts_phys[:-1]
         dists = np.linalg.norm(diffs, axis=1)
         record['total_distance_m'] = float(np.sum(dists))
 
     def _calculate_and_save_history(self, tid, record, final_type_str):
         """
-        [核心逻辑] 离场后微观数据结算 (Post-departure Settlement)
-        重构版：植入 Savitzky-Golay 非因果滤波，实现无相位滞后的全局轨迹与运动学平滑。
+        [核心逻辑] 离场后微观数据结算 (1D 降维全量保留版)
+        完全抛弃掐头去尾，全量保留 ROI 内的高质量底边数据。
+        通过 X 轴常量化强制拉直轨迹，从降维层面彻底消灭海岸线悖论误差。
         """
         trajectory = record.get('trajectory', [])
-
-        # Step 1. 轨迹头尾清洗 (Trimming)
-        TRIM_SIZE = 5 
-        if len(trajectory) > (TRIM_SIZE * 2 + 5):
-            trajectory = trajectory[TRIM_SIZE : -TRIM_SIZE]
-        else:
-            return # 轨迹太短，放弃计算
-
-        # Step 2. 非因果 Savitzky-Golay 全局平滑
         n_points = len(trajectory)
-        if n_points >= 7:  # S-G 窗口大小设为 7
-            # 提取原始绝对物理坐标与动态时间戳
-            raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
-            raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
-            timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
 
-            # 动态调整窗口大小 (S-G filter 要求 window_length 必须是正奇数，且 <= n_points)
-            window_length = min(7, n_points if n_points % 2 != 0 else n_points - 1)
-            
-            if window_length >= 3:
-                # 2.1 对物理坐标进行一次 S-G 滤波去噪 (保峰并去除高频抖动)
-                smoothed_x = savgol_filter(raw_x, window_length=window_length, polyorder=2)
-                smoothed_y = savgol_filter(raw_y, window_length=window_length, polyorder=2)
+        # 只要有起码的轨迹点（例如3个以上）就可以进行滤波，不再掐头去尾！
+        # 若极端卡顿导致不到 3 帧，直接放弃后续物理结算，但保留记录
+        if n_points < 3:
+            return 
 
-                # 2.2 结合平滑后的坐标与动态 dt，严谨推导瞬时速度
-                speeds = np.zeros(n_points)
-                for i in range(1, n_points):
-                    dx = smoothed_x[i] - smoothed_x[i-1]
-                    dy = smoothed_y[i] - smoothed_y[i-1]
-                    dt = timestamps[i] - timestamps[i-1]
-                    speeds[i] = np.hypot(dx, dy) / dt if dt > 1e-4 else speeds[i-1]
-                speeds[0] = speeds[1] if n_points > 1 else 0.0
+        raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
+        raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
+        timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
 
-                # 2.3 对速度序列进行二次 S-G 滤波，获取平滑且保物理极值的高质量曲线
-                smoothed_speeds = savgol_filter(speeds, window_length=window_length, polyorder=2)
+        # 计算轨迹平均横向位置，为车辆铺设 1D 虚拟直行轨道
+        mean_x = float(np.mean(raw_x))
 
-                # 2.4 中心差分计算无滞后的真实加速度
-                accels = np.zeros(n_points)
-                for i in range(1, n_points - 1):
-                    dv = smoothed_speeds[i+1] - smoothed_speeds[i-1]
-                    dt = timestamps[i+1] - timestamps[i-1]
-                    accels[i] = dv / dt if dt > 1e-4 else 0.0
-                
-                if n_points > 1:
-                    dt_start = timestamps[1] - timestamps[0]
-                    accels[0] = (smoothed_speeds[1] - smoothed_speeds[0]) / dt_start if dt_start > 1e-4 else 0.0
-                    dt_end = timestamps[-1] - timestamps[-2]
-                    accels[-1] = (smoothed_speeds[-1] - smoothed_speeds[-2]) / dt_end if dt_end > 1e-4 else 0.0
-
-                # 2.5 覆盖原始极度抖动的坐标和速度
-                for i in range(n_points):
-                    trajectory[i]['raw_x'] = float(smoothed_x[i])
-                    trajectory[i]['raw_y'] = float(smoothed_y[i])
-                    trajectory[i]['speed'] = float(smoothed_speeds[i])
-                    trajectory[i]['accel'] = float(accels[i])
+        # 动态窗口大小，最大设为 15，兼顾平滑与低帧率设备的鲁棒性
+        window_length = min(15, n_points if n_points % 2 != 0 else n_points - 1)
         
-        record['trajectory'] = trajectory # 回写清洗并平滑后的轨迹
+        if window_length >= 3:
+            # 仅对纵向 Y 轴进行 S-G 平滑 (全量利用包含起步和驶离的高价值数据)
+            smoothed_y = savgol_filter(raw_y, window_length=window_length, polyorder=2)
+
+            # 一维极简速度计算 (仅靠 Y 轴绝对位移推导)
+            speeds = np.zeros(n_points)
+            for i in range(1, n_points):
+                dy = smoothed_y[i] - smoothed_y[i-1]
+                dt = timestamps[i] - timestamps[i-1]
+                # abs(dy) 确保无论车辆朝上还是朝下行驶，速度均为正标量
+                speeds[i] = abs(dy) / dt if dt > 1e-4 else speeds[i-1]
+            speeds[0] = speeds[1] if n_points > 1 else 0.0
+
+            # 速度二次平滑
+            smoothed_speeds = savgol_filter(speeds, window_length=window_length, polyorder=2)
+
+            # 中心差分计算加速度
+            accels = np.zeros(n_points)
+            for i in range(1, n_points - 1):
+                dv = smoothed_speeds[i+1] - smoothed_speeds[i-1]
+                dt = timestamps[i+1] - timestamps[i-1]
+                accels[i] = dv / dt if dt > 1e-4 else 0.0
+            
+            if n_points > 1:
+                dt_start = timestamps[1] - timestamps[0]
+                accels[0] = (smoothed_speeds[1] - smoothed_speeds[0]) / dt_start if dt_start > 1e-4 else 0.0
+                dt_end = timestamps[-1] - timestamps[-2]
+                accels[-1] = (smoothed_speeds[-1] - smoothed_speeds[-2]) / dt_end if dt_end > 1e-4 else 0.0
+
+            # 覆盖原始抖动的坐标和速度 (X轴全部强制对齐到虚拟轨道)
+            for i in range(n_points):
+                trajectory[i]['raw_x'] = mean_x
+                trajectory[i]['raw_y'] = float(smoothed_y[i])
+                trajectory[i]['speed'] = float(smoothed_speeds[i])
+                trajectory[i]['accel'] = float(accels[i])
+        
+        # 回写 1D 化处理后的干净轨迹
+        record['trajectory'] = trajectory 
 
         # 暴露结算完毕的数据给 UI Dashboard 供抽样展示
         self.latest_exit_record = {
