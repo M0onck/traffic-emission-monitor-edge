@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
-from scipy.signal import savgol_filter
+from domain.physics.kinematics_smoother import KinematicsSmoother
 
 # 引入 Hailo 元数据解析库 (需要在运行环境/设备端安装有 tappas 的 python 绑定)
 try:
@@ -68,6 +68,9 @@ class TrafficMonitorEngine:
             minimum_matching_threshold=0.8,
             frame_rate=config.FPS
         )
+
+        # 初始化运动滤波器
+        self.smoother = KinematicsSmoother(max_window=15)
 
     def run(self):
         """
@@ -436,85 +439,39 @@ class TrafficMonitorEngine:
         record['total_distance_m'] = float(np.sum(dists))
 
     def _calculate_and_save_history(self, tid, record, final_type_str):
-        """
-        [核心逻辑] 离场后微观数据结算 (1D 降维全量保留版)
-        完全抛弃掐头去尾，全量保留 ROI 内的高质量底边数据。
-        通过 X 轴常量化强制拉直轨迹，从降维层面彻底消灭海岸线悖论误差。
-        """
-        trajectory = record.get('trajectory', [])
-        n_points = len(trajectory)
+     trajectory = record.get('trajectory', [])
+     if len(trajectory) < 3: return 
 
-        # 只要有起码的轨迹点（例如3个以上）就可以进行滤波，不再掐头去尾！
-        # 若极端卡顿导致不到 3 帧，直接放弃后续物理结算，但保留记录
-        if n_points < 3:
-            return 
+     raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
+     raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
+     timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
 
-        raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
-        raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
-        timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
+     # 直接调用领域服务，一行代码完成所有降维、平滑与求导逻辑
+     sm_x, sm_y, speeds, accels = self.smoother.process_1d(timestamps, raw_x, raw_y)
 
-        # 计算轨迹平均横向位置，为车辆铺设 1D 虚拟直行轨道
-        mean_x = float(np.mean(raw_x))
+     # 覆盖原始轨迹并暴露给 UI Dashboard 展示
+     for i in range(len(trajectory)):
+         trajectory[i]['raw_x'] = float(sm_x[i])
+         trajectory[i]['raw_y'] = float(sm_y[i])
+         trajectory[i]['speed'] = float(speeds[i])
+         trajectory[i]['accel'] = float(accels[i])
 
-        # 动态窗口大小，最大设为 15，兼顾平滑与低帧率设备的鲁棒性
-        window_length = min(15, n_points if n_points % 2 != 0 else n_points - 1)
-        
-        if window_length >= 3:
-            # 仅对纵向 Y 轴进行 S-G 平滑 (全量利用包含起步和驶离的高价值数据)
-            smoothed_y = savgol_filter(raw_y, window_length=window_length, polyorder=2)
+     record['trajectory'] = trajectory 
 
-            # 一维极简速度计算 (仅靠 Y 轴绝对位移推导)
-            speeds = np.zeros(n_points)
-            for i in range(1, n_points):
-                dy = smoothed_y[i] - smoothed_y[i-1]
-                dt = timestamps[i] - timestamps[i-1]
-                # abs(dy) 确保无论车辆朝上还是朝下行驶，速度均为正标量
-                speeds[i] = abs(dy) / dt if dt > 1e-4 else speeds[i-1]
-            speeds[0] = speeds[1] if n_points > 1 else 0.0
+     self.latest_exit_record = {
+         'tid': tid, 'record': record, 'type_str': final_type_str
+     }
 
-            # 速度二次平滑
-            smoothed_speeds = savgol_filter(speeds, window_length=window_length, polyorder=2)
+     # 极简微观轨迹入库 (只存基础物理信息，用于离线解析)
+     for point in trajectory:
+         db_payload = {
+             'timestamp': point.get('timestamp', 0.0),
+             'ipm_x': point.get('raw_x', 0.0),   
+             'ipm_y': point.get('raw_y', 0.0)    
+         }
+         self.db.insert_micro(point['frame_id'], tid, db_payload)
 
-            # 中心差分计算加速度
-            accels = np.zeros(n_points)
-            for i in range(1, n_points - 1):
-                dv = smoothed_speeds[i+1] - smoothed_speeds[i-1]
-                dt = timestamps[i+1] - timestamps[i-1]
-                accels[i] = dv / dt if dt > 1e-4 else 0.0
-            
-            if n_points > 1:
-                dt_start = timestamps[1] - timestamps[0]
-                accels[0] = (smoothed_speeds[1] - smoothed_speeds[0]) / dt_start if dt_start > 1e-4 else 0.0
-                dt_end = timestamps[-1] - timestamps[-2]
-                accels[-1] = (smoothed_speeds[-1] - smoothed_speeds[-2]) / dt_end if dt_end > 1e-4 else 0.0
-
-            # 覆盖原始抖动的坐标和速度 (X轴全部强制对齐到虚拟轨道)
-            for i in range(n_points):
-                trajectory[i]['raw_x'] = mean_x
-                trajectory[i]['raw_y'] = float(smoothed_y[i])
-                trajectory[i]['speed'] = float(smoothed_speeds[i])
-                trajectory[i]['accel'] = float(accels[i])
-        
-        # 回写 1D 化处理后的干净轨迹
-        record['trajectory'] = trajectory 
-
-        # 暴露结算完毕的数据给 UI Dashboard 供抽样展示
-        self.latest_exit_record = {
-            'tid': tid,
-            'record': record,
-            'type_str': final_type_str
-        }
-
-        # Step 3. 微观轨迹提取与入库
-        for point in trajectory:
-            db_payload = {
-                'timestamp': point.get('timestamp', 0.0),
-                'ipm_x': point.get('raw_x', 0.0),   # 这里的 raw_x 已经是 1D 降维后的 mean_x
-                'ipm_y': point.get('raw_y', 0.0)    # 这里的 raw_y 已经是经过 S-G 平滑的值
-            }
-            self.db.insert_micro(point['frame_id'], tid, db_payload)
-            
-        self.db.flush_micro_buffer()
+     self.db.flush_micro_buffer()
 
     def _handle_ocr(self, frame, frame_id, detections):
         """
