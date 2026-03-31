@@ -5,6 +5,7 @@ import time
 from collections import defaultdict
 from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
+from scipy.signal import savgol_filter
 
 # 引入 Hailo 元数据解析库 (需要在运行环境/设备端安装有 tappas 的 python 绑定)
 try:
@@ -362,7 +363,7 @@ class TrafficMonitorEngine:
     def _calculate_and_save_history(self, tid, record, final_type_str):
         """
         [核心逻辑] 离场后微观数据结算 (Post-departure Settlement)
-        重构版：移除所有排放与工况模型，仅负责轨迹清洗、VSP提取与高频原始时序数据入库。
+        重构版：植入 Savitzky-Golay 非因果滤波，实现无相位滞后的全局轨迹与运动学平滑。
         """
         trajectory = record.get('trajectory', [])
 
@@ -370,26 +371,79 @@ class TrafficMonitorEngine:
         TRIM_SIZE = 5 
         if len(trajectory) > (TRIM_SIZE * 2 + 5):
             trajectory = trajectory[TRIM_SIZE : -TRIM_SIZE]
-            record['trajectory'] = trajectory # 回写以便 Reporter 使用
         else:
             return # 轨迹太短，放弃计算
 
-        # Step 2. 物理特征提取与入库
+        # Step 2. 非因果 Savitzky-Golay 全局平滑
+        n_points = len(trajectory)
+        if n_points >= 7:  # S-G 窗口大小设为 7
+            # 提取原始绝对物理坐标与动态时间戳
+            raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
+            raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
+            timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
+
+            # 动态调整窗口大小 (S-G filter 要求 window_length 必须是正奇数，且 <= n_points)
+            window_length = min(7, n_points if n_points % 2 != 0 else n_points - 1)
+            
+            if window_length >= 3:
+                # 2.1 对物理坐标进行一次 S-G 滤波去噪 (保峰并去除高频抖动)
+                smoothed_x = savgol_filter(raw_x, window_length=window_length, polyorder=2)
+                smoothed_y = savgol_filter(raw_y, window_length=window_length, polyorder=2)
+
+                # 2.2 结合平滑后的坐标与动态 dt，严谨推导瞬时速度
+                speeds = np.zeros(n_points)
+                for i in range(1, n_points):
+                    dx = smoothed_x[i] - smoothed_x[i-1]
+                    dy = smoothed_y[i] - smoothed_y[i-1]
+                    dt = timestamps[i] - timestamps[i-1]
+                    speeds[i] = np.hypot(dx, dy) / dt if dt > 1e-4 else speeds[i-1]
+                speeds[0] = speeds[1] if n_points > 1 else 0.0
+
+                # 2.3 对速度序列进行二次 S-G 滤波，获取平滑且保物理极值的高质量曲线
+                smoothed_speeds = savgol_filter(speeds, window_length=window_length, polyorder=2)
+
+                # 2.4 中心差分计算无滞后的真实加速度
+                accels = np.zeros(n_points)
+                for i in range(1, n_points - 1):
+                    dv = smoothed_speeds[i+1] - smoothed_speeds[i-1]
+                    dt = timestamps[i+1] - timestamps[i-1]
+                    accels[i] = dv / dt if dt > 1e-4 else 0.0
+                
+                if n_points > 1:
+                    dt_start = timestamps[1] - timestamps[0]
+                    accels[0] = (smoothed_speeds[1] - smoothed_speeds[0]) / dt_start if dt_start > 1e-4 else 0.0
+                    dt_end = timestamps[-1] - timestamps[-2]
+                    accels[-1] = (smoothed_speeds[-1] - smoothed_speeds[-2]) / dt_end if dt_end > 1e-4 else 0.0
+
+                # 2.5 覆盖原始极度抖动的坐标和速度
+                for i in range(n_points):
+                    trajectory[i]['raw_x'] = float(smoothed_x[i])
+                    trajectory[i]['raw_y'] = float(smoothed_y[i])
+                    trajectory[i]['speed'] = float(smoothed_speeds[i])
+                    trajectory[i]['accel'] = float(accels[i])
+        
+        record['trajectory'] = trajectory # 回写清洗并平滑后的轨迹
+
+        # 暴露结算完毕的数据给 UI Dashboard 供抽样展示
+        self.latest_exit_record = {
+            'tid': tid,
+            'record': record,
+            'type_str': final_type_str
+        }
+
+        # Step 3. 物理特征提取与入库
         vsp_calc = self.comps.get('vsp_calculator')
         if not vsp_calc:
             return
 
         final_class_id = record['class_id']
-
         for point in trajectory:
             v = point['speed']
             a = point['accel']
             fid = point['frame_id']
             
-            # 实时计算当前点的 VSP
             vsp = vsp_calc.calculate(v, a, final_class_id)
             
-            # 构建精简后的微观表 Payload，注入精确时间戳与 IPM 坐标
             db_payload = {
                 'timestamp': point.get('timestamp', 0.0),
                 'ipm_x': point.get('raw_x', 0.0),
@@ -400,7 +454,6 @@ class TrafficMonitorEngine:
             }
             self.db.insert_micro(fid, tid, db_payload)
             
-        # --- 强制刷写缓冲区 ---
         self.db.flush_micro_buffer()
 
     def _handle_ocr(self, frame, frame_id, detections):

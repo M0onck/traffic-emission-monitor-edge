@@ -7,3 +7,4 @@ plotext
 onnxruntime
 PyQt5
 ntplib
+scipy

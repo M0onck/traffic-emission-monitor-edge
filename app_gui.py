@@ -487,46 +487,38 @@ class TrafficMonitorUI(QMainWindow):
         self.update_nav_buttons()
 
     def update_dashboard(self):
-        """Dashboard 数据抽样更新逻辑"""
-        # 确保后台引擎已经初始化并产生了数据
+        """Dashboard 数据抽样更新逻辑 (改为离场后结算展示)"""
+        # 确保后台引擎已经初始化
         if not hasattr(self, 'worker') or not self.worker.engine: return
         engine = self.worker.engine
         
-        # 从引擎注册表中获取当前仍在画面内的所有车辆
-        active_records = engine.registry.records
-        active_tids = list(active_records.keys())
-
-        # 如果画面没车，重置抽样状态
-        if not active_tids:
-            self.sampled_tid = None
-            self.lbl_dash_id.setText("Target ID: Waiting...")
-            self.lbl_dash_type.setText("Class: -")
-            self.lbl_dash_plate.setText("Plate Color: -")
-            self.lbl_dash_dist.setText("Distance: 0.0 m")
-            self.curve_widget.update_curve([])
+        # 检查引擎是否产出了最新结算完毕的离场数据
+        if not hasattr(engine, 'latest_exit_record') or not engine.latest_exit_record:
             return
-
-        # 如果当前抽样的车离开了，或者刚开机还没抽样，抓取当前最新的车 (ID最大的)
-        if self.sampled_tid not in active_tids:
-            self.sampled_tid = max(active_tids)
-
-        # 提取数据更新 UI
-        record = active_records[self.sampled_tid]
-        
-        # 车型
-        cid = record.get('class_id', -1)
-        type_str = "CAR" if cid == cfg.YOLO_CLASS_CAR else "BUS" if cid == cfg.YOLO_CLASS_BUS else "TRUCK" if cid == cfg.YOLO_CLASS_TRUCK else "UNKNOWN"
-        
-        # 车牌颜色 (优先查缓存的最新高置信度结果)
-        plate_color = "Detecting..."
-        if self.sampled_tid in engine.plate_cache:
-            plate_color = engine.plate_cache[self.sampled_tid].get('color', 'Detecting...')
             
-        # 速度曲线与里程
+        latest_data = engine.latest_exit_record
+        tid = latest_data['tid']
+
+        # 如果这辆车已经在 Dashboard 上展示过了，就不重复刷新，避免闪烁
+        if getattr(self, 'sampled_tid', None) == tid:
+            return
+            
+        # 捕获到了新的离场车辆！
+        self.sampled_tid = tid
+        record = latest_data['record']
+        type_str = latest_data['type_str']
+        
+        # 车牌颜色 (利用离场前结算的最新历史)
+        plate_color = "Unknown"
+        if record.get('plate_history'):
+            plate_color = record['plate_history'][-1].get('color', 'Unknown')
+            
+        # 提取经过 S-G 非因果滤波处理过的高质量速度曲线
         trajectory = record.get('trajectory', [])
         speeds = [p['speed'] for p in trajectory if 'speed' in p]
         
-        self.lbl_dash_id.setText(f"Target ID: #{self.sampled_tid}")
+        # 更新 UI 组件
+        self.lbl_dash_id.setText(f"Target ID: #{tid} (Exited & Smoothed)")
         self.lbl_dash_type.setText(f"Class: {type_str}")
         self.lbl_dash_plate.setText(f"Plate Color: {plate_color}")
         self.lbl_dash_dist.setText(f"Distance: {record.get('total_distance_m', 0.0):.1f} m")
