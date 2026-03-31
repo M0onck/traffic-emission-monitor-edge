@@ -59,6 +59,15 @@ class TrafficMonitorEngine:
         # 修复潜在的 AttributeError: 恢复对基础车型分类器(用于解析车辆类型逻辑)的引用
         self.classifier = components.get('classifier')
 
+        # 初始化 Python 层的高性能 ByteTrack 追踪器
+        # lost_track_buffer 设为 30 帧，足以抗遮挡；配合 Python 先进的卡尔曼预测，能完美解决高速幽灵框
+        self.tracker = sv.ByteTrack(
+            track_activation_threshold=0.25, 
+            lost_track_buffer=30, 
+            minimum_matching_threshold=0.8,
+            frame_rate=config.FPS
+        )
+
     def run(self):
         """
         启动基于 GStreamer 轮询的主处理循环。
@@ -164,8 +173,7 @@ class TrafficMonitorEngine:
         h, w = frame.shape[:2]
         
         # --- Step 1: 解析 Hailo Metadata (从底层接收推理结果) ---
-        xyxy, class_ids, confs, tracker_ids = [], [], [], []
-        landmarks_dict = {} # {track_id: np.array([[x1,y1], [x2,y2]...])}
+        xyxy, class_ids, confs = [], [], []
 
         try:
             roi = hailo.get_roi_from_buffer(buffer)
@@ -181,14 +189,6 @@ class TrafficMonitorEngine:
                 x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
                 y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
                 
-                # 获取 Tracking ID (由底层的 hailotracker 挂载)
-                track_id = -1
-                for obj in det.get_objects_typed(hailo.HAILO_UNIQUE_ID):
-                    track_id = obj.get_id()
-                    break
-                
-                if track_id == -1: continue # 跳过没有追踪ID的目标
-                
                 # 获取标签，并进行严格的白名单过滤
                 label = det.get_label()
                 if label not in self.label_map:
@@ -196,32 +196,28 @@ class TrafficMonitorEngine:
                     
                 cid = self.label_map[label]
                 
-                # 获取关键点 (在 C++ .so 中挂载的)
-                lm_pts = []
-                for lm_obj in det.get_objects_typed(hailo.HAILO_LANDMARKS):
-                    for pt in lm_obj.get_points():
-                        lm_pts.append([pt.x() * w, pt.y() * h])
-                
                 xyxy.append([x1, y1, x2, y2])
                 class_ids.append(cid)
                 confs.append(det.get_confidence())
-                tracker_ids.append(track_id)
-                if len(lm_pts) == 4: # 假设我们保存了车牌的4个角点
-                    landmarks_dict[track_id] = np.array(lm_pts, dtype=np.float32)
 
         except Exception as e:
             # 如果解析出错（或者在非真实设备环境运行），构建空的数据防止崩溃
             pass
             
-        # 构建对下游完全透明的 supervision 结构格式
+        # 构建初步的 Detections (不再从 Hailo 接收 tracker_id)
         if len(xyxy) > 0:
             detections = sv.Detections(
                 xyxy=np.array(xyxy, dtype=np.float32),
                 confidence=np.array(confs, dtype=np.float32),
-                class_id=np.array(class_ids, dtype=int),
-                tracker_id=np.array(tracker_ids, dtype=int)
+                class_id=np.array(class_ids, dtype=int)
             )
+            
+            # 先用 NMS 强力合并完美重叠的检测框 (去除多余的特征)
             detections = detections.with_nms(threshold=0.4, class_agnostic=True)
+            
+            # 把干净的、没有任何重叠的框喂给追踪器，再分配 ID
+            detections = self.tracker.update_with_detections(detections)
+            
         else:
             detections = sv.Detections.empty()
             detections.tracker_id = np.array([], dtype=int)
@@ -268,10 +264,7 @@ class TrafficMonitorEngine:
                     )
 
         # --- Step 6: 可视化渲染 ---
-        label_data_list = self._prepare_labels(
-            detections,
-            landmarks_dict
-        )
+        label_data_list = self._prepare_labels(detections)
         return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):

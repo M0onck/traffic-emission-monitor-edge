@@ -44,7 +44,6 @@ class GstPipelineManager:
             f"videoconvert ! video/x-raw, format=RGB ! "
             f"hailonet hef-path={self.hef_path} vdevice-group-id=1 ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"hailotracker name=hailo_tracker keep-tracked-frames=30 kalman-dist-thr=0.85 class-id=-1 ! "
             f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=false sync=false "
         )
         return pipeline
