@@ -1,10 +1,13 @@
 import sys
 import cv2
 import numpy as np
+
+# --- 引入 Qt 相关依赖 ---
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QLabel, QStackedWidget)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont
+                             QHBoxLayout, QPushButton, QLabel, QStackedWidget,
+                             QTabWidget, QGridLayout)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont, QPainterPath
 
 # --- 引入原有业务组件 ---
 import infra.config.loader as cfg
@@ -21,6 +24,60 @@ from ui.renderer import Visualizer
 from ui.console_reporter import Reporter
 from perception.gst_pipeline import GstPipelineManager
 import supervision as sv
+
+# --- UI 组件：原生轻量级实时速度曲线 ---
+class SpeedCurveWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.speeds = []
+        self.setMinimumHeight(150)
+        self.setStyleSheet("background-color: #1e1e1e; border: 1px solid #555;")
+
+    def update_curve(self, speeds):
+        self.speeds = speeds
+        self.update() # 触发重绘
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        w, h = self.width(), self.height()
+        
+        # 绘制背景和网格
+        painter.fillRect(0, 0, w, h, QColor(30, 30, 30))
+        painter.setPen(QPen(QColor(80, 80, 80), 1, Qt.DashLine))
+        for i in range(1, 4):
+            y_line = int(h * i / 4)
+            painter.drawLine(0, y_line, w, y_line)
+
+        if len(self.speeds) < 2:
+            painter.setPen(QPen(QColor(150, 150, 150)))
+            painter.drawText(self.rect(), Qt.AlignCenter, "Waiting for data...")
+            return
+
+        # 动态缩放
+        max_speed = max(20.0, max(self.speeds) * 1.2) # 至少留 20m/s 的量程
+        dx = w / max(1, len(self.speeds) - 1)
+        
+        path = QPainterPath()
+        for i, spd in enumerate(self.speeds):
+            x = i * dx
+            y = h - (spd / max_speed) * h
+            if i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+
+        # 绘制曲线
+        painter.setPen(QPen(QColor(0, 255, 255), 2)) # 青色曲线
+        painter.drawPath(path)
+        
+        # 绘制当前数值文本
+        curr_speed = self.speeds[-1]
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.setFont(QFont("Arial", 10))
+        painter.drawText(10, 20, f"Max Scale: {max_speed:.1f} m/s")
+        painter.drawText(w - 100, 20, f"Now: {curr_speed:.1f} m/s")
 
 # --- UI 组件：可拖拽的标定画布 ---
 class CalibrationCanvas(QLabel):
@@ -294,54 +351,61 @@ class TrafficMonitorUI(QMainWindow):
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        # 尺寸调节器闭包生成器
-        def create_adjuster(label_text, value, step, setter_func):
+        # 全新的粗微调控制器
+        def create_adjuster(label_text, init_value, setter_func):
             row = QHBoxLayout()
             lbl = QLabel(label_text)
             lbl.setFont(QFont("Arial", 16))
+            lbl.setMinimumWidth(220)
             
-            btn_minus = QPushButton(" - ")
-            btn_minus.setFont(QFont("Arial", 20, QFont.Bold))
-            btn_minus.setFixedSize(60, 60)
+            # 按钮样式
+            btn_style = "QPushButton { font-weight: bold; font-size: 16px; background-color: #333; color: white; border-radius: 5px; } QPushButton:pressed { background-color: #555; }"
             
-            val_lbl = QLabel(f"{value:.1f} m")
-            val_lbl.setFont(QFont("Arial", 20, QFont.Bold))
+            btn_minus_coarse = QPushButton("- 1.0")
+            btn_minus_fine = QPushButton("- 0.1")
+            btn_plus_fine = QPushButton("+ 0.1")
+            btn_plus_coarse = QPushButton("+ 1.0")
+            
+            for btn in [btn_minus_coarse, btn_minus_fine, btn_plus_fine, btn_plus_coarse]:
+                btn.setFixedSize(65, 50)
+                btn.setStyleSheet(btn_style)
+            
+            val_lbl = QLabel(f"{init_value:.1f} m")
+            val_lbl.setFont(QFont("Arial", 22, QFont.Bold))
             val_lbl.setAlignment(Qt.AlignCenter)
-            val_lbl.setMinimumWidth(120)
+            val_lbl.setMinimumWidth(100)
             
-            btn_plus = QPushButton(" + ")
-            btn_plus.setFont(QFont("Arial", 20, QFont.Bold))
-            btn_plus.setFixedSize(60, 60)
+            # 闭包状态容器 (使用列表规避 nonlocal 限制)
+            state = {'val': init_value}
             
-            def on_minus():
-                nonlocal value
-                value = max(1.0, value - step)
-                val_lbl.setText(f"{value:.1f} m")
-                setter_func(value)
-                
-            def on_plus():
-                nonlocal value
-                value += step
-                val_lbl.setText(f"{value:.1f} m")
-                setter_func(value)
-                
-            btn_minus.clicked.connect(on_minus)
-            btn_plus.clicked.connect(on_plus)
+            def make_callback(delta):
+                def callback():
+                    state['val'] = max(1.0, state['val'] + delta)
+                    val_lbl.setText(f"{state['val']:.1f} m")
+                    setter_func(state['val'])
+                return callback
+
+            btn_minus_coarse.clicked.connect(make_callback(-1.0))
+            btn_minus_fine.clicked.connect(make_callback(-0.1))
+            btn_plus_fine.clicked.connect(make_callback(0.1))
+            btn_plus_coarse.clicked.connect(make_callback(1.0))
             
             row.addStretch()
             row.addWidget(lbl)
-            row.addWidget(btn_minus)
+            row.addWidget(btn_minus_coarse)
+            row.addWidget(btn_minus_fine)
             row.addWidget(val_lbl)
-            row.addWidget(btn_plus)
+            row.addWidget(btn_plus_fine)
+            row.addWidget(btn_plus_coarse)
             row.addStretch()
             return row
 
         def set_w(val): self.phys_w = val
         def set_h(val): self.phys_h = val
 
-        layout.addLayout(create_adjuster("车道宽度 (Width): ", self.phys_w, 0.5, set_w))
-        layout.addSpacing(20)
-        layout.addLayout(create_adjuster("分析距离 (Length): ", self.phys_h, 1.0, set_h))
+        layout.addLayout(create_adjuster("车道总宽度 (Width): ", self.phys_w, set_w))
+        layout.addSpacing(30)
+        layout.addLayout(create_adjuster("纵向标定距 (Length): ", self.phys_h, set_h))
 
         self.stack.addWidget(page)
 
@@ -349,11 +413,60 @@ class TrafficMonitorUI(QMainWindow):
         self.page3 = QWidget()
         layout = QVBoxLayout(self.page3)
         layout.setContentsMargins(0,0,0,0)
+        
+        # 创建底部 Tab 栏
+        self.tabs = QTabWidget()
+        self.tabs.setTabPosition(QTabWidget.South) # 页签放在底部
+        self.tabs.setFont(QFont("Arial", 14, QFont.Bold))
+        layout.addWidget(self.tabs)
+        
+        # --- Tab 1: 实时视频监控 ---
+        tab_video = QWidget()
+        v_layout = QVBoxLayout(tab_video)
+        v_layout.setContentsMargins(0,0,0,0)
         self.video_label = QLabel("正在启动边缘端硬件加速推理，请稍候...")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setFont(QFont("Arial", 14))
         self.video_label.setStyleSheet("background-color: black; color: white;")
-        layout.addWidget(self.video_label)
+        v_layout.addWidget(self.video_label)
+        self.tabs.addTab(tab_video, "📷 实时画面")
+        
+        # --- Tab 2: 单车抽样 Dashboard ---
+        tab_dash = QWidget()
+        d_layout = QVBoxLayout(tab_dash)
+        d_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 状态面板
+        info_layout = QGridLayout()
+        self.lbl_dash_id = QLabel("Target ID: Waiting...")
+        self.lbl_dash_type = QLabel("Class: -")
+        self.lbl_dash_plate = QLabel("Plate Color: -")
+        self.lbl_dash_dist = QLabel("Distance: 0.0 m")
+        
+        font_dash = QFont("Arial", 14)
+        for lbl in [self.lbl_dash_id, self.lbl_dash_type, self.lbl_dash_plate, self.lbl_dash_dist]:
+            lbl.setFont(font_dash)
+            
+        info_layout.addWidget(self.lbl_dash_id, 0, 0)
+        info_layout.addWidget(self.lbl_dash_type, 0, 1)
+        info_layout.addWidget(self.lbl_dash_plate, 1, 0)
+        info_layout.addWidget(self.lbl_dash_dist, 1, 1)
+        d_layout.addLayout(info_layout)
+        
+        d_layout.addSpacing(10)
+        d_layout.addWidget(QLabel("Real-time Speed Profile (m/s):"))
+        
+        # 曲线组件
+        self.curve_widget = SpeedCurveWidget()
+        d_layout.addWidget(self.curve_widget)
+        d_layout.addStretch()
+        
+        self.tabs.addTab(tab_dash, "📊 数据抽样板")
+        
+        # 定时器：用于轮询底层数据更新 Dashboard
+        self.dash_timer = QTimer(self)
+        self.dash_timer.timeout.connect(self.update_dashboard)
+        self.sampled_tid = None
         
         self.stack.addWidget(self.page3)
 
@@ -368,9 +481,57 @@ class TrafficMonitorUI(QMainWindow):
         if idx == 1:
             # 即将进入运行状态
             self.start_engine()
+            self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
         if idx < self.stack.count() - 1:
             self.stack.setCurrentIndex(idx + 1)
         self.update_nav_buttons()
+
+    def update_dashboard(self):
+        """Dashboard 数据抽样更新逻辑"""
+        # 确保后台引擎已经初始化并产生了数据
+        if not hasattr(self, 'worker') or not self.worker.engine: return
+        engine = self.worker.engine
+        
+        # 从引擎注册表中获取当前仍在画面内的所有车辆
+        active_records = engine.registry.records
+        active_tids = list(active_records.keys())
+
+        # 如果画面没车，重置抽样状态
+        if not active_tids:
+            self.sampled_tid = None
+            self.lbl_dash_id.setText("Target ID: Waiting...")
+            self.lbl_dash_type.setText("Class: -")
+            self.lbl_dash_plate.setText("Plate Color: -")
+            self.lbl_dash_dist.setText("Distance: 0.0 m")
+            self.curve_widget.update_curve([])
+            return
+
+        # 如果当前抽样的车离开了，或者刚开机还没抽样，抓取当前最新的车 (ID最大的)
+        if self.sampled_tid not in active_tids:
+            self.sampled_tid = max(active_tids)
+
+        # 提取数据更新 UI
+        record = active_records[self.sampled_tid]
+        
+        # 车型
+        cid = record.get('class_id', -1)
+        type_str = "CAR" if cid == cfg.YOLO_CLASS_CAR else "BUS" if cid == cfg.YOLO_CLASS_BUS else "TRUCK" if cid == cfg.YOLO_CLASS_TRUCK else "UNKNOWN"
+        
+        # 车牌颜色 (优先查缓存的最新高置信度结果)
+        plate_color = "Detecting..."
+        if self.sampled_tid in engine.plate_cache:
+            plate_color = engine.plate_cache[self.sampled_tid].get('color', 'Detecting...')
+            
+        # 速度曲线与里程
+        trajectory = record.get('trajectory', [])
+        speeds = [p['speed'] for p in trajectory if 'speed' in p]
+        
+        self.lbl_dash_id.setText(f"Target ID: #{self.sampled_tid}")
+        self.lbl_dash_type.setText(f"Class: {type_str}")
+        self.lbl_dash_plate.setText(f"Plate Color: {plate_color}")
+        self.lbl_dash_dist.setText(f"Distance: {record.get('total_distance_m', 0.0):.1f} m")
+        
+        self.curve_widget.update_curve(speeds)
 
     def update_nav_buttons(self):
         idx = self.stack.currentIndex()
@@ -411,6 +572,8 @@ class TrafficMonitorUI(QMainWindow):
 
     def closeEvent(self, event):
         print(">>> [System] 正在安全退出...")
+        if hasattr(self, 'dash_timer'):
+            self.dash_timer.stop() # 安全停止定时器
         if hasattr(self, 'worker'):
             self.worker.stop()
             self.worker.wait(2000) # 等待线程安全退出
