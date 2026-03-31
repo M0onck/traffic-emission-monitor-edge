@@ -355,12 +355,12 @@ class TrafficMonitorEngine:
             # 将投票决定的最终颜色存入 record，确保下游数据库和 UI 拿到的是同一份数据
             record['final_plate_color'] = voted_color
             
-            # Step 2. 几何距离重算
-            self._recalculate_distance_geometric(record)
-
-            # Step 3. 微观时空轨迹与 VSP 结算 (核心逻辑)
+            # Step 2. 微观时空轨迹与 VSP 结算 (核心逻辑)
             if 'trajectory' in record:
                 self._calculate_and_save_history(tid, record, final_type_str)
+
+            # Step 3. 几何距离重算
+            self._recalculate_distance_geometric(record)
 
             # Step 4. 宏观数据入库
             self.db.insert_macro(tid, record, final_type_str, final_plate)
