@@ -221,7 +221,7 @@ class TrafficMonitorEngine:
                 class_id=np.array(class_ids, dtype=int),
                 tracker_id=np.array(tracker_ids, dtype=int)
             )
-            detections = detections.with_nms(threshold=0.6, class_agnostic=True)
+            detections = detections.with_nms(threshold=0.4, class_agnostic=True)
         else:
             detections = sv.Detections.empty()
             detections.tracker_id = np.array([], dtype=int)
