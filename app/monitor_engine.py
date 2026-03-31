@@ -305,18 +305,13 @@ class TrafficMonitorEngine:
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
         for tid, color_type, conf, rel_landmarks in results:
-            # 🚀 探针 3：查看主进程收到的数据和配置的阈值冲突
-            print(f"[Engine Probe] <- 收到后台结果 ID: {tid}, 颜色: {color_type}, Conf: {conf:.3f}, 配置文件阈值: {self.cfg.OCR_CONF_THRESHOLD}", flush=True)
-            
-            # 暂时将阈值强行设为极低，确保数据能流进去
-            if conf > -999.0: 
+            # 恢复正常的配置文件阈值判断
+            if conf > self.cfg.OCR_CONF_THRESHOLD: 
                 self.registry.add_plate_history(tid, color_type, 1.0, conf)
                 self.plate_cache[tid] = {
                     'color': color_type,
                     'rel_landmarks': rel_landmarks
                 }
-            else:
-                print(f"[Engine Probe] X 结果被拦截！", flush=True)
 
     def _handle_exits(self, frame_id):
         """
