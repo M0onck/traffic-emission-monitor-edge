@@ -87,7 +87,13 @@ class AsyncPlateRecognizer:
                 warped_plate = cv2.warpPerspective(vehicle_img, M, (96, 32))
                 
                 # ================= 3. litemodel 颜色分类 =================
-                plate_resize = cv2.resize(warped_plate, (96, 96))
+                # 动态获取 ONNX 模型期望的输入尺寸
+                lite_shape = sess_lite.get_inputs()[0].shape
+                in_h = lite_shape[2] if isinstance(lite_shape[2], int) else 32
+                in_w = lite_shape[3] if isinstance(lite_shape[3], int) else 96
+                
+                # 保持正确的长宽比进行 Resize
+                plate_resize = cv2.resize(warped_plate, (in_w, in_h))
                 plate_chw = np.transpose(plate_resize, (2, 0, 1))
                 lite_tensor = np.expand_dims((plate_chw / 255.0).astype(np.float32), axis=0)
                 
@@ -96,7 +102,7 @@ class AsyncPlateRecognizer:
                 
                 logits = lite_out[0][0]
                 
-                # 🚨 智能概率转换：完美兼容 Raw Logits 和 Pre-Softmax
+                # 智能概率转换：完美兼容 Raw Logits 和 Pre-Softmax
                 if np.isclose(np.sum(logits), 1.0) and np.all(logits >= 0):
                     probs = logits
                 else:

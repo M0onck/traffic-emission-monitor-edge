@@ -5,6 +5,7 @@ import time
 from collections import defaultdict
 from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
+from scipy.signal import savgol_filter
 
 # 引入 Hailo 元数据解析库 (需要在运行环境/设备端安装有 tappas 的 python 绑定)
 try:
@@ -58,6 +59,15 @@ class TrafficMonitorEngine:
         
         # 修复潜在的 AttributeError: 恢复对基础车型分类器(用于解析车辆类型逻辑)的引用
         self.classifier = components.get('classifier')
+
+        # 初始化 Python 层的高性能 ByteTrack 追踪器
+        # lost_track_buffer 设为 30 帧，足以抗遮挡；配合 Python 先进的卡尔曼预测，能完美解决高速幽灵框
+        self.tracker = sv.ByteTrack(
+            track_activation_threshold=0.25, 
+            lost_track_buffer=30, 
+            minimum_matching_threshold=0.8,
+            frame_rate=config.FPS
+        )
 
     def run(self):
         """
@@ -164,8 +174,7 @@ class TrafficMonitorEngine:
         h, w = frame.shape[:2]
         
         # --- Step 1: 解析 Hailo Metadata (从底层接收推理结果) ---
-        xyxy, class_ids, confs, tracker_ids = [], [], [], []
-        landmarks_dict = {} # {track_id: np.array([[x1,y1], [x2,y2]...])}
+        xyxy, class_ids, confs = [], [], []
 
         try:
             roi = hailo.get_roi_from_buffer(buffer)
@@ -181,14 +190,6 @@ class TrafficMonitorEngine:
                 x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
                 y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
                 
-                # 获取 Tracking ID (由底层的 hailotracker 挂载)
-                track_id = -1
-                for obj in det.get_objects_typed(hailo.HAILO_UNIQUE_ID):
-                    track_id = obj.get_id()
-                    break
-                
-                if track_id == -1: continue # 跳过没有追踪ID的目标
-                
                 # 获取标签，并进行严格的白名单过滤
                 label = det.get_label()
                 if label not in self.label_map:
@@ -196,32 +197,28 @@ class TrafficMonitorEngine:
                     
                 cid = self.label_map[label]
                 
-                # 获取关键点 (在 C++ .so 中挂载的)
-                lm_pts = []
-                for lm_obj in det.get_objects_typed(hailo.HAILO_LANDMARKS):
-                    for pt in lm_obj.get_points():
-                        lm_pts.append([pt.x() * w, pt.y() * h])
-                
                 xyxy.append([x1, y1, x2, y2])
                 class_ids.append(cid)
                 confs.append(det.get_confidence())
-                tracker_ids.append(track_id)
-                if len(lm_pts) == 4: # 假设我们保存了车牌的4个角点
-                    landmarks_dict[track_id] = np.array(lm_pts, dtype=np.float32)
 
         except Exception as e:
             # 如果解析出错（或者在非真实设备环境运行），构建空的数据防止崩溃
             pass
             
-        # 构建对下游完全透明的 supervision 结构格式
+        # 构建初步的 Detections (不再从 Hailo 接收 tracker_id)
         if len(xyxy) > 0:
             detections = sv.Detections(
                 xyxy=np.array(xyxy, dtype=np.float32),
                 confidence=np.array(confs, dtype=np.float32),
-                class_id=np.array(class_ids, dtype=int),
-                tracker_id=np.array(tracker_ids, dtype=int)
+                class_id=np.array(class_ids, dtype=int)
             )
-            detections = detections.with_nms(threshold=0.6, class_agnostic=True)
+            
+            # 先用 NMS 强力合并完美重叠的检测框 (去除多余的特征)
+            detections = detections.with_nms(threshold=0.4, class_agnostic=True)
+            
+            # 把干净的、没有任何重叠的框喂给追踪器，再分配 ID
+            detections = self.tracker.update_with_detections(detections)
+            
         else:
             detections = sv.Detections.empty()
             detections.tracker_id = np.array([], dtype=int)
@@ -268,10 +265,7 @@ class TrafficMonitorEngine:
                     )
 
         # --- Step 6: 可视化渲染 ---
-        label_data_list = self._prepare_labels(
-            detections,
-            landmarks_dict
-        )
+        label_data_list = self._prepare_labels(detections)
         return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):
@@ -280,36 +274,88 @@ class TrafficMonitorEngine:
         if frame_id % self.cfg.OCR_INTERVAL != 0:
             return
 
+        # 获取用户标定的 ROI 4 个角点
+        pts = self.visualizer.calibration_points
+        if pts is None or len(pts) < 4:
+            return
+            
+        # 提取 ROI 的“下边线” (左下角 BL 与 右下角 BR)
+        p1 = pts[0].astype(np.float32)
+        p2 = pts[1].astype(np.float32)
+        
+        # 构建底边向量
+        line_vec = p2 - p1
+        line_len = np.linalg.norm(line_vec)
+        if line_len < 1e-4: return
+
         for tid, box in zip(detections.tracker_id, detections.xyxy):
             # 冷却检查
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
                 continue
             
             x1, y1, x2, y2 = map(int, box)
-            cx, cy = (x1+x2)/2, (y1+y2)/2
+            
+            # 使用检测框“底边中点”作为车辆物理触地点
+            bc_x, bc_y = (x1 + x2) / 2.0, float(y2)
+            pt_vec = np.array([bc_x, bc_y]) - p1
 
-            # 放宽判定区域，让车刚进镜头就开始被截取，留给后台充足的计算时间！
-            if not (0.1*img_w < cx < 0.9*img_w and 0.2*img_h < cy < 0.95*img_h):
-                continue
+            # 点到直线的垂直像素距离 (叉乘 / 底边长)
+            dist_to_bottom = np.abs(np.cross(line_vec, pt_vec)) / line_len
+            
+            # 车辆横向投影比例 
+            # (0 代表车辆位于左下角，1 代表位于右下角，超出这个范围说明车在线段延长线外)
+            proj_ratio = np.dot(pt_vec, line_vec) / (line_len ** 2)
+
+            # 智能触发条件
+            # 条件 A: 距离 ROI 下边线小于画面高度的 25% (如 1080p 下约 270 像素宽度的触发带)
+            # 条件 B: 车辆横向在底边之间 (放宽 ±10% 的容差，允许压线)
+            if dist_to_bottom < (img_h * 0.25) and -0.1 < proj_ratio < 1.1:
                 
-            # 动态缩放面积阈值 (假设已适配720p或1080p)
-            scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
-            if (x2-x1)*(y2-y1) > scaled_min_area:
-                vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
-                if vehicle_crop.size > 0:
-                    # 尝试将裁剪后的图像推入队列
-                    if self.plate_worker.push_task(tid, vehicle_crop):
-                        self.plate_retry[tid] = frame_id # 只有成功推入才刷新冷却时间
+                # 尺寸筛选
+                scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
+                if (x2-x1)*(y2-y1) > scaled_min_area:
+                    vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
+                    if vehicle_crop.size > 0:
+                        if self.plate_worker.push_task(tid, vehicle_crop):
+                            self.plate_retry[tid] = frame_id
 
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
+        
+        color_thresholds = {
+            'green': 0.60,  
+            'blue': 0.85,   
+            'yellow': 0.75  
+        }
+
+        # 只要这辆车历史上有 N 帧被识别为绿/黄，就强制锁定
+        VETO_THRESHOLD = 1
+
         for tid, color_type, conf, rel_landmarks in results:
-            # 恢复正常的配置文件阈值判断
-            if conf > self.cfg.OCR_CONF_THRESHOLD: 
+            target_threshold = color_thresholds.get(color_type, self.cfg.OCR_CONF_THRESHOLD)
+            
+            if conf > target_threshold: 
+                # 1. 正常写入历史记录
                 self.registry.add_plate_history(tid, color_type, 1.0, conf)
+                
+                # 2. 少数派锁定逻辑 
+                record = self.registry.get_record(tid)
+                history = record.get('plate_history', []) if record else []
+                
+                green_count = sum(1 for h in history if h['color'] == 'green')
+                yellow_count = sum(1 for h in history if h['color'] == 'yellow')
+                
+                # 决定当前展示给 UI 的颜色
+                final_color_for_ui = color_type
+                if green_count >= VETO_THRESHOLD:
+                    final_color_for_ui = 'green'
+                elif yellow_count >= VETO_THRESHOLD:
+                    final_color_for_ui = 'yellow'
+
+                # 3. 更新缓存，允许更新坐标(rel_landmarks)，但颜色可能被强行纠正为绿/黄
                 self.plate_cache[tid] = {
-                    'color': color_type,
+                    'color': final_color_for_ui,
                     'rel_landmarks': rel_landmarks
                 }
 
@@ -322,13 +368,36 @@ class TrafficMonitorEngine:
             final_plate, final_type_str = self.classifier.resolve_type(
                 record['class_id'], record.get('plate_history', [])
             )
-            
-            # Step 2. 几何距离重算
-            self._recalculate_distance_geometric(record)
 
-            # Step 3. 微观时空轨迹与 VSP 结算 (核心逻辑)
+            # 少数派一票否决制 (Minority Veto)
+            voted_color = "Unknown"
+            history = record.get('plate_history', [])
+            
+            if history:
+                green_count = sum(1 for h in history if h['color'] == 'green')
+                yellow_count = sum(1 for h in history if h['color'] == 'yellow')
+                
+                VETO_THRESHOLD = 2
+                
+                if green_count >= VETO_THRESHOLD:
+                    voted_color = 'green'
+                elif yellow_count >= VETO_THRESHOLD:
+                    voted_color = 'yellow'
+                else:
+                    # 如果没有达到少数派阈值，才退回到普通的置信度投票 (大概率会投出 blue)
+                    scores = defaultdict(float)
+                    for entry in history:
+                        scores[entry['color']] += entry.get('conf', 1.0)
+                    voted_color = max(scores, key=scores.get)
+            
+            record['final_plate_color'] = voted_color
+            
+            # Step 2. 微观时空轨迹与 VSP 结算 (核心逻辑)
             if 'trajectory' in record:
                 self._calculate_and_save_history(tid, record, final_type_str)
+
+            # Step 3. 几何距离重算
+            self._recalculate_distance_geometric(record)
 
             # Step 4. 宏观数据入库
             self.db.insert_macro(tid, record, final_type_str, final_plate)
@@ -341,62 +410,114 @@ class TrafficMonitorEngine:
     
     def _recalculate_distance_geometric(self, record):
         """
-        [算法优化] 基于几何路径重算总里程。
+        [算法优化] 基于降维后的 1D 几何路径重算总里程。
         
-        使用原始像素点的透视变换结果累加欧氏距离。
-        相比于实时速度积分 (\int_{0}^{t} v(t) \, \mathrm{dt})，该方法不受滤波滞后和起步噪声影响，
-        能更真实地反映车辆的物理位移。
+        直接使用被 _calculate_and_save_history 强制拉直为 1D 直线后的物理坐标。
+        彻底消除了海岸线悖论，即使不裁剪首尾帧，测算出的物理距离依然绝对精准。
         """
         trajectory = record.get('trajectory', [])
         if len(trajectory) < 2: return
 
-        # Step 1. 提取有效像素点
-        pixels = []
+        # Step 1. 提取已被拉直和 S-G 平滑过的纯净物理坐标
+        pts_phys = []
         for p in trajectory:
-            if p.get('pixel_x') is not None and p.get('pixel_y') is not None:
-                pixels.append([p['pixel_x'], p['pixel_y']])
+            if p.get('raw_x') is not None and p.get('raw_y') is not None:
+                pts_phys.append([p['raw_x'], p['raw_y']])
         
-        if len(pixels) < 2: return
+        if len(pts_phys) < 2: return
         
-        # Step 2. 批量透视变换 (Pixel -> Meter)
-        pts_phys = self.comps['transformer'].transform_points(np.array(pixels))
+        # 转换为 NumPy 数组
+        pts_phys = np.array(pts_phys)
         
-        # Step 3. 累加线段长度
+        # Step 2. 累加 1D 线段的长度 
+        # (此时由于所有点的 X 坐标相同，这本质上就是计算 Y 轴绝对位移的总和)
         diffs = pts_phys[1:] - pts_phys[:-1]
         dists = np.linalg.norm(diffs, axis=1)
         record['total_distance_m'] = float(np.sum(dists))
 
     def _calculate_and_save_history(self, tid, record, final_type_str):
         """
-        [核心逻辑] 离场后微观数据结算 (Post-departure Settlement)
-        重构版：移除所有排放与工况模型，仅负责轨迹清洗、VSP提取与高频原始时序数据入库。
+        [核心逻辑] 离场后微观数据结算 (1D 降维全量保留版)
+        完全抛弃掐头去尾，全量保留 ROI 内的高质量底边数据。
+        通过 X 轴常量化强制拉直轨迹，从降维层面彻底消灭海岸线悖论误差。
         """
         trajectory = record.get('trajectory', [])
+        n_points = len(trajectory)
 
-        # Step 1. 轨迹头尾清洗 (Trimming)
-        TRIM_SIZE = 5 
-        if len(trajectory) > (TRIM_SIZE * 2 + 5):
-            trajectory = trajectory[TRIM_SIZE : -TRIM_SIZE]
-            record['trajectory'] = trajectory # 回写以便 Reporter 使用
-        else:
-            return # 轨迹太短，放弃计算
+        # 只要有起码的轨迹点（例如3个以上）就可以进行滤波，不再掐头去尾！
+        # 若极端卡顿导致不到 3 帧，直接放弃后续物理结算，但保留记录
+        if n_points < 3:
+            return 
 
-        # Step 2. 物理特征提取与入库
+        raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
+        raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
+        timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
+
+        # 计算轨迹平均横向位置，为车辆铺设 1D 虚拟直行轨道
+        mean_x = float(np.mean(raw_x))
+
+        # 动态窗口大小，最大设为 15，兼顾平滑与低帧率设备的鲁棒性
+        window_length = min(15, n_points if n_points % 2 != 0 else n_points - 1)
+        
+        if window_length >= 3:
+            # 仅对纵向 Y 轴进行 S-G 平滑 (全量利用包含起步和驶离的高价值数据)
+            smoothed_y = savgol_filter(raw_y, window_length=window_length, polyorder=2)
+
+            # 一维极简速度计算 (仅靠 Y 轴绝对位移推导)
+            speeds = np.zeros(n_points)
+            for i in range(1, n_points):
+                dy = smoothed_y[i] - smoothed_y[i-1]
+                dt = timestamps[i] - timestamps[i-1]
+                # abs(dy) 确保无论车辆朝上还是朝下行驶，速度均为正标量
+                speeds[i] = abs(dy) / dt if dt > 1e-4 else speeds[i-1]
+            speeds[0] = speeds[1] if n_points > 1 else 0.0
+
+            # 速度二次平滑
+            smoothed_speeds = savgol_filter(speeds, window_length=window_length, polyorder=2)
+
+            # 中心差分计算加速度
+            accels = np.zeros(n_points)
+            for i in range(1, n_points - 1):
+                dv = smoothed_speeds[i+1] - smoothed_speeds[i-1]
+                dt = timestamps[i+1] - timestamps[i-1]
+                accels[i] = dv / dt if dt > 1e-4 else 0.0
+            
+            if n_points > 1:
+                dt_start = timestamps[1] - timestamps[0]
+                accels[0] = (smoothed_speeds[1] - smoothed_speeds[0]) / dt_start if dt_start > 1e-4 else 0.0
+                dt_end = timestamps[-1] - timestamps[-2]
+                accels[-1] = (smoothed_speeds[-1] - smoothed_speeds[-2]) / dt_end if dt_end > 1e-4 else 0.0
+
+            # 覆盖原始抖动的坐标和速度 (X轴全部强制对齐到虚拟轨道)
+            for i in range(n_points):
+                trajectory[i]['raw_x'] = mean_x
+                trajectory[i]['raw_y'] = float(smoothed_y[i])
+                trajectory[i]['speed'] = float(smoothed_speeds[i])
+                trajectory[i]['accel'] = float(accels[i])
+        
+        # 回写 1D 化处理后的干净轨迹
+        record['trajectory'] = trajectory 
+
+        # 暴露结算完毕的数据给 UI Dashboard 供抽样展示
+        self.latest_exit_record = {
+            'tid': tid,
+            'record': record,
+            'type_str': final_type_str
+        }
+
+        # Step 3. 物理特征提取与入库
         vsp_calc = self.comps.get('vsp_calculator')
         if not vsp_calc:
             return
 
         final_class_id = record['class_id']
-
         for point in trajectory:
             v = point['speed']
             a = point['accel']
             fid = point['frame_id']
             
-            # 实时计算当前点的 VSP
             vsp = vsp_calc.calculate(v, a, final_class_id)
             
-            # 构建精简后的微观表 Payload，注入精确时间戳与 IPM 坐标
             db_payload = {
                 'timestamp': point.get('timestamp', 0.0),
                 'ipm_x': point.get('raw_x', 0.0),
@@ -407,7 +528,6 @@ class TrafficMonitorEngine:
             }
             self.db.insert_micro(fid, tid, db_payload)
             
-        # --- 强制刷写缓冲区 ---
         self.db.flush_micro_buffer()
 
     def _handle_ocr(self, frame, frame_id, detections):
