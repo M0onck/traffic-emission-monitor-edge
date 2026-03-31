@@ -505,28 +505,14 @@ class TrafficMonitorEngine:
             'type_str': final_type_str
         }
 
-        # Step 3. 物理特征提取与入库
-        vsp_calc = self.comps.get('vsp_calculator')
-        if not vsp_calc:
-            return
-
-        final_class_id = record['class_id']
+        # Step 3. 微观轨迹提取与入库
         for point in trajectory:
-            v = point['speed']
-            a = point['accel']
-            fid = point['frame_id']
-            
-            vsp = vsp_calc.calculate(v, a, final_class_id)
-            
             db_payload = {
                 'timestamp': point.get('timestamp', 0.0),
-                'ipm_x': point.get('raw_x', 0.0),
-                'ipm_y': point.get('raw_y', 0.0),
-                'speed': v, 
-                'accel': a, 
-                'vsp': vsp
+                'ipm_x': point.get('raw_x', 0.0),   # 这里的 raw_x 已经是 1D 降维后的 mean_x
+                'ipm_y': point.get('raw_y', 0.0)    # 这里的 raw_y 已经是经过 S-G 平滑的值
             }
-            self.db.insert_micro(fid, tid, db_payload)
+            self.db.insert_micro(point['frame_id'], tid, db_payload)
             
         self.db.flush_micro_buffer()
 

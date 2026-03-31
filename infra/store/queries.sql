@@ -6,5 +6,5 @@ INSERT OR REPLACE INTO vehicle_macro (
 
 -- name: insert_micro
 INSERT INTO vehicle_micro (
-    tracker_id, frame_id, timestamp, ipm_x, ipm_y, speed, accel, vsp
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    tracker_id, frame_id, timestamp, ipm_x, ipm_y
+) VALUES (?, ?, ?, ?, ?);

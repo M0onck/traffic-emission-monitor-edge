@@ -20,9 +20,6 @@ CREATE TABLE IF NOT EXISTS vehicle_micro (
     timestamp REAL,      -- 精确绝对时间戳
     ipm_x REAL,          -- 逆透视变换后的 X 坐标 (米)
     ipm_y REAL,          -- 逆透视变换后的 Y 坐标 (米)
-    speed REAL,          -- 瞬时速度 (m/s)
-    accel REAL,          -- 瞬时加速度 (m/s^2)
-    vsp REAL,            -- 瞬时比功率 (kW/tonne)
     FOREIGN KEY(tracker_id) REFERENCES vehicle_macro(tracker_id)
 );
 
