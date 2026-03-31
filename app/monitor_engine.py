@@ -323,23 +323,39 @@ class TrafficMonitorEngine:
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
         
-        # 独立车牌颜色置信度阈值字典 (Asymmetric Thresholds)
-        # 可以根据实际路测光线在这里微调
         color_thresholds = {
-            'green': 0.40,  # 绿牌由于渐变底色容易导致模型不自信，适当降低门槛
-            'blue': 0.90,   # 蓝牌由于高对比度极易被识别，提高门槛防止将绿牌误判为蓝牌
-            'yellow': 0.70  # 黄牌（大车）保持常规阈值
+            'green': 0.60,  
+            'blue': 0.85,   
+            'yellow': 0.75  
         }
 
+        # 只要这辆车历史上有 N 帧被识别为绿/黄，就强制锁定
+        VETO_THRESHOLD = 1
+
         for tid, color_type, conf, rel_landmarks in results:
-            # 动态获取当前颜色的专属阈值，如果字典里未定义，则回退到全局默认配置
             target_threshold = color_thresholds.get(color_type, self.cfg.OCR_CONF_THRESHOLD)
             
-            # 使用专属阈值进行精准拦截
             if conf > target_threshold: 
+                # 1. 正常写入历史记录
                 self.registry.add_plate_history(tid, color_type, 1.0, conf)
+                
+                # 2. 少数派锁定逻辑 
+                record = self.registry.get_record(tid)
+                history = record.get('plate_history', []) if record else []
+                
+                green_count = sum(1 for h in history if h['color'] == 'green')
+                yellow_count = sum(1 for h in history if h['color'] == 'yellow')
+                
+                # 决定当前展示给 UI 的颜色
+                final_color_for_ui = color_type
+                if green_count >= VETO_THRESHOLD:
+                    final_color_for_ui = 'green'
+                elif yellow_count >= VETO_THRESHOLD:
+                    final_color_for_ui = 'yellow'
+
+                # 3. 更新缓存，允许更新坐标(rel_landmarks)，但颜色可能被强行纠正为绿/黄
                 self.plate_cache[tid] = {
-                    'color': color_type,
+                    'color': final_color_for_ui,
                     'rel_landmarks': rel_landmarks
                 }
 
@@ -353,18 +369,27 @@ class TrafficMonitorEngine:
                 record['class_id'], record.get('plate_history', [])
             )
 
-            # 车牌纯置信度加权投票机制
+            # 少数派一票否决制 (Minority Veto)
             voted_color = "Unknown"
             history = record.get('plate_history', [])
-            if history:
-                scores = defaultdict(float)
-                for entry in history:
-                    # 直接累加置信度，置信度越高的帧权重越大
-                    scores[entry['color']] += entry.get('conf', 1.0)
-                # 选出累计置信度得分最高的颜色
-                voted_color = max(scores, key=scores.get)
             
-            # 将投票决定的最终颜色存入 record，确保下游数据库和 UI 拿到的是同一份数据
+            if history:
+                green_count = sum(1 for h in history if h['color'] == 'green')
+                yellow_count = sum(1 for h in history if h['color'] == 'yellow')
+                
+                VETO_THRESHOLD = 2
+                
+                if green_count >= VETO_THRESHOLD:
+                    voted_color = 'green'
+                elif yellow_count >= VETO_THRESHOLD:
+                    voted_color = 'yellow'
+                else:
+                    # 如果没有达到少数派阈值，才退回到普通的置信度投票 (大概率会投出 blue)
+                    scores = defaultdict(float)
+                    for entry in history:
+                        scores[entry['color']] += entry.get('conf', 1.0)
+                    voted_color = max(scores, key=scores.get)
+            
             record['final_plate_color'] = voted_color
             
             # Step 2. 微观时空轨迹与 VSP 结算 (核心逻辑)
