@@ -322,9 +322,21 @@ class TrafficMonitorEngine:
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
+        
+        # 独立车牌颜色置信度阈值字典 (Asymmetric Thresholds)
+        # 可以根据实际路测光线在这里微调
+        color_thresholds = {
+            'green': 0.40,  # 绿牌由于渐变底色容易导致模型不自信，适当降低门槛
+            'blue': 0.90,   # 蓝牌由于高对比度极易被识别，提高门槛防止将绿牌误判为蓝牌
+            'yellow': 0.70  # 黄牌（大车）保持常规阈值
+        }
+
         for tid, color_type, conf, rel_landmarks in results:
-            # 恢复正常的配置文件阈值判断
-            if conf > self.cfg.OCR_CONF_THRESHOLD: 
+            # 动态获取当前颜色的专属阈值，如果字典里未定义，则回退到全局默认配置
+            target_threshold = color_thresholds.get(color_type, self.cfg.OCR_CONF_THRESHOLD)
+            
+            # 使用专属阈值进行精准拦截
+            if conf > target_threshold: 
                 self.registry.add_plate_history(tid, color_type, 1.0, conf)
                 self.plate_cache[tid] = {
                     'color': color_type,
