@@ -21,7 +21,6 @@ from infra.concurrency.async_recognizer import AsyncPlateRecognizer
 from perception.math.geometry import ViewTransformer
 from perception.kinematics_estimator import KinematicsEstimator
 from ui.renderer import Visualizer
-from ui.console_reporter import Reporter
 from perception.gst_pipeline import GstPipelineManager
 import supervision as sv
 
