@@ -274,26 +274,50 @@ class TrafficMonitorEngine:
         if frame_id % self.cfg.OCR_INTERVAL != 0:
             return
 
+        # 获取用户标定的 ROI 4 个角点
+        pts = self.visualizer.calibration_points
+        if pts is None or len(pts) < 4:
+            return
+            
+        # 提取 ROI 的“下边线” (左下角 BL 与 右下角 BR)
+        p1 = pts[0].astype(np.float32)
+        p2 = pts[1].astype(np.float32)
+        
+        # 构建底边向量
+        line_vec = p2 - p1
+        line_len = np.linalg.norm(line_vec)
+        if line_len < 1e-4: return
+
         for tid, box in zip(detections.tracker_id, detections.xyxy):
             # 冷却检查
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
                 continue
             
             x1, y1, x2, y2 = map(int, box)
-            cx, cy = (x1+x2)/2, (y1+y2)/2
+            
+            # 使用检测框“底边中点”作为车辆物理触地点
+            bc_x, bc_y = (x1 + x2) / 2.0, float(y2)
+            pt_vec = np.array([bc_x, bc_y]) - p1
 
-            # 放宽判定区域，让车刚进镜头就开始被截取，留给后台充足的计算时间！
-            if not (0.1*img_w < cx < 0.9*img_w and 0.2*img_h < cy < 0.95*img_h):
-                continue
+            # 点到直线的垂直像素距离 (叉乘 / 底边长)
+            dist_to_bottom = np.abs(np.cross(line_vec, pt_vec)) / line_len
+            
+            # 车辆横向投影比例 
+            # (0 代表车辆位于左下角，1 代表位于右下角，超出这个范围说明车在线段延长线外)
+            proj_ratio = np.dot(pt_vec, line_vec) / (line_len ** 2)
+
+            # 智能触发条件
+            # 条件 A: 距离 ROI 下边线小于画面高度的 25% (如 1080p 下约 270 像素宽度的触发带)
+            # 条件 B: 车辆横向在底边之间 (放宽 ±10% 的容差，允许压线)
+            if dist_to_bottom < (img_h * 0.25) and -0.1 < proj_ratio < 1.1:
                 
-            # 动态缩放面积阈值 (假设已适配720p或1080p)
-            scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
-            if (x2-x1)*(y2-y1) > scaled_min_area:
-                vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
-                if vehicle_crop.size > 0:
-                    # 尝试将裁剪后的图像推入队列
-                    if self.plate_worker.push_task(tid, vehicle_crop):
-                        self.plate_retry[tid] = frame_id # 只有成功推入才刷新冷却时间
+                # 尺寸筛选
+                scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
+                if (x2-x1)*(y2-y1) > scaled_min_area:
+                    vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
+                    if vehicle_crop.size > 0:
+                        if self.plate_worker.push_task(tid, vehicle_crop):
+                            self.plate_retry[tid] = frame_id
 
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
@@ -316,6 +340,20 @@ class TrafficMonitorEngine:
             final_plate, final_type_str = self.classifier.resolve_type(
                 record['class_id'], record.get('plate_history', [])
             )
+
+            # 车牌纯置信度加权投票机制
+            voted_color = "Unknown"
+            history = record.get('plate_history', [])
+            if history:
+                scores = defaultdict(float)
+                for entry in history:
+                    # 直接累加置信度，置信度越高的帧权重越大
+                    scores[entry['color']] += entry.get('conf', 1.0)
+                # 选出累计置信度得分最高的颜色
+                voted_color = max(scores, key=scores.get)
+            
+            # 将投票决定的最终颜色存入 record，确保下游数据库和 UI 拿到的是同一份数据
+            record['final_plate_color'] = voted_color
             
             # Step 2. 几何距离重算
             self._recalculate_distance_geometric(record)

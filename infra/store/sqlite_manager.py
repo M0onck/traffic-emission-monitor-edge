@@ -117,10 +117,8 @@ class DatabaseManager:
         speed_count = record.get('speed_count', 0)
         avg_speed = record.get('speed_sum', 0.0) / speed_count if speed_count > 0 else 0.0
         
-        # 尝试获取最终的车牌颜色
-        plate_color = "Unknown"
-        if record.get('plate_history'):
-             plate_color = record['plate_history'][-1].get('color', 'Unknown')
+        # 直接读取引擎层结算好的最终投票颜色
+        plate_color = record.get('final_plate_color', 'Unknown')
 
         # 全面类型强转，并修复 final_type_str 未被使用的逻辑 Bug
         params = (

@@ -508,10 +508,8 @@ class TrafficMonitorUI(QMainWindow):
         record = latest_data['record']
         type_str = latest_data['type_str']
         
-        # 车牌颜色 (利用离场前结算的最新历史)
-        plate_color = "Unknown"
-        if record.get('plate_history'):
-            plate_color = record['plate_history'][-1].get('color', 'Unknown')
+        # 读取引擎层结算好的投票结果，保持与落盘数据 100% 一致
+        plate_color = record.get('final_plate_color', 'Unknown')
             
         # 提取经过 S-G 非因果滤波处理过的高质量速度曲线
         trajectory = record.get('trajectory', [])
