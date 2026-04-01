@@ -68,7 +68,7 @@ class AppBootstrap:
         visualizer = Visualizer(calibration_points=target_points)
 
         # 7. 初始化热成像模块
-        lib_path = getattr(config, 'THERMAL_LIB_PATH', './libmlx90640.so')
+        lib_path = getattr(config, 'THERMAL_LIB_PATH', 'bin/libmlx90640.so')
         thermal_cam = ThermalCamera(lib_path)
 
         # 8. 封装组件字典
