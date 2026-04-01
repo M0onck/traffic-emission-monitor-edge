@@ -481,9 +481,48 @@ class TrafficMonitorUI(QMainWindow):
         
         self.tabs.addTab(tab_dash, "📊 数据抽样板")
         
+        # --- Tab 3: 地表热力瞄准 ---
+        tab_thermal = QWidget()
+        t_layout = QVBoxLayout(tab_thermal)
+        t_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 1. 顶部温度信息展示布局
+        t_info_layout = QHBoxLayout()
+        self.lbl_thermal_center = QLabel("中心地表: -- °C")
+        self.lbl_thermal_center.setStyleSheet("color: #ff5555; font-weight: bold;") # 中心温度用红色高亮
+        self.lbl_thermal_min = QLabel("最低温度: -- °C")
+        self.lbl_thermal_max = QLabel("最高温度: -- °C")
+        
+        font_t = QFont("Arial", 16, QFont.Bold)
+        for lbl in [self.lbl_thermal_min, self.lbl_thermal_center, self.lbl_thermal_max]:
+            lbl.setFont(font_t)
+            lbl.setAlignment(Qt.AlignCenter)
+            t_info_layout.addWidget(lbl)
+            
+        t_layout.addLayout(t_info_layout)
+        t_layout.addSpacing(10)
+        
+        # 2. 热成像画面画布
+        self.thermal_label = QLabel("等待热成像传感器接入...")
+        self.thermal_label.setAlignment(Qt.AlignCenter)
+        self.thermal_label.setStyleSheet("background-color: #111; border: 2px solid #444;")
+        # MLX90640 原生是 32x24，我们按比例放大 15 倍以适应屏幕 (480x360)
+        self.thermal_label.setFixedSize(480, 360) 
+        
+        # 使用水平布局让画面居中
+        img_layout = QHBoxLayout()
+        img_layout.addStretch()
+        img_layout.addWidget(self.thermal_label)
+        img_layout.addStretch()
+        
+        t_layout.addLayout(img_layout)
+        t_layout.addStretch()
+        
+        self.tabs.addTab(tab_thermal, "🌡️ 地表热力")
+
         # 定时器：用于轮询底层数据更新 Dashboard
         self.dash_timer = QTimer(self)
-        self.dash_timer.timeout.connect(self.update_dashboard)
+        self.dash_timer.timeout.connect(self.update_timer_tasks)
         self.sampled_tid = None
         
         self.stack.addWidget(self.page3)
@@ -504,7 +543,60 @@ class TrafficMonitorUI(QMainWindow):
             self.stack.setCurrentIndex(idx + 1)
         self.update_nav_buttons()
 
-    def update_dashboard(self):
+    def update_timer_tasks(self):
+        """总控定时器：分配 UI 刷新任务"""
+        if not hasattr(self, 'worker') or not self.worker.engine: return
+        
+        self._update_thermal_view()  # 1. 实时刷新热成像
+        self._update_dashboard()     # 2. 刷新车辆抽样看板
+
+    def _update_thermal_view(self):
+        """处理热力图渲染与数据提取"""
+        engine = self.worker.engine
+        
+        # 检查是否成功挂载了热成像组件
+        if not hasattr(engine, 'thermal_cam') or engine.thermal_cam is None:
+            return
+            
+        thermal_matrix = engine.thermal_cam.read()
+        if thermal_matrix is not None:
+            # 1. 提取物理温度 (取中心 2x2 区域的均值更稳定)
+            t_min = np.min(thermal_matrix)
+            t_max = np.max(thermal_matrix)
+            t_center = thermal_matrix[11:13, 15:17].mean() 
+            
+            self.lbl_thermal_min.setText(f"最低温度: {t_min:.1f} °C")
+            self.lbl_thermal_max.setText(f"最高温度: {t_max:.1f} °C")
+            self.lbl_thermal_center.setText(f"中心地表: {t_center:.1f} °C")
+            
+            # 2. 图像视觉渲染 (将浮点温度映射为 RGB 伪彩色)
+            # 归一化到 0~255
+            norm_img = cv2.normalize(thermal_matrix, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            # 叠加 JET 经典热力图伪彩 (蓝-绿-黄-红)
+            color_map = cv2.applyColorMap(norm_img, cv2.COLORMAP_JET)
+            
+            # 使用双三次插值放大画面，让原本粗糙的 32x24 变得平滑柔和
+            display_w, display_h = 480, 360
+            display_img = cv2.resize(color_map, (display_w, display_h), interpolation=cv2.INTER_CUBIC)
+            
+            # 3. 绘制中心十字准星 (Crosshair)
+            cx, cy = display_w // 2, display_h // 2
+            color_cross = (255, 255, 255) # 白色准星
+            # 画十字
+            cv2.line(display_img, (cx - 20, cy), (cx - 5, cy), color_cross, 2)
+            cv2.line(display_img, (cx + 5, cy), (cx + 20, cy), color_cross, 2)
+            cv2.line(display_img, (cx, cy - 20), (cx, cy - 5), color_cross, 2)
+            cv2.line(display_img, (cx, cy + 5), (cx, cy + 20), color_cross, 2)
+            # 中心打个小点
+            cv2.circle(display_img, (cx, cy), 1, color_cross, -1)
+            
+            # 4. 转交 Qt 显示
+            rgb_img = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_img.shape
+            qimg = QImage(rgb_img.data, w, h, ch * w, QImage.Format_RGB888)
+            self.thermal_label.setPixmap(QPixmap.fromImage(qimg))
+
+    def _update_dashboard(self):
         """Dashboard 数据抽样更新逻辑 (改为离场后结算展示)"""
         # 确保后台引擎已经初始化
         if not hasattr(self, 'worker') or not self.worker.engine: return

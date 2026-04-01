@@ -1,10 +1,11 @@
 # app/bootstrap.py
 import numpy as np
 from infra.store.sqlite_manager import DatabaseManager
+from infra.concurrency.async_recognizer import AsyncPlateRecognizer
 from domain.vehicle.repository import VehicleRegistry
 from domain.vehicle.classifier import VehicleClassifier
 from perception.gst_pipeline import GstPipelineManager
-from infra.concurrency.async_recognizer import AsyncPlateRecognizer
+from perception.sensor.thermal_camera import ThermalCamera
 from ui.renderer import Visualizer
 
 class AppBootstrap:
@@ -66,7 +67,11 @@ class AppBootstrap:
         # 6. 表示层：可视化渲染器 (传入解析好的 numpy 数组)
         visualizer = Visualizer(calibration_points=target_points)
 
-        # 7. 封装组件字典
+        # 7. 初始化热成像模块
+        lib_path = getattr(config, 'THERMAL_LIB_PATH', './libmlx90640.so')
+        thermal_cam = ThermalCamera(lib_path)
+
+        # 8. 封装组件字典
         components = {
             'db': db,
             'registry': registry,
@@ -75,7 +80,8 @@ class AppBootstrap:
             'plate_worker': plate_worker,
             'visualizer': visualizer,
             'target_points': target_points,
-            'norm_source_points': norm_source_points
+            'norm_source_points': norm_source_points,
+            'thermal_cam': thermal_cam
         }
 
         print(">>> [Bootstrap] 组件组装完成。")

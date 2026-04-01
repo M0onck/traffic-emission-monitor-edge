@@ -60,12 +60,20 @@ class TrafficMonitorEngine:
         self.spatial = SpatialAnalyzer()
         self.smoother = KinematicsSmoother(max_window=15)
 
+        # 从组件字典中获取热成像实例
+        self.thermal_cam = components.get('thermal_cam')
+
     def run(self):
         """
         启动基于 GStreamer 轮询的主处理循环。
         """
         print(f">>> [Engine] 正在启动硬件加速管道...")
         self.camera.start()
+
+        # 启动热成像后台采集线程
+        if self.thermal_cam:
+            print(">>> [Engine] 检测到热成像模块，正在启动采集任务...")
+            self.thermal_cam.start()
         
         # 初始化录制相关的变量
         video_info = None
@@ -479,6 +487,10 @@ class TrafficMonitorEngine:
     def cleanup(self, final_frame_id):
         print("\n[Engine] 正在清理资源...")
         self.camera.stop()  # 停止 GStreamer 管道
+
+        # 停止热成像后台线程
+        if self.thermal_cam:
+            self.thermal_cam.stop()
 
         # 停止 NTP 时钟同步器的后台线程
         if hasattr(self, 'time_sync'):
