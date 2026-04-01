@@ -7,12 +7,7 @@ from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
 from domain.physics.spatial_analyzer import SpatialAnalyzer
 from domain.physics.kinematics_smoother import KinematicsSmoother
-
-# 引入 Hailo 元数据解析库 (需要在运行环境/设备端安装有 tappas 的 python 绑定)
-try:
-    import hailo
-except ImportError:
-    print(">>> [Warn] 找不到 hailo 模块，请确保在树莓派/Hailo环境下运行，或安装了 Tappas。")
+from perception.vision_pipeline import VisionPipeline
 
 class TrafficMonitorEngine:
     """
@@ -58,14 +53,8 @@ class TrafficMonitorEngine:
         # 修复潜在的 AttributeError: 恢复对基础车型分类器(用于解析车辆类型逻辑)的引用
         self.classifier = components.get('classifier')
 
-        # 初始化 Python 层的高性能 ByteTrack 追踪器
-        # lost_track_buffer 设为 30 帧，足以抗遮挡；配合 Python 先进的卡尔曼预测，能完美解决高速幽灵框
-        self.tracker = sv.ByteTrack(
-            track_activation_threshold=0.25, 
-            lost_track_buffer=30, 
-            minimum_matching_threshold=0.8,
-            frame_rate=config.FPS
-        )
+        # 初始化视觉处理流水线
+        self.vision = VisionPipeline(fps=config.FPS, label_map=self.label_map)
 
         # 初始化空间分析器和运动滤波器
         self.spatial = SpatialAnalyzer()
@@ -179,57 +168,8 @@ class TrafficMonitorEngine:
         """
         h, w = frame.shape[:2]
         
-        # --- Step 1: 解析 Hailo Metadata (从底层接收推理结果) ---
-        xyxy, class_ids, confs = [], [], []
-
-        try:
-            roi = hailo.get_roi_from_buffer(buffer)
-            hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
-            
-            for det in hailo_detections:
-                # 获取检测框
-                bbox = det.get_bbox()
-                raw_x1, raw_y1 = int(bbox.xmin() * w), int(bbox.ymin() * h)
-                raw_x2, raw_y2 = int(bbox.xmax() * w), int(bbox.ymax() * h)
-                
-                # 安全过滤：确保 x1 < x2 且 y1 < y2，防止硬件输出异常坐标导致下游崩溃
-                x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
-                y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
-                
-                # 获取标签，并进行严格的白名单过滤
-                label = det.get_label()
-                if label not in self.label_map:
-                    continue  # 直接丢弃所有非 car/bus/truck 的目标（如 person, bicycle 等）
-                    
-                cid = self.label_map[label]
-                
-                xyxy.append([x1, y1, x2, y2])
-                class_ids.append(cid)
-                confs.append(det.get_confidence())
-
-        except Exception as e:
-            # 如果解析出错（或者在非真实设备环境运行），构建空的数据防止崩溃
-            pass
-            
-        # 构建初步的 Detections (不再从 Hailo 接收 tracker_id)
-        if len(xyxy) > 0:
-            detections = sv.Detections(
-                xyxy=np.array(xyxy, dtype=np.float32),
-                confidence=np.array(confs, dtype=np.float32),
-                class_id=np.array(class_ids, dtype=int)
-            )
-            
-            # 先用 NMS 强力合并完美重叠的检测框 (去除多余的特征)
-            detections = detections.with_nms(threshold=0.4, class_agnostic=True)
-            
-            # 把干净的、没有任何重叠的框喂给追踪器，再分配 ID
-            detections = self.tracker.update_with_detections(detections)
-            
-        else:
-            detections = sv.Detections.empty()
-            detections.tracker_id = np.array([], dtype=int)
-            detections.class_id = np.array([], dtype=int)
-            detections.confidence = np.array([], dtype=np.float32)
+        # --- Step 1: 视觉感知与目标追踪 (交由感知层流水线处理) ---
+        detections = self.vision.process(frame, buffer)
 
         # --- Step 2: 注册表更新 (Registry Update) ---
         # 移除了 self.model 参数，因为车辆图片特征提取已交由前端模型完成
