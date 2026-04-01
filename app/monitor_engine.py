@@ -240,7 +240,7 @@ class TrafficMonitorEngine:
             # 2. 收割已完成的结果 (不阻塞)
             self._collect_plate_results()
 
-        # --- Step 4: 物理轨迹打点与动态死区判定 (修复静默抹杀 Bug 版) ---
+        # --- Step 4: 物理轨迹打点与动态死区判定 ---
         if self.motion_on and self.comps.get('transformer'):
             points = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
             transformer = self.comps['transformer']

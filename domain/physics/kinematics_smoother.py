@@ -4,58 +4,84 @@ from scipy.signal import savgol_filter
 class KinematicsSmoother:
     """
     [领域服务] 运动学平滑器
-    负责将带有噪声的原始物理轨迹，通过 1D 降维和 S-G 滤波推导出极高精度的物理量。
-    可供在线 UI 引擎和离线解析器复用。
+    升级为：基于绝对时间戳的动态时域降采样 (Time-based Decimation)。
+    完美免疫边缘设备因算力瓶颈导致的变帧率(VFR)和随机掉帧问题。
     """
-    def __init__(self, max_window: int = 15, polyorder: int = 2):
+    def __init__(self, max_window: int = 15, polyorder: int = 2, target_fps: float = 5.0):
         self.max_window = max_window
         self.polyorder = polyorder
+        self.target_fps = target_fps
+        self.target_dt = 1.0 / target_fps  # 目标时间间隔 (如 5FPS 对应 0.2 秒)
 
     def process_1d(self, timestamps: np.ndarray, raw_x: np.ndarray, raw_y: np.ndarray):
-        """
-        执行 1D 降维平滑及运动学重构
-        返回: smoothed_x, smoothed_y, speeds, accels
-        """
         n_points = len(timestamps)
         if n_points < 3:
             return raw_x, raw_y, np.zeros(n_points), np.zeros(n_points)
 
-        # 1. 核心降维：计算横向位置均值，强制对齐到虚拟轨道
+        # 1. 核心横向降维
         mean_x = float(np.mean(raw_x))
-        window_length = min(self.max_window, n_points if n_points % 2 != 0 else n_points - 1)
+        smoothed_x = np.full(n_points, mean_x)
+
+        # 2. 基于绝对时间戳的动态抽样
+        downsampled_indices = [0]  # 强制保留起点
+        last_t = timestamps[0]
+
+        for i in range(1, n_points):
+            # 只有当距离上一个采样点的时间差达到目标间隔时，才进行采摘
+            if timestamps[i] - last_t >= self.target_dt:
+                downsampled_indices.append(i)
+                last_t = timestamps[i]
+
+        # 强制保留最后一个点（确保离场时的轨迹终点不被截断）
+        if downsampled_indices[-1] != n_points - 1:
+            downsampled_indices.append(n_points - 1)
+
+        # 判断抽样后的点数是否足够进行滤波
+        if len(downsampled_indices) >= 5:
+            ts_down = timestamps[downsampled_indices]
+            y_down = raw_y[downsampled_indices]
+        else:
+            # 如果车辆极速驶过（总时间极短），则放弃降采样，保留全量高频数据
+            ts_down = timestamps
+            y_down = raw_y
+
+        n_down = len(ts_down)
+        window_length = min(self.max_window, n_down if n_down % 2 != 0 else n_down - 1)
 
         if window_length < 3:
-            smoothed_x = np.full(n_points, mean_x)
             return smoothed_x, raw_y, np.zeros(n_points), np.zeros(n_points)
 
-        # 2. 单维平滑：仅对纵向 Y 轴进行 S-G 平滑
-        smoothed_y = savgol_filter(raw_y, window_length=window_length, polyorder=self.polyorder)
+        # 3. 在时间极其均匀的“降频骨架”上执行 S-G 滤波
+        sm_y_down = savgol_filter(y_down, window_length=window_length, polyorder=self.polyorder)
 
-        # 3. 极简一维速度计算
-        speeds = np.zeros(n_points)
-        for i in range(1, n_points):
-            dy = smoothed_y[i] - smoothed_y[i-1]
-            dt = timestamps[i] - timestamps[i-1]
-            speeds[i] = abs(dy) / dt if dt > 1e-4 else speeds[i-1]
-        speeds[0] = speeds[1] if n_points > 1 else 0.0
+        # 4. 计算一维速度
+        speeds_down = np.zeros(n_down)
+        for i in range(1, n_down):
+            dy = sm_y_down[i] - sm_y_down[i-1]
+            dt = ts_down[i] - ts_down[i-1]
+            speeds_down[i] = abs(dy) / dt if dt > 1e-4 else speeds_down[i-1]
+        speeds_down[0] = speeds_down[1] if n_down > 1 else 0.0
 
-        # 4. 速度二次平滑
-        smoothed_speeds = savgol_filter(speeds, window_length=window_length, polyorder=self.polyorder)
+        # 速度二次平滑
+        sm_speeds_down = savgol_filter(speeds_down, window_length=window_length, polyorder=self.polyorder)
 
-        # 5. 中心差分计算加速度
-        accels = np.zeros(n_points)
-        for i in range(1, n_points - 1):
-            dv = smoothed_speeds[i+1] - smoothed_speeds[i-1]
-            dt = timestamps[i+1] - timestamps[i-1]
-            accels[i] = dv / dt if dt > 1e-4 else 0.0
+        # 5. 计算加速度
+        accels_down = np.zeros(n_down)
+        for i in range(1, n_down - 1):
+            dv = sm_speeds_down[i+1] - sm_speeds_down[i-1]
+            dt = ts_down[i+1] - ts_down[i-1]
+            accels_down[i] = dv / dt if dt > 1e-4 else 0.0
         
-        if n_points > 1:
-            dt_start = timestamps[1] - timestamps[0]
-            accels[0] = (smoothed_speeds[1] - smoothed_speeds[0]) / dt_start if dt_start > 1e-4 else 0.0
-            dt_end = timestamps[-1] - timestamps[-2]
-            accels[-1] = (smoothed_speeds[-1] - smoothed_speeds[-2]) / dt_end if dt_end > 1e-4 else 0.0
+        if n_down > 1:
+            dt_start = ts_down[1] - ts_down[0]
+            accels_down[0] = (sm_speeds_down[1] - sm_speeds_down[0]) / dt_start if dt_start > 1e-4 else 0.0
+            dt_end = ts_down[-1] - ts_down[-2]
+            accels_down[-1] = (sm_speeds_down[-1] - sm_speeds_down[-2]) / dt_end if dt_end > 1e-4 else 0.0
 
-        # 生成 1D 降维后的恒定 X 数组
-        smoothed_x = np.full(n_points, mean_x)
-        
+        # 6. 插值还原：将低频骨架完美贴合回变帧率的原始时间轴
+        # np.interp 天然支持非均匀采样的 X 轴，它会根据实际时间戳精准映射
+        smoothed_y = np.interp(timestamps, ts_down, sm_y_down)
+        smoothed_speeds = np.interp(timestamps, ts_down, sm_speeds_down)
+        accels = np.interp(timestamps, ts_down, accels_down)
+
         return smoothed_x, smoothed_y, smoothed_speeds, accels
