@@ -461,39 +461,47 @@ class TrafficMonitorEngine:
         record['total_distance_m'] = float(np.sum(dists))
 
     def _calculate_and_save_history(self, tid, record, final_type_str):
-     trajectory = record.get('trajectory', [])
-     if len(trajectory) < 3: return 
+        trajectory = record.get('trajectory', [])
+        if len(trajectory) < 3: return 
 
-     raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
-     raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
-     timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
+        raw_x = np.array([p.get('raw_x', 0.0) for p in trajectory])
+        raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
+        timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
 
-     # 直接调用领域服务，一行代码完成所有降维、平滑与求导逻辑
-     sm_x, sm_y, speeds, accels = self.smoother.process_1d(timestamps, raw_x, raw_y)
+        # 直接调用领域服务，一行代码完成所有降维、平滑与求导逻辑
+        sm_x, sm_y, speeds, accels = self.smoother.process_1d(timestamps, raw_x, raw_y)
 
-     # 覆盖原始轨迹并暴露给 UI Dashboard 展示
-     for i in range(len(trajectory)):
-         trajectory[i]['raw_x'] = float(sm_x[i])
-         trajectory[i]['raw_y'] = float(sm_y[i])
-         trajectory[i]['speed'] = float(speeds[i])
-         trajectory[i]['accel'] = float(accels[i])
+        # 覆盖原始轨迹并暴露给 UI Dashboard 展示
+        for i in range(len(trajectory)):
+            trajectory[i]['raw_x'] = float(sm_x[i])
+            trajectory[i]['raw_y'] = float(sm_y[i])
+            trajectory[i]['speed'] = float(speeds[i])
+            trajectory[i]['accel'] = float(accels[i])
 
-     record['trajectory'] = trajectory 
+        record['trajectory'] = trajectory 
 
-     self.latest_exit_record = {
-         'tid': tid, 'record': record, 'type_str': final_type_str
-     }
+        self.latest_exit_record = {
+            'tid': tid, 'record': record, 'type_str': final_type_str
+        }
 
-     # 极简微观轨迹入库 (只存基础物理信息，用于离线解析)
-     for point in trajectory:
-         db_payload = {
-             'timestamp': point.get('timestamp', 0.0),
-             'ipm_x': point.get('raw_x', 0.0),   
-             'ipm_y': point.get('raw_y', 0.0)    
-         }
-         self.db.insert_micro(point.get('frame_id', 0), tid, db_payload)
+        # 假设原帧率为 30FPS，目标落盘帧率为 5FPS，则步长为 6
+        db_fps = 5.0
+        original_fps = self.cfg.FPS if hasattr(self, 'cfg') else 30.0
+        step = max(1, int(round(original_fps / db_fps)))
+        
+        # 使用切片语法，从完整轨迹中只抽取 5FPS 的骨架点进行落盘
+        trajectory_for_db = trajectory[::step]
 
-     self.db.flush_micro_buffer()
+        # 极简且降频的微观轨迹入库
+        for point in trajectory_for_db:
+            db_payload = {
+                'timestamp': point.get('timestamp', 0.0),
+                'ipm_x': point.get('raw_x', 0.0),   
+                'ipm_y': point.get('raw_y', 0.0)    
+            }
+            self.db.insert_micro(point.get('frame_id', 0), tid, db_payload)
+
+        self.db.flush_micro_buffer()
 
     def _handle_ocr(self, frame, frame_id, detections):
         """
