@@ -5,6 +5,7 @@ import time
 from collections import defaultdict
 from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
+from domain.physics.spatial_analyzer import SpatialAnalyzer
 from domain.physics.kinematics_smoother import KinematicsSmoother
 
 # 引入 Hailo 元数据解析库 (需要在运行环境/设备端安装有 tappas 的 python 绑定)
@@ -66,7 +67,8 @@ class TrafficMonitorEngine:
             frame_rate=config.FPS
         )
 
-        # 初始化运动滤波器
+        # 初始化空间分析器和运动滤波器
+        self.spatial = SpatialAnalyzer()
         self.smoother = KinematicsSmoother(max_window=15)
 
     def run(self):
@@ -137,7 +139,11 @@ class TrafficMonitorEngine:
                         
                         # 重新初始化视角转换器，确保物理速度/位移计算正确
                         from perception.math.geometry import ViewTransformer
-                        self.comps['transformer'] = ViewTransformer(pts, self.comps['target_points'])
+                        transformer = ViewTransformer(pts, self.comps['target_points'])
+                        self.comps['transformer'] = transformer
+
+                        # 给空间分析器注入映射能力
+                        self.spatial.set_transformer(transformer)
 
                 # --- 核心处理流水线 ---
                 annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
@@ -240,49 +246,33 @@ class TrafficMonitorEngine:
         # --- Step 4: 物理轨迹打点与动态死区判定 ---
         if self.motion_on and self.comps.get('transformer'):
             points = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
-            transformer = self.comps['transformer']
 
             for tid, raw_point in zip(detections.tracker_id, points):
-                if transformer.is_in_roi(raw_point):
+                if self.spatial.is_in_roi(raw_point):
                     
-                    # 1. 正常计算当前像素的物理坐标
-                    curr_phys = transformer.transform_points(np.array([raw_point]))[0]
+                    # 1. 空间组件获取物理坐标与宽容度
+                    curr_phys = self.spatial.get_physical_point(raw_point)
+                    dynamic_tolerance = self.spatial.get_dynamic_tolerance(raw_point)
 
-                    # 2. 动态阈值计算：探针法 (Probe)
-                    probe_point = [raw_point[0], raw_point[1] + 2]
-                    probe_phys = transformer.transform_points(np.array([probe_point]))[0]
-                    dynamic_tolerance = abs(curr_phys[1] - probe_phys[1])
-
-                    # 3. 底层静止锚定机制与伪速度估算
+                    # 2. 运动学逻辑
                     record = self.registry.get_record(tid)
                     trajectory = record.get('trajectory', []) if record else []
-                    
-                    pseudo_speed = 0.0  # 初始速度
+                    pseudo_speed = 0.0
                     
                     if trajectory:
                         last_phys_y = trajectory[-1].get('raw_y', curr_phys[1])
                         last_time = trajectory[-1].get('timestamp', frame_timestamp - 0.033)
                         
-                        # 核心判定：如果纵向位移小于宽容度，判定绝对静止
                         if abs(curr_phys[1] - last_phys_y) < max(0.2, dynamic_tolerance):
-                            curr_phys[1] = last_phys_y  # 强行冻结坐标
-                            pseudo_speed = 0.0          # 速度为 0
+                            curr_phys[1] = last_phys_y 
+                            pseudo_speed = 0.0
                         else:
-                            # 计算一个粗略速度，骗过 Registry 的静止垃圾过滤机制
-                            dy = abs(curr_phys[1] - last_phys_y)
-                            dt = max(0.001, frame_timestamp - last_time)
-                            pseudo_speed = dy / dt
+                            pseudo_speed = abs(curr_phys[1] - last_phys_y) / max(0.001, frame_timestamp - last_time)
 
-                    # 4. 严格对齐传参，传入 pseudo_speed
                     self.registry.append_kinematics(
-                        tid,             
-                        frame_id,        
-                        pseudo_speed,    # <--- 不再填 0.0，传入估算速度
-                        0.0,             # 加速度依然可以填 0.0，不影响过滤
-                        raw_x=curr_phys[0], 
-                        raw_y=curr_phys[1],
-                        pixel_x=raw_point[0],  
-                        pixel_y=raw_point[1],  
+                        tid, frame_id, pseudo_speed, 0.0,
+                        raw_x=curr_phys[0], raw_y=curr_phys[1],
+                        pixel_x=raw_point[0], pixel_y=raw_point[1],  
                         timestamp=frame_timestamp
                     )
 
@@ -418,39 +408,9 @@ class TrafficMonitorEngine:
             if 'trajectory' in record:
                 self._calculate_and_save_history(tid, record, final_type_str)
 
-            # Step 3. 几何距离重算
-            self._recalculate_distance_geometric(record)
-
-            # Step 4. 宏观数据入库
+            # Step 3. 宏观数据入库
             self.db.insert_macro(tid, record, final_type_str, final_plate)
     
-    def _recalculate_distance_geometric(self, record):
-        """
-        [算法优化] 基于降维后的 1D 几何路径重算总里程。
-        
-        直接使用被 _calculate_and_save_history 强制拉直为 1D 直线后的物理坐标。
-        彻底消除了海岸线悖论，即使不裁剪首尾帧，测算出的物理距离依然绝对精准。
-        """
-        trajectory = record.get('trajectory', [])
-        if len(trajectory) < 2: return
-
-        # Step 1. 提取已被拉直和 S-G 平滑过的纯净物理坐标
-        pts_phys = []
-        for p in trajectory:
-            if p.get('raw_x') is not None and p.get('raw_y') is not None:
-                pts_phys.append([p['raw_x'], p['raw_y']])
-        
-        if len(pts_phys) < 2: return
-        
-        # 转换为 NumPy 数组
-        pts_phys = np.array(pts_phys)
-        
-        # Step 2. 累加 1D 线段的长度 
-        # (此时由于所有点的 X 坐标相同，这本质上就是计算 Y 轴绝对位移的总和)
-        diffs = pts_phys[1:] - pts_phys[:-1]
-        dists = np.linalg.norm(diffs, axis=1)
-        record['total_distance_m'] = float(np.sum(dists))
-
     def _calculate_and_save_history(self, tid, record, final_type_str):
         trajectory = record.get('trajectory', [])
         if len(trajectory) < 3: return 
@@ -459,17 +419,26 @@ class TrafficMonitorEngine:
         raw_y = np.array([p.get('raw_y', 0.0) for p in trajectory])
         timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
 
-        # 直接调用领域服务，一行代码完成所有降维、平滑与求导逻辑
+        # 直接调用领域服务，一行代码完成所有降维、平滑与求导逻辑 (运动学职责)
         sm_x, sm_y, speeds, accels = self.smoother.process_1d(timestamps, raw_x, raw_y)
 
+        # 增加一个列表，用于收集平滑过滤后的“纯净物理坐标”
+        pts_phys_clean = []
+        
         # 覆盖原始轨迹并暴露给 UI Dashboard 展示
         for i in range(len(trajectory)):
             trajectory[i]['raw_x'] = float(sm_x[i])
             trajectory[i]['raw_y'] = float(sm_y[i])
             trajectory[i]['speed'] = float(speeds[i])
             trajectory[i]['accel'] = float(accels[i])
+            
+            # 收集坐标
+            pts_phys_clean.append([float(sm_x[i]), float(sm_y[i])])
 
         record['trajectory'] = trajectory 
+
+        # 将平滑后的纯净坐标交给 SpatialAnalyzer，计算纯几何距离 (空间职责)
+        record['total_distance_m'] = self.spatial.calculate_geometric_distance(pts_phys_clean)
 
         self.latest_exit_record = {
             'tid': tid, 'record': record, 'type_str': final_type_str
