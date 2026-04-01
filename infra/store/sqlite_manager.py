@@ -81,16 +81,13 @@ class DatabaseManager:
         return queries
 
     def insert_micro(self, fid: int, tid: int, payload: dict):
-        # 强制转化为 Python 原生类型，防止 Numpy 类型污染数据库
+        # 只提取最核心的 3 个物理维度数据，极大地降低序列化与 I/O 开销
         params = (
             int(tid),
             int(fid),
             float(payload.get('timestamp', 0.0)),
             float(payload.get('ipm_x', 0.0)),
-            float(payload.get('ipm_y', 0.0)),
-            float(payload.get('speed', 0.0)),
-            float(payload.get('accel', 0.0)),
-            float(payload.get('vsp', 0.0))
+            float(payload.get('ipm_y', 0.0))
         )
         self.micro_buffer.append(params)
         if len(self.micro_buffer) >= self.BATCH_SIZE:
