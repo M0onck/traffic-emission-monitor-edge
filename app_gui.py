@@ -9,19 +9,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont, QPainterPath
 
-# --- 引入原有业务组件 ---
+# --- 引入业务组件 ---
 import infra.config.loader as cfg
 from app.monitor_engine import TrafficMonitorEngine
-from domain.vehicle.repository import VehicleRegistry
-from domain.physics.vsp_calculator import VSPCalculator
-from domain.vehicle.classifier import VehicleClassifier
-from infra.store.sqlite_manager import DatabaseManager
-from infra.sys.process_optimizer import SystemOptimizer
-from infra.concurrency.async_recognizer import AsyncPlateRecognizer
-from perception.math.geometry import ViewTransformer
-from ui.renderer import Visualizer
-from perception.gst_pipeline import GstPipelineManager
-import supervision as sv
+from app.bootstrap import AppBootstrap
 
 # --- UI 组件：双轨物理曲线 (速度 & 加速度) ---
 class SpeedCurveWidget(QWidget):
@@ -252,44 +243,31 @@ class EngineWorker(QThread):
         self.engine = None
 
     def run(self):
-        # 此处复用原 bootstrap.py 的初始化逻辑
-        print(">>> [System] 初始化后台推理引擎...")
+        # 1. 加载基础配置
+        config = cfg
         
-        target_points = np.array([
-            [0, 0], [self.phys_w, 0], 
-            [self.phys_w, self.phys_h], [0, self.phys_h]
-        ], dtype=np.float32)
+        # 2. 注入来自 UI 交互的动态参数
+        # 将用户在界面上拉好的坐标点转换后存入 config，供引导程序使用
+        config.SOURCE_POINTS = self.source_points.tolist()
+        config.PHYS_WIDTH = self.phys_w
+        config.PHYS_HEIGHT = self.phys_h
 
-        # 初始占位符，由 Engine 获取第一帧时动态还原真实分辨率坐标
-        dummy_pts = np.zeros((4, 2), dtype=np.float32)
+        # 3. 根据 UI 面板的宽(W)和高(H)，严格构建物理坐标系的四个角点
+        # 顺序必须对应图像点击的四个角：[左下(BL), 右下(BR), 右上(TR), 左上(TL)]
+        config.TARGET_POINTS = [
+            [0, self.phys_h],             # BL: x=0, y=高
+            [self.phys_w, self.phys_h],   # BR: x=宽, y=高
+            [self.phys_w, 0],             # TR: x=宽, y=0
+            [0, 0]                        # TL: x=0, y=0
+        ]
 
-        gst_config = {"video_path": cfg.VIDEO_PATH}
-        camera_manager = GstPipelineManager(gst_config)
+        # 4. 装配所有组件
+        # 引导模块会根据 config 自动创建 db, registry, camera, plate_worker 等
+        components = AppBootstrap.setup_components(config)
 
-        components = {
-            'camera': camera_manager,
-            'norm_source_points': self.source_points, # 传入刚才获取的归一化坐标
-            'target_points': target_points,           # 传入目标物理坐标系
-            'transformer': ViewTransformer(dummy_pts, target_points),
-            'visualizer': Visualizer(
-                calibration_points=dummy_pts,
-                trace_length=cfg.FPS
-            ),
-            'registry': VehicleRegistry(fps=cfg.FPS, min_survival_frames=cfg.MIN_SURVIVAL_FRAMES),
-            'db': DatabaseManager(cfg.DB_PATH, cfg.FPS),
-            'classifier': VehicleClassifier(cfg.TYPE_MAP, {"car": cfg.YOLO_CLASS_CAR, "bus": cfg.YOLO_CLASS_BUS, "truck": cfg.YOLO_CLASS_TRUCK})
-        }
-
-        # 根据配置加载其他组件
-        if getattr(cfg, "ENABLE_OCR", False):
-            # 挂载 ONNX 异步引擎
-            async_worker = AsyncPlateRecognizer(
-                y5fu_onnx_path="perception/plate_classifier/models/y5fu_320x_sim.onnx",
-                litemodel_onnx_path="perception/plate_classifier/models/litemodel_cls_96x_r1.onnx"
-            )
-            components['plate_worker'] = async_worker
-
-        self.engine = TrafficMonitorEngine(cfg, components, frame_callback=self.emit_frame)
+        # 5. 启动引擎
+        # 此时的 components 已经是一个包含了所有依赖的干净字典
+        self.engine = TrafficMonitorEngine(config, components, self.emit_frame)
         self.engine.run()
 
     def emit_frame(self, frame):
