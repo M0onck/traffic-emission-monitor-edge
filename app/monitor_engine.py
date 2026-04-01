@@ -240,34 +240,56 @@ class TrafficMonitorEngine:
             # 2. 收割已完成的结果 (不阻塞)
             self._collect_plate_results()
 
-        # --- Step 4: 物理参数估算 (Kinematics) ---
-        kinematics_data = {}
-        
-        if self.motion_on and self.comps.get('kinematics'):
+        # --- Step 4: 物理轨迹打点与动态死区判定 (修复静默抹杀 Bug 版) ---
+        if self.motion_on and self.comps.get('transformer'):
             points = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
-            transformed = self.comps['transformer'].transform_points(points)
-            roi_bounds = self.comps['transformer'].get_roi_vertical_bounds()
-            
-            kinematics_data = self.comps['kinematics'].update(
-                detections, transformed, frame.shape, frame_timestamp, roi_y_range=roi_bounds
-            )
-
-            # 记录原始轨迹点
-            tid_to_pixel = {tid: pt for tid, pt in zip(detections.tracker_id, points)}
             transformer = self.comps['transformer']
 
-            for tid, k_data in kinematics_data.items():
-                raw_point = tid_to_pixel.get(tid)
-                if raw_point is not None and transformer.is_in_roi(raw_point):
+            for tid, raw_point in zip(detections.tracker_id, points):
+                if transformer.is_in_roi(raw_point):
+                    
+                    # 1. 正常计算当前像素的物理坐标
+                    curr_phys = transformer.transform_points(np.array([raw_point]))[0]
+
+                    # 2. 动态阈值计算：探针法 (Probe)
+                    probe_point = [raw_point[0], raw_point[1] + 2]
+                    probe_phys = transformer.transform_points(np.array([probe_point]))[0]
+                    dynamic_tolerance = abs(curr_phys[1] - probe_phys[1])
+
+                    # 3. 底层静止锚定机制与伪速度估算
+                    record = self.registry.get_record(tid)
+                    trajectory = record.get('trajectory', []) if record else []
+                    
+                    pseudo_speed = 0.0  # 初始速度
+                    
+                    if trajectory:
+                        last_phys_y = trajectory[-1].get('raw_y', curr_phys[1])
+                        last_time = trajectory[-1].get('timestamp', frame_timestamp - 0.033)
+                        
+                        # 核心判定：如果纵向位移小于宽容度，判定绝对静止
+                        if abs(curr_phys[1] - last_phys_y) < max(0.2, dynamic_tolerance):
+                            curr_phys[1] = last_phys_y  # 强行冻结坐标
+                            pseudo_speed = 0.0          # 速度为 0
+                        else:
+                            # 计算一个粗略速度，骗过 Registry 的静止垃圾过滤机制
+                            dy = abs(curr_phys[1] - last_phys_y)
+                            dt = max(0.001, frame_timestamp - last_time)
+                            pseudo_speed = dy / dt
+
+                    # 4. 严格对齐传参，传入 pseudo_speed
                     self.registry.append_kinematics(
-                        tid, frame_id, 
-                        k_data['speed'], k_data['accel'],
-                        raw_x=k_data['curr_x'], raw_y=k_data['curr_y'],
-                        pixel_x=raw_point[0], pixel_y=raw_point[1],
+                        tid,             
+                        frame_id,        
+                        pseudo_speed,    # <--- 不再填 0.0，传入估算速度
+                        0.0,             # 加速度依然可以填 0.0，不影响过滤
+                        raw_x=curr_phys[0], 
+                        raw_y=curr_phys[1],
+                        pixel_x=raw_point[0],  
+                        pixel_y=raw_point[1],  
                         timestamp=frame_timestamp
                     )
 
-        # --- Step 6: 可视化渲染 ---
+        # --- Step 5: 可视化渲染 ---
         label_data_list = self._prepare_labels(detections)
         return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
 
@@ -469,7 +491,7 @@ class TrafficMonitorEngine:
              'ipm_x': point.get('raw_x', 0.0),   
              'ipm_y': point.get('raw_y', 0.0)    
          }
-         self.db.insert_micro(point['frame_id'], tid, db_payload)
+         self.db.insert_micro(point.get('frame_id', 0), tid, db_payload)
 
      self.db.flush_micro_buffer()
 
