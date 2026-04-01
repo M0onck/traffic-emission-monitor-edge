@@ -53,9 +53,6 @@ class TrafficMonitorEngine:
             "bus": self.cfg.YOLO_CLASS_BUS,
             "truck": self.cfg.YOLO_CLASS_TRUCK
         }
-
-        # 分类器引用更新：原先完整的 OCR 已被替换为仅针对车牌属性的小模型分类器
-        self.plate_classifier = components.get('plate_classifier') 
         
         # 修复潜在的 AttributeError: 恢复对基础车型分类器(用于解析车辆类型逻辑)的引用
         self.classifier = components.get('classifier')
@@ -426,12 +423,6 @@ class TrafficMonitorEngine:
 
             # Step 4. 宏观数据入库
             self.db.insert_macro(tid, record, final_type_str, final_plate)
-
-            # Step 5. 控制台报告 (Debug Mode)
-            if self.debug_mode and self.comps.get('reporter'):
-                self.comps['reporter'].print_exit_report(
-                    tid, record, self.comps.get('kinematics'), self.classifier
-                )
     
     def _recalculate_distance_geometric(self, record):
         """

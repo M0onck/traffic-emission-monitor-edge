@@ -19,7 +19,6 @@ from infra.store.sqlite_manager import DatabaseManager
 from infra.sys.process_optimizer import SystemOptimizer
 from infra.concurrency.async_recognizer import AsyncPlateRecognizer
 from perception.math.geometry import ViewTransformer
-from perception.kinematics_estimator import KinematicsEstimator
 from ui.renderer import Visualizer
 from perception.gst_pipeline import GstPipelineManager
 import supervision as sv
@@ -281,10 +280,7 @@ class EngineWorker(QThread):
             'classifier': VehicleClassifier(cfg.TYPE_MAP, {"car": cfg.YOLO_CLASS_CAR, "bus": cfg.YOLO_CLASS_BUS, "truck": cfg.YOLO_CLASS_TRUCK})
         }
 
-        # 根据配置加载其他组件 (简化展示，可自行补全完整参数)
-        if cfg.ENABLE_MOTION:
-            components['kinematics'] = KinematicsEstimator({"fps": cfg.FPS, "kinematics": {"speed_window": 15, "accel_window": 15}})
-        
+        # 根据配置加载其他组件
         if getattr(cfg, "ENABLE_OCR", False):
             # 挂载 ONNX 异步引擎
             async_worker = AsyncPlateRecognizer(
