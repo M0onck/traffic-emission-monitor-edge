@@ -5,7 +5,7 @@ import numpy as np
 # --- 引入 Qt 相关依赖 ---
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QStackedWidget,
-                             QTabWidget, QGridLayout)
+                             QTabWidget, QGridLayout, QFrame)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont, QPainterPath
 
@@ -305,18 +305,19 @@ class TrafficMonitorUI(QMainWindow):
         self.stack = QStackedWidget()
         self.main_layout.addWidget(self.stack)
 
-        # 底部导航栏
-        self.nav_layout = QHBoxLayout()
+        # 底部导航栏：包裹在一个独立的 Widget 中，方便在主菜单时整体隐藏
+        self.nav_widget = QWidget()
+        self.nav_layout = QHBoxLayout(self.nav_widget)
         self.nav_layout.setContentsMargins(20, 10, 20, 10)
         
         font = QFont("Arial", 16, QFont.Bold)
 
-        # 退出按钮
-        self.btn_exit = QPushButton("退出")
-        self.btn_exit.setFont(font)
-        self.btn_exit.setMinimumHeight(50)
-        self.btn_exit.setStyleSheet("background-color: #f44336; color: white;") # 红色警告色
-        self.btn_exit.clicked.connect(self.close) # 点击直接调用窗口关闭事件
+        # 将原有的“退出”改为“返回主页”
+        self.btn_home = QPushButton("返回主页")
+        self.btn_home.setFont(font)
+        self.btn_home.setMinimumHeight(50)
+        self.btn_home.setStyleSheet("background-color: #f39c12; color: white;") 
+        self.btn_home.clicked.connect(self.return_to_home)
 
         self.btn_prev = QPushButton("◀ 上一步")
         self.btn_prev.setFont(font)
@@ -328,17 +329,141 @@ class TrafficMonitorUI(QMainWindow):
         self.btn_next.setMinimumHeight(50)
         self.btn_next.clicked.connect(self.next_page)
 
-        self.nav_layout.addWidget(self.btn_exit)
+        self.nav_layout.addWidget(self.btn_home)
         self.nav_layout.addWidget(self.btn_prev)
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_next)
-        self.main_layout.addLayout(self.nav_layout)
+        self.main_layout.addWidget(self.nav_widget)
 
-        # 初始化页面
-        self.init_page_1_calibration()
-        self.init_page_2_settings()
-        self.init_page_3_monitor()
+        # 初始化页面：按顺序压入栈中
+        self.init_page_0_main_menu()     # 索引 0：BIOS 主界面
+        self.init_page_1_calibration()   # 索引 1：标定步骤
+        self.init_page_2_settings()      # 索引 2：设置步骤
+        self.init_page_3_monitor()       # 索引 3：运行面板
 
+        self.update_nav_buttons()
+
+    def init_page_0_main_menu(self):
+        """BIOS 风格的主调度界面"""
+        page = QWidget()
+        page.setStyleSheet("background-color: #0f111a;") # 深邃的边缘计算科技蓝/黑底色
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(30)
+
+        # --- 左侧：硬件与状态信息看板 (BIOS 仪表盘风格) ---
+        left_panel = QFrame()
+        left_panel.setStyleSheet("background-color: #1a1d2d; border: 2px solid #2d324f; border-radius: 12px;")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(25, 25, 25, 25)
+
+        title = QLabel("SYSTEM STATUS")
+        title.setFont(QFont("Consolas", 18, QFont.Bold))
+        title.setStyleSheet("color: #00e676; border: none;") # 荧光绿点缀
+        left_layout.addWidget(title)
+        
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("border: 1px solid #2d324f;")
+        left_layout.addWidget(line)
+        left_layout.addSpacing(15)
+
+        # 这里的数值目前是硬编码的占位符，后续可以编写代码去读取树莓派真实的 os/psutil 数据
+        import time
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        status_info = [
+            ("🕒 系统时间", current_time),
+            ("💾 边缘存储", "112 GB / 256 GB"),
+            ("🌐 网络连接", "WLAN (192.168.1.10)"),
+            ("📡 气象网关", "OFFLINE (端口未接入)"),
+            ("🔥 CPU 温度", "45.2 °C"),
+            ("🧠 NPU 温度", "41.0 °C (Hailo-8)"),
+        ]
+
+        font_label = QFont("Consolas", 14)
+        font_value = QFont("Consolas", 14, QFont.Bold)
+        for key, val in status_info:
+            row = QHBoxLayout()
+            lbl_k = QLabel(key)
+            lbl_k.setStyleSheet("color: #8ab4f8; border: none;")
+            lbl_k.setFont(font_label)
+            lbl_v = QLabel(val)
+            lbl_v.setStyleSheet("color: #ffffff; border: none;")
+            lbl_v.setFont(font_value)
+            lbl_v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(lbl_k)
+            row.addWidget(lbl_v)
+            left_layout.addLayout(row)
+
+        left_layout.addStretch()
+        layout.addWidget(left_panel, 5) # 左侧宽容度占比 5
+
+        # --- 右侧：应用功能分发列表 ---
+        right_panel = QFrame()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(20, 20, 20, 20)
+        right_layout.setAlignment(Qt.AlignTop)
+
+        app_title = QLabel("=== EDGE APPLICATIONS ===")
+        app_title.setFont(QFont("Arial", 16, QFont.Bold))
+        app_title.setStyleSheet("color: #ffffff;")
+        app_title.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(app_title)
+        right_layout.addSpacing(30)
+
+        # 统一的按钮样式模板
+        btn_style = """
+            QPushButton {
+                background-color: #2962ff; color: white; border: none; border-radius: 8px;
+                padding: 15px; text-align: left; padding-left: 20px;
+            }
+            QPushButton:hover { background-color: #0039cb; }
+            QPushButton:pressed { background-color: #00227b; }
+        """
+        
+        btn_app1 = QPushButton("多源数据采集")
+        btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
+        btn_app1.setStyleSheet(btn_style)
+        # 点击进入标定界面 (索引 1)
+        btn_app1.clicked.connect(lambda: self.enter_app(1))
+
+        btn_app2 = QPushButton("气象站校准 (开发中)")
+        btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
+        # 灰色未激活样式
+        btn_style2 = btn_style.replace("#2962ff", "#455a64").replace("#0039cb", "#37474f").replace("#00227b", "#263238")
+        btn_app2.setStyleSheet(btn_style2)
+
+        btn_exit = QPushButton("⏻ 关机并退出节点")
+        btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
+        # 红色危险操作样式
+        btn_style3 = btn_style.replace("#2962ff", "#d50000").replace("#0039cb", "#9b0000").replace("#00227b", "#650000")
+        btn_exit.setStyleSheet(btn_style3)
+        btn_exit.clicked.connect(self.close)
+
+        right_layout.addWidget(btn_app1)
+        right_layout.addSpacing(15)
+        right_layout.addWidget(btn_app2)
+        right_layout.addStretch()
+        right_layout.addWidget(btn_exit)
+
+        layout.addWidget(right_panel, 4) # 右侧占比 4
+
+        self.stack.addWidget(page)
+
+    def enter_app(self, target_idx):
+        """进入具体功能的槽函数"""
+        self.stack.setCurrentIndex(target_idx)
+        self.update_nav_buttons()
+
+    def return_to_home(self):
+        """安全停止任务并退回 BIOS 主界面"""
+        if hasattr(self, 'dash_timer') and self.dash_timer.isActive():
+            self.dash_timer.stop()
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.worker.stop()
+            self.worker.wait(2000)
+            
+        self.stack.setCurrentIndex(0)
         self.update_nav_buttons()
 
     def init_page_1_calibration(self):
@@ -529,13 +654,13 @@ class TrafficMonitorUI(QMainWindow):
 
     def prev_page(self):
         idx = self.stack.currentIndex()
-        if idx > 0:
+        if idx > 1: # 防止用户通过“上一步”按钮退回到主菜单
             self.stack.setCurrentIndex(idx - 1)
         self.update_nav_buttons()
 
     def next_page(self):
         idx = self.stack.currentIndex()
-        if idx == 1:
+        if idx == 2:
             # 即将进入运行状态
             self.start_engine()
             self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
@@ -644,16 +769,23 @@ class TrafficMonitorUI(QMainWindow):
 
     def update_nav_buttons(self):
         idx = self.stack.currentIndex()
-        self.btn_prev.setVisible(idx > 0 and idx < 2) # 运行中隐藏上一步
         
+        # 核心逻辑：如果在 BIOS 界面 (0)，直接隐藏底部的所有控制按钮
+        self.nav_widget.setVisible(idx > 0)
         if idx == 0:
+            return
+            
+        # 现在的步骤页面索引是 1 -> 2 -> 3
+        self.btn_prev.setVisible(idx > 1 and idx < 3) 
+        
+        if idx == 1:
             self.btn_next.setText("下一步 ▶")
             self.btn_next.setStyleSheet("")
-        elif idx == 1:
-            self.btn_next.setText(" 🚀 开 始 ")
-            self.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
         elif idx == 2:
-            self.btn_next.setVisible(False) # 运行中隐藏下一步按钮
+            self.btn_next.setText(" 开 始 ")
+            self.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
+        elif idx == 3:
+            self.btn_next.setVisible(False) 
             self.btn_prev.setVisible(False)
             
     def start_engine(self):
