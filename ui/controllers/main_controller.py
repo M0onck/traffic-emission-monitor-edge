@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtGui import QImage, QPixmap
 
 from ui.workers.engine_worker import EngineWorker
+from infra.sys.sys_monitor import SysMonitor
 
 class MainController:
     """Controller 层：负责状态管理、页面路由、信号绑定与定时更新"""
@@ -21,6 +22,11 @@ class MainController:
         self.view.close_callback = self.cleanup  # 注入关闭事件钩子
         self.update_nav_buttons()
         self.update_main_menu_btn_style()
+
+        # 用于慢速轮询硬件状态的定时器 (1Hz)
+        self.sys_timer = QTimer(self.view)
+        self.sys_timer.timeout.connect(self.update_sys_board)
+        self.sys_timer.start(1000) # 每 1000 毫秒刷新一次系统看板
 
     def bind_signals(self):
         """将视图组件的事件绑定到控制器的逻辑上"""
@@ -164,6 +170,38 @@ class MainController:
             self.final_stop_process()
     
     # --- 界面渲染更新 ---
+    def update_sys_board(self):
+        """定期刷新左侧的系统状态看板"""
+        # 确保当前的界面是主菜单 (Index 0)，如果在其他界面就不白费性能去读了
+        if self.view.stack.currentIndex() != 0:
+            return
+            
+        # 确保我们在 view 中维护了 status_labels 字典
+        if not hasattr(self.view, 'status_labels'):
+            return
+            
+        labels = self.view.status_labels
+        
+        # 动态获取并填入数据
+        if "系统时间" in labels:
+            labels["系统时间"].setText(SysMonitor.get_system_time())
+        if "边缘存储" in labels:
+            labels["边缘存储"].setText(SysMonitor.get_edge_storage())
+        if "网络连接" in labels:
+            labels["网络连接"].setText(SysMonitor.get_network_status())
+        if "气象网关" in labels:
+            labels["气象网关"].setText(SysMonitor.get_weather_gateway())
+        if "CPU 温度" in labels:
+            labels["CPU 温度"].setText(SysMonitor.get_cpu_temp())
+        if "NPU 温度" in labels:
+            # 可以在温度过高时让字变红预警
+            temp_str = SysMonitor.get_npu_temp()
+            labels["NPU 温度"].setText(temp_str)
+            if "°C" in temp_str and float(temp_str.replace(" °C", "")) > 75.0:
+                labels["NPU 温度"].setStyleSheet("color: #ff5555; border: none; font-weight: bold;")
+            else:
+                labels["NPU 温度"].setStyleSheet("color: #ffffff; border: none;")
+
     def update_video_frame(self, rgb_img):
         h, w, ch = rgb_img.shape
         bytes_per_line = ch * w
