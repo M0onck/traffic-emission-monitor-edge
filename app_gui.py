@@ -456,8 +456,8 @@ class TrafficMonitorUI(QMainWindow):
         self.btn_app1 = QPushButton("多源数据采集")
         self.btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
         self.update_main_menu_btn_style() # 初始化样式
-        # 点击进入标定界面 (索引 1)
-        self.btn_app1.clicked.connect(lambda: self.enter_app(1))
+        # 点击进入界面（首次进入标定，之后进入看板）
+        self.btn_app1.clicked.connect(self.route_app1_click)
 
         btn_app2 = QPushButton("气象站校准 (开发中)")
         btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
@@ -493,6 +493,15 @@ class TrafficMonitorUI(QMainWindow):
         """进入具体功能的槽函数"""
         self.stack.setCurrentIndex(target_idx)
         self.update_nav_buttons()
+
+    def route_app1_click(self):
+        """主界面按钮的智能跳转路由"""
+        if self.is_collecting:
+            # 如果已经在采集中，直接跳过标定和设置，切入监控面板 (Index 3)
+            self.enter_app(3)
+        else:
+            # 如果尚未运行，按照正常流程进入第一步标定环节 (Index 1)
+            self.enter_app(1)
 
     def return_to_home(self):
         """返回主界面"""
