@@ -5,7 +5,7 @@ import numpy as np
 # --- 引入 Qt 相关依赖 ---
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QStackedWidget,
-                             QTabWidget, QGridLayout, QFrame)
+                             QTabWidget, QGridLayout, QFrame, QMessageBox)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont, QPainterPath
 
@@ -290,9 +290,10 @@ class TrafficMonitorUI(QMainWindow):
         # 强制设置为树莓派屏幕大小
         self.setFixedSize(800, 480)
 
-        self.phys_w = 10.5 # 默认物理宽度
-        self.phys_h = 30.0 # 默认物理长度
+        self.phys_w = 20.0 # 默认物理宽度
+        self.phys_h = 20.0 # 默认物理长度
 
+        self.is_collecting = False # 标记采集任务是否正在运行
         self.init_ui()
 
     def init_ui(self):
@@ -312,12 +313,19 @@ class TrafficMonitorUI(QMainWindow):
         
         font = QFont("Arial", 16, QFont.Bold)
 
-        # 将原有的“退出”改为“返回主页”
+        # 返回主页按钮
         self.btn_home = QPushButton("返回主页")
         self.btn_home.setFont(font)
         self.btn_home.setMinimumHeight(50)
         self.btn_home.setStyleSheet("background-color: #f39c12; color: white;") 
         self.btn_home.clicked.connect(self.return_to_home)
+
+        # 结束采集按钮 (默认隐藏)
+        self.btn_stop = QPushButton("结束采集")
+        self.btn_stop.setFont(font)
+        self.btn_stop.setMinimumHeight(50)
+        self.btn_stop.setStyleSheet("background-color: #c0392b; color: white;") 
+        self.btn_stop.clicked.connect(self.stop_collection_trigger)
 
         self.btn_prev = QPushButton("◀ 上一步")
         self.btn_prev.setFont(font)
@@ -330,6 +338,7 @@ class TrafficMonitorUI(QMainWindow):
         self.btn_next.clicked.connect(self.next_page)
 
         self.nav_layout.addWidget(self.btn_home)
+        self.nav_layout.addWidget(self.btn_stop)
         self.nav_layout.addWidget(self.btn_prev)
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_next)
@@ -343,8 +352,31 @@ class TrafficMonitorUI(QMainWindow):
 
         self.update_nav_buttons()
 
+    def update_main_menu_btn_style(self):
+        """根据采集状态刷新主界面按钮颜色和文字"""
+        if self.is_collecting:
+            style = """
+                QPushButton {
+                    background-color: #27ae60; color: white; border: none; border-radius: 8px;
+                    padding: 15px; text-align: left; padding-left: 20px;
+                }
+                QPushButton:hover { background-color: #2ecc71; }
+            """
+            self.btn_app1.setText("多源数据采集 (运行中...)")
+        else:
+            style = """
+                QPushButton {
+                    background-color: #2962ff; color: white; border: none; border-radius: 8px;
+                    padding: 15px; text-align: left; padding-left: 20px;
+                }
+                QPushButton:hover { background-color: #0039cb; }
+            """
+            self.btn_app1.setText("多源数据采集")
+        
+        self.btn_app1.setStyleSheet(style)
+
     def init_page_0_main_menu(self):
-        """BIOS 风格的主调度界面"""
+        """主调度界面"""
         page = QWidget()
         page.setStyleSheet("background-color: #0f111a;") # 深邃的边缘计算科技蓝/黑底色
         layout = QHBoxLayout(page)
@@ -421,11 +453,11 @@ class TrafficMonitorUI(QMainWindow):
             QPushButton:pressed { background-color: #00227b; }
         """
         
-        btn_app1 = QPushButton("多源数据采集")
-        btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
-        btn_app1.setStyleSheet(btn_style)
+        self.btn_app1 = QPushButton("多源数据采集")
+        self.btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
+        self.update_main_menu_btn_style() # 初始化样式
         # 点击进入标定界面 (索引 1)
-        btn_app1.clicked.connect(lambda: self.enter_app(1))
+        self.btn_app1.clicked.connect(lambda: self.enter_app(1))
 
         btn_app2 = QPushButton("气象站校准 (开发中)")
         btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
@@ -438,14 +470,14 @@ class TrafficMonitorUI(QMainWindow):
         # 灰色未激活样式
         btn_app3.setStyleSheet(btn_style2)
 
-        btn_exit = QPushButton("⏻ 关机并退出节点")
+        btn_exit = QPushButton("退出程序")
         btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
         # 红色危险操作样式
         btn_style3 = btn_style.replace("#2962ff", "#d50000").replace("#0039cb", "#9b0000").replace("#00227b", "#650000")
         btn_exit.setStyleSheet(btn_style3)
         btn_exit.clicked.connect(self.close)
 
-        right_layout.addWidget(btn_app1)
+        right_layout.addWidget(self.btn_app1)
         right_layout.addSpacing(15)
         right_layout.addWidget(btn_app2)
         right_layout.addSpacing(15)
@@ -463,21 +495,16 @@ class TrafficMonitorUI(QMainWindow):
         self.update_nav_buttons()
 
     def return_to_home(self):
-        """安全停止任务并退回 BIOS 主界面"""
-        if hasattr(self, 'dash_timer') and self.dash_timer.isActive():
-            self.dash_timer.stop()
-        if hasattr(self, 'worker') and self.worker.isRunning():
-            self.worker.stop()
-            self.worker.wait(2000)
-            
+        """返回主界面"""
         self.stack.setCurrentIndex(0)
         self.update_nav_buttons()
+        self.update_main_menu_btn_style()
 
     def init_page_1_calibration(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         
-        title = QLabel("步骤 1/3: 触屏拖拽 4 个角点进行标定")
+        title = QLabel("步骤 1/2: 拖拽 4 个角点进行标定")
         title.setFont(QFont("Arial", 14, QFont.Bold))
         layout.addWidget(title)
         
@@ -492,7 +519,7 @@ class TrafficMonitorUI(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
         
-        title = QLabel("步骤 2/3: 设置真实物理尺寸")
+        title = QLabel("步骤 2/2: 设置真实物理尺寸")
         title.setFont(QFont("Arial", 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
@@ -668,12 +695,42 @@ class TrafficMonitorUI(QMainWindow):
     def next_page(self):
         idx = self.stack.currentIndex()
         if idx == 2:
-            # 即将进入运行状态
-            self.start_engine()
-            self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
+            # 若还未启动则进入运行状态
+            if not self.is_collecting:
+                self.start_engine()
+                self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
+                self.is_collecting = True
         if idx < self.stack.count() - 1:
             self.stack.setCurrentIndex(idx + 1)
         self.update_nav_buttons()
+
+    def stop_collection_trigger(self):
+        """触发结束采集：弹出确认窗口"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("确认操作")
+        msg_box.setText("确定要结束当前的采集任务并关闭引擎吗？")
+        msg_box.setInformativeText("未保存的缓冲区数据可能会丢失。")
+        msg_box.setIcon(QMessageBox.Question)
+        
+        # 自定义按钮文字
+        yes_btn = msg_box.addButton("确定", QMessageBox.YesRole)
+        no_btn = msg_box.addButton("取消", QMessageBox.NoRole)
+        
+        msg_box.exec_()
+        
+        if msg_box.clickedButton() == yes_btn:
+            self.final_stop_process()
+
+    def final_stop_process(self):
+        """正式执行退出逻辑"""
+        if hasattr(self, 'dash_timer'): self.dash_timer.stop()
+        if hasattr(self, 'worker'):
+            self.worker.stop()
+            self.worker.wait(1000)
+        
+        self.is_collecting = False
+        self.update_main_menu_btn_style()
+        self.return_to_home()
 
     def update_timer_tasks(self):
         """总控定时器：分配 UI 刷新任务"""
@@ -781,7 +838,10 @@ class TrafficMonitorUI(QMainWindow):
         self.nav_widget.setVisible(idx > 0)
         if idx == 0:
             return
-            
+        
+        # 只有在运行面板（Index 3）且正在采集时，才显示“结束采集”按钮
+        self.btn_stop.setVisible(idx == 3 and self.is_collecting)
+
         # 现在的步骤页面索引是 1 -> 2 -> 3
         self.btn_prev.setVisible(idx > 1 and idx < 3) 
         
