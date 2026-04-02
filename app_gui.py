@@ -357,7 +357,7 @@ class TrafficMonitorUI(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(25, 25, 25, 25)
 
-        title = QLabel("SYSTEM STATUS")
+        title = QLabel("系统状态")
         title.setFont(QFont("Consolas", 18, QFont.Bold))
         title.setStyleSheet("color: #00e676; border: none;") # 荧光绿点缀
         left_layout.addWidget(title)
@@ -372,12 +372,12 @@ class TrafficMonitorUI(QMainWindow):
         import time
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
         status_info = [
-            ("🕒 系统时间", current_time),
-            ("💾 边缘存储", "112 GB / 256 GB"),
-            ("🌐 网络连接", "WLAN (192.168.1.10)"),
-            ("📡 气象网关", "OFFLINE (端口未接入)"),
-            ("🔥 CPU 温度", "45.2 °C"),
-            ("🧠 NPU 温度", "41.0 °C (Hailo-8)"),
+            ("系统时间", current_time),
+            ("边缘存储", "112 GB / 256 GB"),
+            ("网络连接", "WLAN (192.168.1.10)"),
+            ("气象网关", "OFFLINE (端口未接入)"),
+            ("CPU 温度", "45.2 °C"),
+            ("NPU 温度", "41.0 °C"),
         ]
 
         font_label = QFont("Consolas", 14)
@@ -404,7 +404,7 @@ class TrafficMonitorUI(QMainWindow):
         right_layout.setContentsMargins(20, 20, 20, 20)
         right_layout.setAlignment(Qt.AlignTop)
 
-        app_title = QLabel("=== EDGE APPLICATIONS ===")
+        app_title = QLabel("功能列表")
         app_title.setFont(QFont("Arial", 16, QFont.Bold))
         app_title.setStyleSheet("color: #ffffff;")
         app_title.setAlignment(Qt.AlignCenter)
@@ -433,6 +433,11 @@ class TrafficMonitorUI(QMainWindow):
         btn_style2 = btn_style.replace("#2962ff", "#455a64").replace("#0039cb", "#37474f").replace("#00227b", "#263238")
         btn_app2.setStyleSheet(btn_style2)
 
+        btn_app3 = QPushButton("浏览历史数据 (开发中)")
+        btn_app3.setFont(QFont("Arial", 14, QFont.Bold))
+        # 灰色未激活样式
+        btn_app3.setStyleSheet(btn_style2)
+
         btn_exit = QPushButton("⏻ 关机并退出节点")
         btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
         # 红色危险操作样式
@@ -443,6 +448,8 @@ class TrafficMonitorUI(QMainWindow):
         right_layout.addWidget(btn_app1)
         right_layout.addSpacing(15)
         right_layout.addWidget(btn_app2)
+        right_layout.addSpacing(15)
+        right_layout.addWidget(btn_app3)
         right_layout.addStretch()
         right_layout.addWidget(btn_exit)
 
