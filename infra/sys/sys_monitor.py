@@ -63,20 +63,30 @@ class SysMonitor:
 
     @staticmethod
     def get_npu_temp() -> str:
-        """6. NPU 温度 (以 Hailo-8 为例)"""
+        """6. NPU 温度 (使用 Hailo 原生 Python API 获取)"""
         try:
-            # 方式A: 通过 Hailo 官方命令行工具获取 (推荐)
-            # 命令大概输出: Temperature: 45.26 Degrees
-            result = subprocess.check_output(
-                ['hailortcli', 'fw-control', 'measure-temp'], 
-                text=True, stderr=subprocess.DEVNULL
-            )
-            # 提取数字部分
-            import re
-            match = re.search(r'([\d\.]+)', result)
-            if match:
-                return f"{float(match.group(1)):.1f} °C"
-            return "运行中 (温度暂缺)"
-        except Exception:
-            # 如果没装 CLI 或者板子没插好
+            # 引入 Hailo 平台库
+            from hailo_platform import Device
+            
+            # 初始化目标设备
+            target = Device()
+            
+            # 获取芯片底层温度传感器的数据
+            temp_info = target.control.get_chip_temperature()
+            
+            # Hailo-8 内部包含两个温度传感器 (ts0 和 ts1)
+            # 我们可以直接取它们的平均值，或任意一个探针的值
+            temp1 = temp_info.ts0_temperature
+            temp2 = temp_info.ts1_temperature
+            avg_temp = (temp1 + temp2) / 2.0
+            
+            return f"{avg_temp:.1f} °C"
+            
+        except ImportError:
+            return "未检测到 hailo_platform 库"
+        except Exception as e:
+            # 当 NPU 正在被另一个高优先级进程（如推理引擎）独占锁定时，
+            # 初始化 Device() 可能会被拒绝，此时优雅降级
+            if "HAILO_OUT_OF_PHYSICAL_DEVICES" in str(e):
+                return "推理中 (受进程锁保护)"
             return "OFFLINE / 未就绪"
