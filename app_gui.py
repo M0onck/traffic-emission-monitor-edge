@@ -562,8 +562,8 @@ class TrafficMonitorUI(QMainWindow):
         if thermal_matrix is not None:
 
             # 1. 修正画面显示方向
-            # rot90 第二个参数 2 代表旋转两次 90 度
-            thermal_matrix = np.rot90(thermal_matrix, 2)
+            # 矩阵水平镜像翻转
+            thermal_matrix = np.fliplr(thermal_matrix)
 
             # 2. 提取物理温度 (取中心 2x2 区域的均值更稳定)
             t_min = np.min(thermal_matrix)
