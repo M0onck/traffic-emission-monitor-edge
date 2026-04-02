@@ -855,9 +855,11 @@ class TrafficMonitorUI(QMainWindow):
         self.btn_prev.setVisible(idx > 1 and idx < 3) 
         
         if idx == 1:
+            self.btn_next.setVisible(True)
             self.btn_next.setText("下一步 ▶")
             self.btn_next.setStyleSheet("")
         elif idx == 2:
+            self.btn_next.setVisible(True)
             self.btn_next.setText(" 开 始 ")
             self.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
         elif idx == 3:
