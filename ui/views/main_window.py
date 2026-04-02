@@ -44,24 +44,20 @@ class MainWindow(QMainWindow):
         self.btn_home.setFont(font)
         self.btn_home.setMinimumHeight(50)
         self.btn_home.setStyleSheet("background-color: #f39c12; color: white;") 
-        self.btn_home.clicked.connect(self.return_to_home)
 
         # 结束采集按钮 (默认隐藏)
         self.btn_stop = QPushButton("结束采集")
         self.btn_stop.setFont(font)
         self.btn_stop.setMinimumHeight(50)
         self.btn_stop.setStyleSheet("background-color: #c0392b; color: white;") 
-        self.btn_stop.clicked.connect(self.stop_collection_trigger)
 
         self.btn_prev = QPushButton("◀ 上一步")
         self.btn_prev.setFont(font)
         self.btn_prev.setMinimumHeight(50)
-        self.btn_prev.clicked.connect(self.prev_page)
         
         self.btn_next = QPushButton("下一步 ▶")
         self.btn_next.setFont(font)
         self.btn_next.setMinimumHeight(50)
-        self.btn_next.clicked.connect(self.next_page)
 
         self.nav_layout.addWidget(self.btn_home)
         self.nav_layout.addWidget(self.btn_stop)
@@ -75,8 +71,6 @@ class MainWindow(QMainWindow):
         self.init_page_1_calibration()   # 索引 1：标定步骤
         self.init_page_2_settings()      # 索引 2：设置步骤
         self.init_page_3_monitor()       # 索引 3：运行面板
-
-        self.update_nav_buttons()
 
     def init_page_0_main_menu(self):
         """主调度界面"""
@@ -103,29 +97,38 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(line)
         left_layout.addSpacing(15)
 
-        # 这里的数值目前是硬编码的占位符，后续可以编写代码去读取树莓派真实的 os/psutil 数据
-        import time
-        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        status_info = [
-            ("系统时间", current_time),
-            ("边缘存储", "112 GB / 256 GB"),
-            ("网络连接", "WLAN (192.168.1.10)"),
-            ("气象网关", "OFFLINE (端口未接入)"),
-            ("CPU 温度", "45.2 °C"),
-            ("NPU 温度", "41.0 °C"),
+        # 定义一个字典作为类成员，用于保存所有数值 Label 的句柄
+        self.status_labels = {}
+        
+        # 定义需要展示的监控项（初始值先用占位符 "--"，稍后由 Controller 填写真实数据）
+        status_keys = [
+            "系统时间",
+            "边缘存储",
+            "网络连接",
+            "气象网关",
+            "CPU 温度",
+            "NPU 温度"
         ]
 
         font_label = QFont("Consolas", 14)
         font_value = QFont("Consolas", 14, QFont.Bold)
-        for key, val in status_info:
+        
+        # 循环创建 UI 组件，并将值 Label 存入字典
+        for key in status_keys:
             row = QHBoxLayout()
+            
             lbl_k = QLabel(key)
             lbl_k.setStyleSheet("color: #8ab4f8; border: none;")
             lbl_k.setFont(font_label)
-            lbl_v = QLabel(val)
+            
+            lbl_v = QLabel("--")  # 默认占位符
             lbl_v.setStyleSheet("color: #ffffff; border: none;")
             lbl_v.setFont(font_value)
             lbl_v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            
+            # 将对应项的 QLabel 存入字典
+            self.status_labels[key] = lbl_v
+            
             row.addWidget(lbl_k)
             row.addWidget(lbl_v)
             left_layout.addLayout(row)
@@ -158,35 +161,32 @@ class MainWindow(QMainWindow):
         
         self.btn_app1 = QPushButton("多源数据采集")
         self.btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
-        self.update_main_menu_btn_style() # 初始化样式
-        # 点击进入界面（首次进入标定，之后进入看板）
-        self.btn_app1.clicked.connect(self.route_app1_click)
 
-        btn_app2 = QPushButton("气象站校准 (开发中)")
-        btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_app2 = QPushButton("气象站校准 (开发中)")
+        self.btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
         # 灰色未激活样式
         btn_style2 = btn_style.replace("#2962ff", "#455a64").replace("#0039cb", "#37474f").replace("#00227b", "#263238")
-        btn_app2.setStyleSheet(btn_style2)
+        self.btn_app2.setStyleSheet(btn_style2)
 
-        btn_app3 = QPushButton("浏览历史数据 (开发中)")
-        btn_app3.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_app3 = QPushButton("浏览历史数据 (开发中)")
+        self.btn_app3.setFont(QFont("Arial", 14, QFont.Bold))
         # 灰色未激活样式
-        btn_app3.setStyleSheet(btn_style2)
+        self.btn_app3.setStyleSheet(btn_style2)
 
-        btn_exit = QPushButton("退出程序")
-        btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_exit = QPushButton("退出程序")
+        self.btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
         # 红色危险操作样式
         btn_style3 = btn_style.replace("#2962ff", "#d50000").replace("#0039cb", "#9b0000").replace("#00227b", "#650000")
-        btn_exit.setStyleSheet(btn_style3)
-        btn_exit.clicked.connect(self.close)
+        self.btn_exit.setStyleSheet(btn_style3)
+        self.btn_exit.clicked.connect(self.close)
 
         right_layout.addWidget(self.btn_app1)
         right_layout.addSpacing(15)
-        right_layout.addWidget(btn_app2)
+        right_layout.addWidget(self.btn_app2)
         right_layout.addSpacing(15)
-        right_layout.addWidget(btn_app3)
+        right_layout.addWidget(self.btn_app3)
         right_layout.addStretch()
-        right_layout.addWidget(btn_exit)
+        right_layout.addWidget(self.btn_exit)
 
         layout.addWidget(right_panel, 4) # 右侧占比 4
 
@@ -196,9 +196,9 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         
-        title = QLabel("步骤 1/2: 拖拽 4 个角点进行标定")
-        title.setFont(QFont("Arial", 14, QFont.Bold))
-        layout.addWidget(title)
+        self.lbl_calib_title = QLabel("步骤 1/2: 拖拽 4 个角点进行标定")
+        self.lbl_calib_title.setFont(QFont("Arial", 14, QFont.Bold))
+        layout.addWidget(self.lbl_calib_title)
         
         self.canvas = CalibrationCanvas()
         self.canvas.load_frame(cfg.VIDEO_PATH) # 加载第一帧
@@ -211,10 +211,10 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
         
-        title = QLabel("步骤 2/2: 设置真实物理尺寸")
-        title.setFont(QFont("Arial", 18, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
+        self.lbl_settings_title = QLabel("步骤 2/2: 设置真实物理尺寸")
+        self.lbl_settings_title.setFont(QFont("Arial", 18, QFont.Bold))
+        self.lbl_settings_title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.lbl_settings_title)
 
         # 粗微调控制器
         def create_adjuster(label_text, init_value, setter_func):
@@ -370,11 +370,6 @@ class MainWindow(QMainWindow):
         t_layout.addStretch()
         
         self.tabs.addTab(tab_thermal, "热成像仪数据")
-
-        # 定时器：用于轮询底层数据更新 Dashboard
-        self.dash_timer = QTimer(self)
-        self.dash_timer.timeout.connect(self.update_timer_tasks)
-        self.sampled_tid = None
         
         self.stack.addWidget(self.page3)
     

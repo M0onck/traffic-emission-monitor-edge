@@ -20,6 +20,7 @@ class MainController:
         self.bind_signals()
         self.view.close_callback = self.cleanup  # 注入关闭事件钩子
         self.update_nav_buttons()
+        self.update_main_menu_btn_style()
 
     def bind_signals(self):
         """将视图组件的事件绑定到控制器的逻辑上"""
@@ -41,60 +42,60 @@ class MainController:
     
     def enter_app(self, target_idx):
         """进入具体功能的槽函数"""
-        self.stack.setCurrentIndex(target_idx)
+        self.view.stack.setCurrentIndex(target_idx)
         self.update_nav_buttons()
 
     def return_to_home(self):
         """返回主界面"""
-        self.stack.setCurrentIndex(0)
+        self.view.stack.setCurrentIndex(0)
         self.update_nav_buttons()
         self.update_main_menu_btn_style()
 
     def prev_page(self):
         """上一页触发逻辑"""
-        idx = self.stack.currentIndex()
+        idx = self.view.stack.currentIndex()
         if idx > 1: # 防止用户通过“上一步”按钮退回到主菜单
-            self.stack.setCurrentIndex(idx - 1)
+            self.view.stack.setCurrentIndex(idx - 1)
         self.update_nav_buttons()
 
     def next_page(self):
         """下一页触发逻辑"""
-        idx = self.stack.currentIndex()
+        idx = self.view.stack.currentIndex()
         if idx == 2:
             # 若还未启动则进入运行状态
             if not self.is_collecting:
                 self.start_engine()
                 self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
                 self.is_collecting = True
-        if idx < self.stack.count() - 1:
-            self.stack.setCurrentIndex(idx + 1)
+        if idx < self.view.stack.count() - 1:
+            self.view.stack.setCurrentIndex(idx + 1)
         self.update_nav_buttons()
 
     def update_nav_buttons(self):
-        idx = self.stack.currentIndex()
+        idx = self.view.stack.currentIndex()
         
         # 核心逻辑：如果在 BIOS 界面 (0)，直接隐藏底部的所有控制按钮
-        self.nav_widget.setVisible(idx > 0)
+        self.view.nav_widget.setVisible(idx > 0)
         if idx == 0:
             return
         
         # 只有在运行面板（Index 3）且正在采集时，才显示“结束采集”按钮
-        self.btn_stop.setVisible(idx == 3 and self.is_collecting)
+        self.view.btn_stop.setVisible(idx == 3 and self.is_collecting)
 
         # 现在的步骤页面索引是 1 -> 2 -> 3
-        self.btn_prev.setVisible(idx > 1 and idx < 3) 
+        self.view.btn_prev.setVisible(idx > 1 and idx < 3) 
         
         if idx == 1:
-            self.btn_next.setVisible(True)
-            self.btn_next.setText("下一步 ▶")
-            self.btn_next.setStyleSheet("")
+            self.view.btn_next.setVisible(True)
+            self.view.btn_next.setText("下一步 ▶")
+            self.view.btn_next.setStyleSheet("")
         elif idx == 2:
-            self.btn_next.setVisible(True)
-            self.btn_next.setText(" 开 始 ")
-            self.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
+            self.view.btn_next.setVisible(True)
+            self.view.btn_next.setText(" 开 始 ")
+            self.view.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
         elif idx == 3:
-            self.btn_next.setVisible(False) 
-            self.btn_prev.setVisible(False)
+            self.view.btn_next.setVisible(False) 
+            self.view.btn_prev.setVisible(False)
     
     def update_main_menu_btn_style(self):
         """根据采集状态刷新主界面按钮颜色和文字"""
@@ -106,7 +107,7 @@ class MainController:
                 }
                 QPushButton:hover { background-color: #2ecc71; }
             """
-            self.btn_app1.setText("多源数据采集 (运行中...)")
+            self.view.btn_app1.setText("多源数据采集 (运行中...)")
         else:
             style = """
                 QPushButton {
@@ -115,23 +116,23 @@ class MainController:
                 }
                 QPushButton:hover { background-color: #0039cb; }
             """
-            self.btn_app1.setText("多源数据采集")
+            self.view.btn_app1.setText("多源数据采集")
         
-        self.btn_app1.setStyleSheet(style)
+        self.view.btn_app1.setStyleSheet(style)
     
     # --- 任务启停控制 ---
     def start_engine(self):
         # 提取的是反算好的原生 1080p 真实坐标
-        source_points = self.canvas.get_real_points()
+        source_points = self.view.canvas.get_real_points()
         
         # 启动后台引擎线程
-        self.worker = EngineWorker(source_points, self.phys_w, self.phys_h)
+        self.worker = EngineWorker(source_points, self.view.phys_w, self.view.phys_h)
         self.worker.frame_ready.connect(self.update_video_frame)
         self.worker.start()
     
     def stop_collection_trigger(self):
         """触发结束采集：弹出确认窗口"""
-        msg_box = QMessageBox(self)
+        msg_box = QMessageBox(self.view)
         msg_box.setWindowTitle("确认操作")
         msg_box.setText("确定要结束当前的采集任务并关闭引擎吗？")
         msg_box.setInformativeText("未保存的缓冲区数据可能会丢失。")
@@ -171,11 +172,11 @@ class MainController:
         # 利用 Qt 的机制自适应当前 Label 尺寸，自动补齐黑边并保持等比缩放
         pixmap = QPixmap.fromImage(qimg)
         scaled_pixmap = pixmap.scaled(
-            self.video_label.size(), 
+            self.view.video_label.size(), 
             Qt.KeepAspectRatio, 
             Qt.SmoothTransformation
         )
-        self.video_label.setPixmap(scaled_pixmap)
+        self.view.video_label.setPixmap(scaled_pixmap)
 
     def update_timer_tasks(self):
         """总控定时器：分配 UI 刷新任务"""
@@ -204,9 +205,9 @@ class MainController:
             t_max = np.max(thermal_matrix)
             t_center = thermal_matrix[11:13, 15:17].mean() 
             
-            self.lbl_thermal_min.setText(f"最低温度: {t_min:.1f} °C")
-            self.lbl_thermal_max.setText(f"最高温度: {t_max:.1f} °C")
-            self.lbl_thermal_center.setText(f"中心温度: {t_center:.1f} °C")
+            self.view.lbl_thermal_min.setText(f"最低温度: {t_min:.1f} °C")
+            self.view.lbl_thermal_max.setText(f"最高温度: {t_max:.1f} °C")
+            self.view.lbl_thermal_center.setText(f"中心温度: {t_center:.1f} °C")
             
             # 3. 图像视觉渲染 (将浮点温度映射为 RGB 伪彩色)
             # 归一化到 0~255
@@ -233,7 +234,7 @@ class MainController:
             rgb_img = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_img.shape
             qimg = QImage(rgb_img.data, w, h, ch * w, QImage.Format_RGB888)
-            self.thermal_label.setPixmap(QPixmap.fromImage(qimg))
+            self.view.thermal_label.setPixmap(QPixmap.fromImage(qimg))
     
     def _update_dashboard(self):
         """Dashboard 数据抽样更新逻辑 (离场后结算展示)"""
@@ -266,12 +267,12 @@ class MainController:
         accels = [p['accel'] for p in trajectory if 'accel' in p]
         
         # 更新 UI 组件
-        self.lbl_dash_id.setText(f"目标 ID: #{tid} (已离场结算)")
+        self.view.lbl_dash_id.setText(f"目标 ID: #{tid} (已离场结算)")
         display_type = type_str if type_str else "未知"
-        self.lbl_dash_type.setText(f"车型: {display_type}")
+        self.view.lbl_dash_type.setText(f"车型: {display_type}")
         color_map = {'blue': '蓝色', 'green': '绿色', 'yellow': '黄色', 'white': '白色', 'black': '黑色', 'Unknown': '未知'}
         zh_color = color_map.get(plate_color, plate_color)
-        self.lbl_dash_plate.setText(f"车牌颜色: {zh_color}")
-        self.lbl_dash_dist.setText(f"行驶里程: {record.get('total_distance_m', 0.0):.1f} m")
+        self.view.lbl_dash_plate.setText(f"车牌颜色: {zh_color}")
+        self.view.lbl_dash_dist.setText(f"行驶里程: {record.get('total_distance_m', 0.0):.1f} m")
         
-        self.curve_widget.update_curve(speeds, accels)
+        self.view.curve_widget.update_curve(speeds, accels)
