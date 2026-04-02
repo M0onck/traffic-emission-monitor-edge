@@ -443,7 +443,7 @@ class TrafficMonitorUI(QMainWindow):
         self.video_label.setFont(QFont("Arial", 14))
         self.video_label.setStyleSheet("background-color: black; color: white;")
         v_layout.addWidget(self.video_label)
-        self.tabs.addTab(tab_video, "📷 实时画面")
+        self.tabs.addTab(tab_video, "目标追踪预览")
         
         # --- Tab 2: 单车抽样 Dashboard ---
         tab_dash = QWidget()
@@ -455,7 +455,7 @@ class TrafficMonitorUI(QMainWindow):
         self.lbl_dash_id = QLabel("目标 ID: 等待驶入...")
         self.lbl_dash_type = QLabel("车型: -")
         self.lbl_dash_plate = QLabel("车牌颜色: -")
-        self.lbl_dash_dist = QLabel("行驶里程: 0.0 m")
+        self.lbl_dash_dist = QLabel("行驶距离: 0.0 m")
         
         font_dash = QFont("Arial", 14)
         for lbl in [self.lbl_dash_id, self.lbl_dash_type, self.lbl_dash_plate, self.lbl_dash_dist]:
@@ -470,7 +470,7 @@ class TrafficMonitorUI(QMainWindow):
         d_layout.addSpacing(10)
         
         # 修改标题栏文本
-        title_lbl = QLabel("车辆微观运动学轨迹抽样评估 (S-G 平滑后):")
+        title_lbl = QLabel("ROI内车辆运动学轨迹:")
         title_lbl.setFont(QFont("Arial", 12, QFont.Bold))
         d_layout.addWidget(title_lbl)
         
@@ -479,16 +479,16 @@ class TrafficMonitorUI(QMainWindow):
         d_layout.addWidget(self.curve_widget)
         d_layout.addStretch()
         
-        self.tabs.addTab(tab_dash, "📊 数据抽样板")
+        self.tabs.addTab(tab_dash, "车流捕获数据")
         
         # --- Tab 3: 地表热力瞄准 ---
         tab_thermal = QWidget()
         t_layout = QVBoxLayout(tab_thermal)
-        t_layout.setContentsMargins(20, 20, 20, 20)
+        t_layout.setContentsMargins(10, 10, 10, 10)
         
         # 1. 顶部温度信息展示布局
         t_info_layout = QHBoxLayout()
-        self.lbl_thermal_center = QLabel("中心地表: -- °C")
+        self.lbl_thermal_center = QLabel("中心温度: -- °C")
         self.lbl_thermal_center.setStyleSheet("color: #ff5555; font-weight: bold;") # 中心温度用红色高亮
         self.lbl_thermal_min = QLabel("最低温度: -- °C")
         self.lbl_thermal_max = QLabel("最高温度: -- °C")
@@ -506,8 +506,8 @@ class TrafficMonitorUI(QMainWindow):
         self.thermal_label = QLabel("等待热成像传感器接入...")
         self.thermal_label.setAlignment(Qt.AlignCenter)
         self.thermal_label.setStyleSheet("background-color: #111; border: 2px solid #444;")
-        # MLX90640 原生是 32x24，我们按比例放大 15 倍以适应屏幕 (480x360)
-        self.thermal_label.setFixedSize(480, 360) 
+        # MLX90640 原生是 32x24，我们按比例放大以适应屏幕 (400x300)
+        self.thermal_label.setFixedSize(400, 300)
         
         # 使用水平布局让画面居中
         img_layout = QHBoxLayout()
@@ -518,7 +518,7 @@ class TrafficMonitorUI(QMainWindow):
         t_layout.addLayout(img_layout)
         t_layout.addStretch()
         
-        self.tabs.addTab(tab_thermal, "🌡️ 地表热力")
+        self.tabs.addTab(tab_thermal, "热成像仪数据")
 
         # 定时器：用于轮询底层数据更新 Dashboard
         self.dash_timer = QTimer(self)
@@ -560,26 +560,31 @@ class TrafficMonitorUI(QMainWindow):
             
         thermal_matrix = engine.thermal_cam.read()
         if thermal_matrix is not None:
-            # 1. 提取物理温度 (取中心 2x2 区域的均值更稳定)
+
+            # 1. 修正画面显示方向
+            # rot90 第二个参数 2 代表旋转两次 90 度
+            thermal_matrix = np.rot90(thermal_matrix, 2)
+
+            # 2. 提取物理温度 (取中心 2x2 区域的均值更稳定)
             t_min = np.min(thermal_matrix)
             t_max = np.max(thermal_matrix)
             t_center = thermal_matrix[11:13, 15:17].mean() 
             
             self.lbl_thermal_min.setText(f"最低温度: {t_min:.1f} °C")
             self.lbl_thermal_max.setText(f"最高温度: {t_max:.1f} °C")
-            self.lbl_thermal_center.setText(f"中心地表: {t_center:.1f} °C")
+            self.lbl_thermal_center.setText(f"中心温度: {t_center:.1f} °C")
             
-            # 2. 图像视觉渲染 (将浮点温度映射为 RGB 伪彩色)
+            # 3. 图像视觉渲染 (将浮点温度映射为 RGB 伪彩色)
             # 归一化到 0~255
             norm_img = cv2.normalize(thermal_matrix, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
             # 叠加 JET 经典热力图伪彩 (蓝-绿-黄-红)
             color_map = cv2.applyColorMap(norm_img, cv2.COLORMAP_JET)
             
             # 使用双三次插值放大画面，让原本粗糙的 32x24 变得平滑柔和
-            display_w, display_h = 480, 360
+            display_w, display_h = 400, 300
             display_img = cv2.resize(color_map, (display_w, display_h), interpolation=cv2.INTER_CUBIC)
             
-            # 3. 绘制中心十字准星 (Crosshair)
+            # 4. 绘制中心十字准星 (Crosshair)
             cx, cy = display_w // 2, display_h // 2
             color_cross = (255, 255, 255) # 白色准星
             # 画十字
