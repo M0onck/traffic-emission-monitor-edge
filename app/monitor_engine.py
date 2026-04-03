@@ -510,5 +510,8 @@ class TrafficMonitorEngine:
             print("[Engine] 时钟同步守护线程已停止。")
         
         print("[Engine] 保存剩余车辆数据...")
-        self._handle_exits(final_frame_id + 1000)
+        # 伪造一个未来的绝对时间戳 (当前时间 + 1000秒)，强制所有未结算的车辆触发超时离场
+        import time
+        force_exit_timestamp = time.time() + 1000.0
+        self._handle_exits(final_frame_id + 1000, force_exit_timestamp)
         self.db.close()
