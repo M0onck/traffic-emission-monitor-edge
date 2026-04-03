@@ -73,17 +73,21 @@ class Visualizer:
             # --- 解析类型与双分类二元颜色 ---
             v_type = data.display_type if data and data.display_type else "LDV"
             
-            # 只要带有 HDV (重型车) 标志，就用橙色高亮警示；否则用亮青色表示普通轻型车
+            # 只要带有 HDV (重型车) 标志，就用橙色高亮显示；否则用亮青色表示普通轻型车
             if "HDV" in v_type:
                 box_color = (0, 128, 255)  # 橙色 (OpenCV 是 BGR 格式)
             else:
                 box_color = (255, 255, 0)  # 亮青色 (Cyan)
             
+            # 将 "LDV-Gasoline" 按照 "-" 切分，只取第一部分的 "LDV"
+            short_type = v_type.split('-')[0]
+            
             # 绘制车辆检测框
             cv2.rectangle(scene, (x1, y1), (x2, y2), box_color, 2)
             
-            # 绘制极简标签 (例如: #5 LDV-Gasoline)
-            label_text = f"#{tid} {v_type}"
+            # 绘制极简标签 (例如: #5 LDV)
+            label_text = f"#{tid} {short_type}"
+
             (text_w, text_h), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(scene, (x1, y1 - text_h - 10), (x1 + text_w + 10, y1), box_color, -1)
             cv2.putText(scene, label_text, (x1 + 5, y1 - 5), 
