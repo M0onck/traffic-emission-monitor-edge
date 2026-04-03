@@ -70,8 +70,18 @@ class GstPipelineManager:
                 print(f"\n[GStreamer] 视频流已播放完毕 (EOS)\n")
             return None, None 
 
-        sample_video = self.sink_video.emit("try-pull-sample", 500000000) 
+        import time # 仅为探针测试用
+        t_start = time.time()
+
+        sample_video = self.sink_video.emit("try-pull-sample", 500000000)
+
+        # 探针 1: 等待视频画面分支就绪
+        t_vid = time.time()
+
         sample_meta = self.sink_meta.emit("try-pull-sample", 500000000)
+
+        # 探针 2: 等待 Hailo 推理分支就绪
+        t_meta = time.time()
         
         if not sample_video or not sample_meta: 
             return None, None
@@ -87,8 +97,22 @@ class GstPipelineManager:
                 buffer_video.unmap(map_info)
                 return None, None
 
+            # 探针 3：C++ 显存/内存到 Python 对象的深拷贝
+            t_copy_start = time.time()
             frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
+            t_copy_end = time.time()
+
             buffer_video.unmap(map_info)
+
+            # 每 30 帧打印一次耗时分布
+            if not hasattr(self, '_probe_frame_count'): self._probe_frame_count = 0
+            self._probe_frame_count += 1
+            if self._probe_frame_count % 30 == 0:
+                vid_ms = (t_vid - t_start) * 1000
+                meta_ms = (t_meta - t_vid) * 1000
+                copy_ms = (t_copy_end - t_copy_start) * 1000
+                print(f"[底层探针] 等待视频流:{vid_ms:.1f}ms | 等待Hailo推理:{meta_ms:.1f}ms | NumPy拷贝:{copy_ms:.1f}ms")
+
             return frame, buffer_meta
             
         except Exception as e:

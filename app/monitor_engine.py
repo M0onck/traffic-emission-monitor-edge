@@ -98,9 +98,6 @@ class TrafficMonitorEngine:
                 # 1. 阻塞拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
 
-                # ---> [探针1] 记录拉取流的耗时
-                t_read = time.time()
-
                 # 拿到帧的同时打上时间戳
                 frame_timestamp = self.time_sync.get_precise_timestamp()
                 
@@ -152,9 +149,6 @@ class TrafficMonitorEngine:
 
                 # --- 核心处理流水线 ---
                 annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
-
-                # ---> [探针2] 记录核心业务处理(含渲染)的耗时
-                t_process = time.time()
                 
                 # --- 写入结果视频 ---
                 # if sink:
@@ -165,17 +159,6 @@ class TrafficMonitorEngine:
                     # 为了性能，直接在 Engine 端缩放到树莓派屏幕尺寸 800x480
                     display = resize_with_pad(annotated_frame, (800, 480))
                     self.frame_callback(display)
-                
-                # ---> [探针3] 记录图像缩放和发送给UI的耗时
-                t_ui = time.time()
-
-                # 每隔 30 帧 (大约1秒) 打印一次性能分析报告
-                if frame_id % 30 == 0:
-                    read_ms = (t_read - loop_start) * 1000
-                    process_ms = (t_process - t_read) * 1000
-                    ui_ms = (t_ui - t_process) * 1000
-                    total_ms = (t_ui - loop_start) * 1000
-                    print(f"[性能探针] 拉流:{read_ms:.1f}ms | 处理&渲染:{process_ms:.1f}ms | 缩放&UI:{ui_ms:.1f}ms || 总计:{total_ms:.1f}ms")
                 
                 if not getattr(self, '_is_running', True):
                     break
