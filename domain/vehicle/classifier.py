@@ -1,30 +1,29 @@
+# 文件路径: domain/vehicle/classifier.py
 import math
 from collections import defaultdict
 
 class VehicleClassifier:
     """
-    [业务层] 车辆类型分类器
-    职责：根据 YOLO 类别、车牌历史和颜色，判定最终的业务车型 (如 'Bus-electric')。
+    [业务层] 车辆类型分类器 (重构版 - 双分体系)
+    职责：基于 YOLO 物理过滤后的类别和 OCR 车牌颜色，输出标准的微观排放大类
+    (如 'LDV-Gasoline', 'LDV-Electric', 'HDV-Diesel', 'HDV-Electric')。
     """
-    def __init__(self, type_map: dict, yolo_classes: dict):
+    def __init__(self, type_map=None, yolo_classes=None):
         """
-        :param type_map: 映射表 {(class_id, color_str): type_str}
-        :param yolo_classes: 类别ID配置 {'car': 2, 'bus': 5, 'truck': 7}
+        :param type_map: 废弃参数，保留仅为了兼容旧的外部调用代码，防止报错
+        :param yolo_classes: 类别ID配置，默认为 COCO 标准 {'car': 2, 'bus': 5, 'truck': 7}
         """
-        self.type_map = type_map
+        yolo_classes = yolo_classes or {'car': 2, 'bus': 5, 'truck': 7}
         self.cls_car = yolo_classes.get('car', 2)
         self.cls_bus = yolo_classes.get('bus', 5)
         self.cls_truck = yolo_classes.get('truck', 7)
 
     def resolve_type(self, class_id, plate_history=None, plate_color_override=None):
         """
-        统一的车辆类型判定逻辑
-        :param class_id: YOLO class ID (int)
-        :param plate_history: 历史识别记录列表 (list of dict)
-        :param plate_color_override: 强制指定的颜色 (str, optional)
+        统一的车辆类型与能源判定逻辑
         :return: (final_color, final_type_string)
         """
-        # 1. 确定颜色
+        # 1. 确定车牌颜色 (颜色是推断能源类型最可靠的物理特征)
         final_color = "Unknown"
         if plate_color_override and plate_color_override != "Unknown":
             final_color = plate_color_override
@@ -32,29 +31,29 @@ class VehicleClassifier:
             # 加权投票逻辑： Conf * sqrt(Area)
             scores = defaultdict(float)
             for e in plate_history:
-                # 兼容旧代码，如果没有 conf 字段则默认为 1.0
                 conf = e.get('conf', 1.0)
                 area = e.get('area', 0.0)
-                
-                weight = conf * math.sqrt(area) # [核心修改]
+                weight = conf * math.sqrt(area)
                 scores[e['color']] += weight
                 
             if scores: 
                 final_color = max(scores, key=scores.get)
             
-        # 2. 查表匹配 (优先)
-        key = (class_id, final_color)
-        if key in self.type_map:
-            return final_color, self.type_map[key]
-            
-        # 3. 兜底逻辑 (MLE策略)
-        suffix = "(Default)" # 可以根据是否开启OCR传入不同后缀，这里简化处理
+        # 2. 核心双分逻辑：结合物理过滤后的 YOLO ID 与车牌颜色，输出终极类型
         
-        if class_id == self.cls_bus:   # Bus
-            return final_color, f"Bus-electric {suffix}"
-        elif class_id == self.cls_truck: # Truck
-            return final_color, f"Truck-diesel {suffix}"
-        elif class_id == self.cls_car:   # Car
-            return final_color, f"Car-gasoline {suffix}"
-            
-        return final_color, self.type_map.get('Default_Heavy', 'HDV-diesel')
+        # --- LDV 轻型车逻辑 (普通轿车、SUV、面包车、皮卡) ---
+        if class_id == self.cls_car:
+            if final_color == "green":
+                return final_color, "LDV-Electric" # 绿牌小车 -> 轻型新能源
+            else:
+                return final_color, "LDV-Gasoline" # 蓝牌/未知 -> 默认轻型燃油车
+
+        # --- HDV 重型车逻辑 (重卡、大客车) ---
+        elif class_id in [self.cls_bus, self.cls_truck]:
+            if final_color == "green":
+                return final_color, "HDV-Electric" # 绿牌重型车 -> 重型电动/混动
+            else:
+                return final_color, "HDV-Diesel"   # 黄牌/未知 -> 默认重型柴油车
+                
+        # 3. 兜底保护 (防止异常类别 ID 导致系统崩溃)
+        return final_color, "LDV-Gasoline"
