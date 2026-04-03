@@ -119,6 +119,10 @@ class TrafficMonitorEngine:
                 # 2. 延迟初始化 VideoSink (因为需要确切知道输出的分辨率)
                 if video_info is None:
                     h, w = frame.shape[:2]
+
+                    # 给 video_info 赋值，打破 None 状态，保证此代码块只运行一次
+                    video_info = True
+
                     # 视频录制相关逻辑
                     # video_info = sv.VideoInfo(width=w, height=h, fps=self.cfg.FPS)
                     # sink = sv.VideoSink(self.cfg.TARGET_VIDEO_PATH, video_info=video_info)
