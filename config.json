@@ -7,7 +7,7 @@
     "debug_mode": true
   },
   "edge_models": {
-    "hef_path": "resources/yolov8m.hef",
+    "hef_path": "resources/yolov8s.hef",
     "post_so_path": "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so",
     "y5fu_path": "perception/plate_classifier/models/y5fu_320x_sim.onnx",
     "litemodel_path": "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx"
