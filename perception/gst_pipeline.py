@@ -29,32 +29,27 @@ class GstPipelineManager:
     def _build_pipeline(self) -> str:
         abs_path = os.path.abspath(self.video_path)
         pipeline = (
-            # --- 主干分支 (运行在 CPU 核心 A) ---
-            # 仅做最基本的解封装和软解，出来后立刻分流 (tee)
-            f"filesrc location={abs_path} ! decodebin ! video/x-raw ! tee name=t "
+            f"filesrc location={abs_path} ! decodebin ! video/x-raw ! "
+            f"videoconvert ! video/x-raw, format=NV12 ! "
+            f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! tee name=t "
             
-            # --- 视频画面分支 (运行在 CPU 核心 B) ---
-            # 紧跟 tee 放置 queue，强制系统将下面的缩放任务切入新线程！
-            f"t. ! queue max-size-buffers=3 leaky=downstream ! "
-            f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! "
+            # --- 视频画面分支 ---
+            f"t. ! queue max-size-buffers=30 ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
-            # 关键修改：drop=true max-buffers=1，永远只给 Python 留最新的一帧，解除帧率同步锁死
-            f"appsink name=sink_video emit-signals=false max-buffers=1 drop=true sync=false "
+            f"appsink name=sink_video emit-signals=false max-buffers=2 drop=false sync=false "
             
-            # --- 硬件推理分支 (运行在 CPU 核心 C) ---
-            # 同样使用 queue 开启新线程，让 YOLO 的缩放与画面显示的缩放并发执行
-            f"t. ! queue max-size-buffers=3 leaky=downstream ! "
+            # --- 硬件推理分支 ---
+            f"t. ! queue max-size-buffers=30 ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
-            # 这里的推理操作会被抛给 Hailo NPU，不占用 CPU
             f"hailonet hef-path={self.hef_path} vdevice-group-id=1 ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=1 drop=true sync=false "
+            f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=false sync=false "
         )
         return pipeline
 
     def start(self):
-        print(f"🚀 正在启动 GStreamer 管道: 读取 {self.video_path}")
+        print(f"正在启动 GStreamer 管道: 读取 {self.video_path}")
         self.pipeline.set_state(Gst.State.PLAYING)
         self.is_running = True
 
@@ -70,9 +65,9 @@ class GstPipelineManager:
         if msg:
             if msg.type == Gst.MessageType.ERROR:
                 err, debug = msg.parse_error()
-                print(f"\n❌ [GStreamer 致命崩溃] {err}\n🔍 详情: {debug}\n")
+                print(f"\n[GStreamer 致命崩溃] {err}\n🔍 详情: {debug}\n")
             elif msg.type == Gst.MessageType.EOS:
-                print(f"\n🏁 [GStreamer] 视频流已播放完毕 (EOS)\n")
+                print(f"\n[GStreamer] 视频流已播放完毕 (EOS)\n")
             return None, None 
 
         sample_video = self.sink_video.emit("try-pull-sample", 500000000) 
