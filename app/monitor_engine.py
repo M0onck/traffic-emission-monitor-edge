@@ -231,8 +231,11 @@ class TrafficMonitorEngine:
                     )
 
         # --- Step 5: 可视化渲染 ---
-        label_data_list = self._prepare_labels(detections)
-        return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
+        # label_data_list = self._prepare_labels(detections)
+        # return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
+
+        # 快速测试不绘制检测框的情况
+        return frame
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):
         """派发任务给子进程：将车身裁剪出来，非阻塞地放入队列"""
