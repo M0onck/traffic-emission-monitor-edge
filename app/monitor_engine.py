@@ -119,9 +119,10 @@ class TrafficMonitorEngine:
                 # 2. 延迟初始化 VideoSink (因为需要确切知道输出的分辨率)
                 if video_info is None:
                     h, w = frame.shape[:2]
-                    video_info = sv.VideoInfo(width=w, height=h, fps=self.cfg.FPS)
-                    sink = sv.VideoSink(self.cfg.TARGET_VIDEO_PATH, video_info=video_info)
-                    sink.__enter__()
+                    # 视频录制相关逻辑
+                    # video_info = sv.VideoInfo(width=w, height=h, fps=self.cfg.FPS)
+                    # sink = sv.VideoSink(self.cfg.TARGET_VIDEO_PATH, video_info=video_info)
+                    # sink.__enter__()
                     print(f">>> [Engine] 视频流已接入: {w}x{h} @ {self.cfg.FPS}fps")
                 
                     #  第一帧到达时，动态适配底层坐标系
@@ -146,8 +147,8 @@ class TrafficMonitorEngine:
                 annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
                 
                 # --- 写入结果视频 ---
-                if sink:
-                    sink.write_frame(annotated_frame)
+                # if sink:
+                #     sink.write_frame(annotated_frame)
                 
                 # --- 实时预览 ---
                 if self.frame_callback:
@@ -166,8 +167,8 @@ class TrafficMonitorEngine:
         except KeyboardInterrupt:
             print("\n>>> [Engine] 接收到退出信号...")
         finally:
-            if sink:
-                sink.__exit__(None, None, None)
+            # if sink:
+            #     sink.__exit__(None, None, None)
             self.cleanup(frame_id)
 
     def process_frame(self, frame, buffer, frame_id, current_fps=0.0, frame_timestamp=0.0):
