@@ -1,6 +1,8 @@
+# 文件路径: domain/physics/vsp_calculator.py
+
 class VSPCalculator:
     """
-    [业务层] 车辆比功率 (Vehicle Specific Power, VSP) 计算器
+    [业务层] 车辆比功率 (Vehicle Specific Power, VSP) 计算器 (LDV/HDV 双分类重构版)
 
     **职责 (Responsibility):**
     根据车辆的瞬时运动状态（速度、加速度）和物理参数，计算车辆的比功率。
@@ -11,76 +13,67 @@ class VSPCalculator:
     VSP 定义为发动机输出功率与车辆质量的比值（单位: $kW/tonne$）。
     计算公式如下：
 
-    $$ \text{VSP} = \frac{P_{load}}{m} = v \cdot [1.1 \cdot a + 9.81 \cdot \sin(\theta)] + (a_m \cdot v + b_m \cdot v^2 + c_m \cdot v^3) $$
-
-    其中:
-    * $v$: 车辆瞬时速度 ($m/s$)
-    * $a$: 车辆瞬时加速度 ($m/s^2$)
-    * $\theta$: 道路坡度角 (Road Grade)
-    * $1.1$: 旋转质量系数 (Mass Factor)，用于补偿车轮、曲轴等旋转部件的转动惯量
-    * $a_m, b_m, c_m$: 归一化的行驶阻力系数 ($kW \cdot s/m$ 等)，分别对应滚动阻力、旋转阻力和空气阻力
-
-    **单位 (Units):**
-    * 输入速度: $m/s$
-    * 输入加速度: $m/s^2$
-    * 输出 VSP: $kW/tonne$
+    $$ \text{VSP} = v \cdot [1.1 \cdot a + 9.81 \cdot \sin(\theta)] + (a_m \cdot v + b_m \cdot v^2 + c_m \cdot v^3) $$
     """
 
     def __init__(self, config: dict):
         """
         初始化 VSP 计算器。
-
-        Args:
-            config (dict): 配置字典，需包含以下键:
-                - `vsp_coefficients` (dict): 车辆系数映射表。结构为 `{class_id: {'a_m': float, 'b_m': float, 'c_m': float}}`。
-                - `road_grade_percent` (float): 道路坡度百分比 (例如 0.0 表示平路, 5.0 表示 5% 坡度)。
         """
-        # 1. 加载 VSP 系数表 (通常来自 EPA MOVES 数据库或实测标定)
-        self.coeffs_map = config.get("vsp_coefficients", {})
-        
-        # 2. 道路坡度 (默认为 0.0)
-        # 注意: 这里存储的是百分比值，计算时需除以 100
+        # 道路坡度 (默认为 0.0)
         self.road_grade = config.get("road_grade_percent", 0.0)
         
-        # 默认系数 (兜底策略: 使用标准轿车系数)
-        # a_m: 滚动阻力系数 (Rolling Resistance)
-        # b_m: 旋转阻力系数 (Rotational Resistance)
-        # c_m: 空气阻力系数 (Aerodynamic Drag)
-        self.default_coeffs = self.coeffs_map.get("default", 
+        # 允许通过外部 config 覆盖系数，否则使用内置的 EPA 标准推荐值
+        custom_coeffs = config.get("vsp_coefficients", {})
+        
+        # LDV (轻型车) 物理阻力系数 (轿车/SUV/轻客/皮卡)
+        # a_m: 滚动阻力, b_m: 旋转阻力, c_m: 空气阻力
+        self.ldv_coeffs = custom_coeffs.get("LDV", 
             {"a_m": 0.156, "b_m": 0.002, "c_m": 0.0005}
         )
+        
+        # HDV (重型车) 物理阻力系数 (中重卡/大客车)
+        # 重型车由于迎风面积巨大，空气阻力系数(c_m)显著偏高；
+        # 但按总吨位归一化后的滚动阻力(a_m)通常比轻型车小。
+        self.hdv_coeffs = custom_coeffs.get("HDV", 
+            {"a_m": 0.089, "b_m": 0.0, "c_m": 0.0014}
+        )
 
-    def calculate(self, v_ms: float, a_ms2: float, class_id: int) -> float:
+    def calculate(self, v_ms: float, a_ms2: float, vehicle_type: str) -> float:
         """
         计算单帧的车辆比功率 (VSP)。
 
         Args:
             v_ms (float): 瞬时速度，单位 $m/s$。
             a_ms2 (float): 瞬时加速度，单位 $m/s^2$。
-            class_id (int): 车辆类别 ID (用于查找对应的 A/B/C 阻力系数)。
+            vehicle_type (str): 车辆类型字符串 (如 'LDV-Gasoline', 'HDV-Diesel', 或单纯 'LDV')。
 
         Returns:
             float: 计算出的 VSP 值，单位 $kW/tonne$。
         """
-        # 查找系数 (支持 int ID 或 str key 的兼容查找，未找到则回退至 default)
-        coeffs = self.coeffs_map.get(class_id, 
-                 self.coeffs_map.get(str(class_id), self.default_coeffs))
+        # 1. 解析基础车型 (截取连字符前半部分)
+        base_type = "LDV"  # 默认兜底保护
+        if isinstance(vehicle_type, str):
+            base_type = vehicle_type.split("-")[0].upper()
+        
+        # 2. 选取对应的物理阻力系数
+        if base_type == "HDV":
+            coeffs = self.hdv_coeffs
+        else:
+            coeffs = self.ldv_coeffs
         
         # 提取归一化阻力系数
-        a_m = coeffs.get("a_m", 0.156)
-        b_m = coeffs.get("b_m", 0.002)
-        c_m = coeffs.get("c_m", 0.0005)
+        a_m = coeffs["a_m"]
+        b_m = coeffs["b_m"]
+        c_m = coeffs["c_m"]
 
         # ---------------------------------------------------------
         # 第一部分: 克服行驶阻力所需的功率 (Drag & Rolling Power)
-        # 公式: $P_{drag}/m = a_m \cdot v + b_m \cdot v^2 + c_m \cdot v^3$
         # ---------------------------------------------------------
         drag_term = a_m * v_ms + b_m * (v_ms**2) + c_m * (v_ms**3)
         
         # ---------------------------------------------------------
         # 第二部分: 克服惯性与重力所需的功率 (Inertial & Potential Power)
-        # 公式: $P_{inert}/m = v \cdot (1.1 \cdot a + 9.81 \cdot \sin(\theta))$
-        # 注意: 当坡度较小时，$\sin(\theta) \approx \tan(\theta) = \text{grade}/100$
         # ---------------------------------------------------------
         grade_term = 9.81 * (self.road_grade / 100.0)
         inertial_term = v_ms * (1.1 * a_ms2 + grade_term)
