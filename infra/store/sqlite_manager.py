@@ -22,6 +22,7 @@ class DatabaseManager:
         
         # 1. 初始化表结构 (DDL)
         self._init_schema()
+        self._migrate_old_data() # 清洗历史数据
         
         # 2. 加载查询模板 (DML)
         self.queries = self._load_queries()
@@ -79,6 +80,32 @@ class DatabaseManager:
             print(f"[Database Error] 解析 queries.sql 失败: {e}")
             
         return queries
+
+    def _migrate_old_data(self):
+        """
+        [数据迁移] 将历史遗留的 YOLO 英文类别强制清洗为排放大类
+        旧数据：car, bus, truck (或大写)
+        新数据映射：LDV-Gasoline, HDV-Diesel
+        """
+        try:
+            # 1. 将 bus 和 truck 替换为重型柴油车 (HDV-Diesel)
+            self.cursor.execute("""
+                UPDATE vehicle_macro 
+                SET class_name = 'HDV-Diesel' 
+                WHERE class_name IN ('bus', 'truck', 'Bus', 'Truck')
+            """)
+            
+            # 2. 将 car 替换为轻型燃油车 (LDV-Gasoline)
+            self.cursor.execute("""
+                UPDATE vehicle_macro 
+                SET class_name = 'LDV-Gasoline' 
+                WHERE class_name IN ('car', 'Car')
+            """)
+            
+            self.conn.commit()
+            print(">>> [Database] 历史数据校验与清洗完成 (Car->LDV, Bus/Truck->HDV)")
+        except sqlite3.Error as e:
+            print(f"[Database Error] 历史数据迁移失败: {e}")
 
     def insert_micro(self, fid: int, tid: int, payload: dict):
         # 只提取最核心的 3 个物理维度数据，极大地降低序列化与 I/O 开销
