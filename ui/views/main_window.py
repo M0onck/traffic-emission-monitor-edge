@@ -370,6 +370,93 @@ class MainWindow(QMainWindow):
         t_layout.addStretch()
         
         self.tabs.addTab(tab_thermal, "热成像仪数据")
+
+        # --- Tab 4: 气象数据监测 ---
+        tab_weather = QWidget()
+        w_layout = QHBoxLayout(tab_weather)
+        w_layout.setContentsMargins(20, 20, 20, 20)
+        w_layout.setSpacing(20)
+        
+        # === 左侧：气象数据看板 (3行2列) ===
+        weather_left_panel = QFrame()
+        weather_left_panel.setStyleSheet("background-color: #1a1d2d; border: 2px solid #2d324f; border-radius: 12px;")
+        w_grid_layout = QGridLayout(weather_left_panel)
+        w_grid_layout.setContentsMargins(25, 25, 25, 25)
+        w_grid_layout.setSpacing(20)
+        
+        # 预留字典供 Controller 实现 1Hz 刷新时调用
+        self.weather_labels = {}
+        
+        # 定义 6 个气象参数及其物理单位
+        weather_items = [
+            ("温度", "°C"), ("湿度", "%"),
+            ("风速", "m/s"), ("风向", "°"),
+            ("PM2.5", "μg/m³"), ("PM10", "μg/m³")
+        ]
+        
+        font_w_title = QFont("Arial", 14)
+        font_w_val = QFont("Consolas", 20, QFont.Bold)
+        
+        for i, (name, unit) in enumerate(weather_items):
+            row = i // 2  # 0, 0, 1, 1, 2, 2
+            col = i % 2   # 0, 1, 0, 1, 0, 1
+            
+            cell_widget = QWidget()
+            cell_layout = QVBoxLayout(cell_widget)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            
+            lbl_title = QLabel(name)
+            lbl_title.setFont(font_w_title)
+            lbl_title.setStyleSheet("color: #8ab4f8; border: none;") # 统一的科技蓝字体
+            
+            # 初始状态显示占位符和单位
+            lbl_val = QLabel(f"-- {unit}")
+            lbl_val.setFont(font_w_val)
+            lbl_val.setStyleSheet("color: #00e676; border: none;") # 数据高亮为荧光绿
+            lbl_val.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            
+            self.weather_labels[name] = lbl_val # 保存句柄，方便后续刷新
+            
+            cell_layout.addWidget(lbl_title)
+            cell_layout.addWidget(lbl_val)
+            cell_layout.addStretch()
+            
+            w_grid_layout.addWidget(cell_widget, row, col)
+            
+        w_layout.addWidget(weather_left_panel, 7) # 左侧数据面板占比 7
+        
+        # === 右侧：控制按钮 ===
+        weather_right_panel = QFrame()
+        w_right_layout = QVBoxLayout(weather_right_panel)
+        w_right_layout.setAlignment(Qt.AlignVCenter)
+        w_right_layout.setSpacing(30)
+        
+        # 复用你之前的按钮样式风格
+        btn_style = """
+            QPushButton {
+                background-color: #2962ff; color: white; border: none; border-radius: 8px;
+                padding: 20px;
+            }
+            QPushButton:hover { background-color: #0039cb; }
+            QPushButton:pressed { background-color: #00227b; }
+        """
+        btn_font = QFont("Arial", 16, QFont.Bold)
+        
+        self.btn_sync_clock = QPushButton("时钟同步校准")
+        self.btn_sync_clock.setFont(btn_font)
+        self.btn_sync_clock.setStyleSheet(btn_style)
+        
+        self.btn_zero_wind = QPushButton("风速调零校准")
+        self.btn_zero_wind.setFont(btn_font)
+        self.btn_zero_wind.setStyleSheet(btn_style)
+        
+        w_right_layout.addWidget(self.btn_sync_clock)
+        w_right_layout.addWidget(self.btn_zero_wind)
+        
+        w_layout.addWidget(weather_right_panel, 3) # 右侧按钮区域占比 3
+        
+        # 将新页面加入 Tabs
+        self.tabs.addTab(tab_weather, "气象数据监测")
         
         self.stack.addWidget(self.page3)
     
