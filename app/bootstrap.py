@@ -21,9 +21,9 @@ class AppBootstrap:
 
         # 2. 领域层：注册表 (注入配置文件中的核心业务阈值)
         registry = VehicleRegistry(
-            fps=config.FPS,
-            min_survival_frames=config.MIN_SURVIVAL_FRAMES,
-            exit_threshold=config.EXIT_THRESHOLD,
+            target_fps=config.FPS,  # 默认固定帧率，仅作为参考或备用回退使用
+            min_survival_sec=config.MIN_SURVIVAL_SEC,
+            exit_timeout_sec=config.EXIT_TIMEOUT_SEC,
             min_valid_pts=config.MIN_VALID_POINTS,
             min_moving_dist=config.MIN_MOVING_DIST
         )
@@ -65,7 +65,7 @@ class AppBootstrap:
             norm_source_points = np.array(config.SOURCE_POINTS, dtype=np.float32)
 
         # 6. 表示层：可视化渲染器 (传入解析好的 numpy 数组)
-        visualizer = Visualizer(calibration_points=target_points)
+        visualizer = Visualizer(calibration_points=target_points, target_fps=config.FPS)
 
         # 7. 初始化热成像模块
         lib_path = getattr(config, 'THERMAL_LIB_PATH', 'bin/libmlx90640.so')
