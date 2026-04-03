@@ -393,13 +393,24 @@ class TrafficMonitorEngine:
             'tid': tid, 'record': record, 'type_str': final_type_str
         }
 
-        # 假设原帧率为 30FPS，目标落盘帧率为 5FPS，则步长为 6
+        # 基于物理时间的动态抽样 (与平滑器里的逻辑对齐)
         db_fps = 5.0
-        original_fps = self.cfg.FPS if hasattr(self, 'cfg') else 30.0
-        step = max(1, int(round(original_fps / db_fps)))
+        target_db_dt = 1.0 / db_fps
+        trajectory_for_db = []
         
-        # 使用切片语法，从完整轨迹中只抽取 5FPS 的骨架点进行落盘
-        trajectory_for_db = trajectory[::step]
+        if trajectory:
+            trajectory_for_db.append(trajectory[0]) # 始终保留起点
+            last_t = trajectory[0].get('timestamp', 0.0)
+            
+            for point in trajectory[1:]:
+                curr_t = point.get('timestamp', 0.0)
+                if curr_t - last_t >= target_db_dt:
+                    trajectory_for_db.append(point)
+                    last_t = curr_t
+                    
+            # 始终保留终点，防止离场时刻缺失
+            if trajectory[-1] not in trajectory_for_db:
+                trajectory_for_db.append(trajectory[-1])
 
         # 极简且降频的微观轨迹入库
         for point in trajectory_for_db:
