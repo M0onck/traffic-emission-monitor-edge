@@ -33,10 +33,10 @@ ENABLE_MOTION = _sw["enable_motion"]
 ENABLE_OCR = _sw["enable_ocr"]
 
 _k = _cfg["kinematics"]
-SPEED_WINDOW = _k.get("speed_window", 15)
-ACCEL_WINDOW = _k.get("accel_window", 30)
+SPEED_WINDOW_SEC = _k.get("speed_window_sec", 2.2)
+ACCEL_WINDOW_SEC = _k.get("accel_window_sec", 3.0)
 BORDER_MARGIN = _k["border_margin"]
-MIN_TRACKING_FRAMES = _k["min_tracking_frames"]
+MIN_TRACKING_SEC = _k.get("min_tracking_sec", 0.3)
 MAX_PHYSICAL_ACCEL = _k["max_physical_accel"]
 MIN_SURVIVAL_SEC = _k.get("min_survival_sec", 1.0)
 EXIT_TIMEOUT_SEC = _k.get("exit_timeout_sec", 1.0)
@@ -55,6 +55,7 @@ ROAD_GRADE_PERCENT = _p.get("road_grade_percent", 0.0)
 # 质量控制参数
 _qc = _cfg.get("quality_control", {})
 MIN_VALID_POINTS = _qc.get("min_valid_trajectory_points", 15)
+QC_MIN_SURVIVAL_SEC = _qc.get("min_survival_sec", 1.0)
 MIN_MOVING_DIST = _qc.get("min_moving_distance_m", 2.0)
 
 # --- 2. 核心常量 ---

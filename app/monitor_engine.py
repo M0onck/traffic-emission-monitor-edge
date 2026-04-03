@@ -208,7 +208,9 @@ class TrafficMonitorEngine:
                     
                     if trajectory:
                         last_phys_y = trajectory[-1].get('raw_y', curr_phys[1])
-                        last_time = trajectory[-1].get('timestamp', frame_timestamp - 0.033)
+                        # 根据预期的 FPS 动态分配备用时间跨度
+                        fallback_dt = 1.0 / self.cfg.FPS
+                        last_time = trajectory[-1].get('timestamp', frame_timestamp - fallback_dt)
                         
                         if abs(curr_phys[1] - last_phys_y) < max(0.2, dynamic_tolerance):
                             curr_phys[1] = last_phys_y 

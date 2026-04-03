@@ -26,7 +26,7 @@ class Visualizer:
     """
     核心渲染器
     """
-    def __init__(self, calibration_points: np.ndarray, trace_length: int = 30):
+    def __init__(self, calibration_points: np.ndarray, target_fps: int = 30):
         """
         初始化渲染器
         :param calibration_points: 标定区域点集
@@ -36,7 +36,8 @@ class Visualizer:
         self.calibration_points = calibration_points.astype(np.int32)
         
         self.trace_annotator = sv.TraceAnnotator(
-            thickness=2, trace_length=trace_length, position=sv.Position.BOTTOM_CENTER
+            thickness=2, trace_length=int(target_fps * 1.0), # 保持尾迹长度为物理 1 秒的时间跨度
+            position=sv.Position.BOTTOM_CENTER
         )
 
     def render(self, frame: np.ndarray, detections: sv.Detections, label_data_list: list, fps: float) -> np.ndarray:

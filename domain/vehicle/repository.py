@@ -14,8 +14,8 @@ class VehicleRegistry:
         self.target_fps = target_fps
         
         # 生命周期配置
-        self.min_survival_frames = min_survival_sec  # 最小存活秒数 (过滤误检)
-        self.exit_threshold = exit_timeout_sec       # 消失多少秒后认定为离场
+        self.min_survival_sec = min_survival_sec  # 最小存活秒数 (过滤误检)
+        self.exit_timeout_sec = exit_timeout_sec  # 消失多少秒后认定为离场
         
         # 数据质量配置
         self.min_valid_trajectory_points = min_valid_pts # 最小有效轨迹点数
@@ -126,7 +126,7 @@ class VehicleRegistry:
                 # 避免由于数据异常导致 dt 出现负数或过大
                 dt = max(0.001, min(dt, 0.5)) 
             else:
-                dt = 1.0 / self.fps # 回退到默认固定帧率
+                dt = 1.0 / self.target_fps # 回退到默认固定帧率
                 
             rec['total_distance_m'] = rec.get('total_distance_m', 0.0) + (speed * dt)
             

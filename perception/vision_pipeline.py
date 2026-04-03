@@ -18,7 +18,7 @@ class VisionPipeline:
         # 初始化 Python 层的高性能 ByteTrack 追踪器
         self.tracker = sv.ByteTrack(
             track_activation_threshold=0.25, 
-            lost_track_buffer=30, 
+            lost_track_buffer=int(fps * 1.0), 
             minimum_matching_threshold=0.8,
             frame_rate=fps
         )
