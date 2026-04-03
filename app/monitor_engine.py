@@ -484,18 +484,27 @@ class TrafficMonitorEngine:
 
             data = LabelData(track_id=tid, class_id=voted_class_id)
             
-            # --- 1. 强制设定极简英文分类 ---
-            if voted_class_id == self.cfg.YOLO_CLASS_CAR: data.display_type = "car"
-            elif voted_class_id == self.cfg.YOLO_CLASS_BUS: data.display_type = "bus"
-            elif voted_class_id == self.cfg.YOLO_CLASS_TRUCK: data.display_type = "truck"
-            else: data.display_type = "vehicle"
+            # --- 1. 调用领域层双分体系获取标准的 HDV/LDV 类型 ---
+            # 尝试获取当前的实时车牌颜色，用于辅助能源/车型分类
+            plate_info = self.plate_cache.get(tid)
+            current_color = plate_info['color'] if plate_info else "Unknown"
+            
+            # 使用 domain/vehicle/classifier.py 中的核心分类逻辑
+            # 返回值示例： ("blue", "LDV-Gasoline") 或 ("green", "HDV-Electric")
+            _, final_type = self.classifier.resolve_type(
+                voted_class_id, 
+                plate_color_override=current_color
+            )
+            
+            # 将解析出的标准格式赋值给显示类型
+            data.display_type = final_type
                 
             # --- 2. 动态计算车牌框 (相对坐标映射核心逻辑) ---
             plate_info = self.plate_cache.get(tid)
             if plate_info:
                 data.plate_color = plate_info['color']
                 
-                # 获取该车在【当前这刚刚到来的一帧】里的最新检测框
+                # 获取该车在当前这刚刚到来的一帧里的最新检测框
                 x1, y1, x2, y2 = detections.xyxy[i]
                 vw = x2 - x1
                 vh = y2 - y1
