@@ -29,22 +29,27 @@ class GstPipelineManager:
     def _build_pipeline(self) -> str:
         abs_path = os.path.abspath(self.video_path)
         pipeline = (
-            f"filesrc location={abs_path} ! decodebin ! video/x-raw ! "
-            f"videoconvert ! video/x-raw, format=NV12 ! "
-            f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! tee name=t "
+            # --- 主干分支 (运行在 CPU 核心 A) ---
+            # 仅做最基本的解封装和软解，出来后立刻分流 (tee)
+            f"filesrc location={abs_path} ! decodebin ! video/x-raw ! tee name=t "
             
-            # --- 视频画面分支 ---
-            f"t. ! queue max-size-buffers=3 ! "
+            # --- 视频画面分支 (运行在 CPU 核心 B) ---
+            # 紧跟 tee 放置 queue，强制系统将下面的缩放任务切入新线程！
+            f"t. ! queue max-size-buffers=3 leaky=downstream ! "
+            f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=2 drop=false sync=false "
+            # 关键修改：drop=true max-buffers=1，永远只给 Python 留最新的一帧，解除帧率同步锁死
+            f"appsink name=sink_video emit-signals=false max-buffers=1 drop=true sync=false "
             
-            # --- 硬件推理分支 ---
-            f"t. ! queue max-size-buffers=3 ! "
+            # --- 硬件推理分支 (运行在 CPU 核心 C) ---
+            # 同样使用 queue 开启新线程，让 YOLO 的缩放与画面显示的缩放并发执行
+            f"t. ! queue max-size-buffers=3 leaky=downstream ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
+            # 这里的推理操作会被抛给 Hailo NPU，不占用 CPU
             f"hailonet hef-path={self.hef_path} vdevice-group-id=1 ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=false sync=false "
+            f"appsink name=sink_meta emit-signals=false max-buffers=1 drop=true sync=false "
         )
         return pipeline
 
