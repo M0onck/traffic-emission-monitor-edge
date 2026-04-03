@@ -180,9 +180,8 @@ class TrafficMonitorEngine:
         detections = self.vision.process(frame, buffer)
 
         # --- Step 2: 注册表更新 (Registry Update) ---
-        # 移除了 self.model 参数，因为车辆图片特征提取已交由前端模型完成
-        self.registry.update(detections, frame_id, None)
-        self._handle_exits(frame_id)
+        self.registry.update(detections, frame_id, frame_timestamp, None)
+        self._handle_exits(frame_id, frame_timestamp)
         
         # --- Step 3: 异步车牌分类 ---
         if self.ocr_on and self.plate_worker:
@@ -319,11 +318,11 @@ class TrafficMonitorEngine:
                     'rel_landmarks': rel_landmarks
                 }
 
-    def _handle_exits(self, frame_id):
+    def _handle_exits(self, frame_id, current_timestamp):
         """
         处理离场车辆：执行最终结算、生成报表并入库。
         """
-        for tid, record in self.registry.check_exits(frame_id):
+        for tid, record in self.registry.check_exits(frame_id, current_timestamp):
             # Step 1. 解析最终属性 (车牌、细分车型)
             final_plate, final_type_str = self.classifier.resolve_type(
                 record['class_id'], record.get('plate_history', [])

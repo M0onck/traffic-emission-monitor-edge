@@ -38,8 +38,8 @@ ACCEL_WINDOW = _k.get("accel_window", 30)
 BORDER_MARGIN = _k["border_margin"]
 MIN_TRACKING_FRAMES = _k["min_tracking_frames"]
 MAX_PHYSICAL_ACCEL = _k["max_physical_accel"]
-MIN_SURVIVAL_FRAMES = _k["min_survival_frames"]
-EXIT_THRESHOLD = _k["exit_threshold"]
+MIN_SURVIVAL_SEC = _k.get("min_survival_sec", 1.0)
+EXIT_TIMEOUT_SEC = _k.get("exit_timeout_sec", 1.0)
 KINEMATICS_POLY_ORDER = _k.get("poly_order", 3)
 
 _o = _cfg["ocr_params"]

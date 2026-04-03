@@ -8,20 +8,20 @@ class VehicleRegistry:
     负责维护所有在场车辆的生命周期、状态累积和轨迹记录。
     并不直接处理图像，而是处理由 MonitorEngine 传入的数据对象。
     """
-    def __init__(self, fps: int = 30, min_survival_frames: int = 15, exit_threshold: int = 30,
+    def __init__(self, target_fps: int = 30, min_survival_sec: float = 1.0, exit_timeout_sec: float = 1.0,
                  min_valid_pts: int = 15, min_moving_dist: float = 2.0):
         self.records = {}
-        self.fps = fps
+        self.target_fps = target_fps
         
         # 生命周期配置
-        self.min_survival_frames = min_survival_frames # 最小存活帧数 (过滤误检)
-        self.exit_threshold = exit_threshold           # 消失多少帧后认定为离场
+        self.min_survival_frames = min_survival_sec  # 最小存活秒数 (过滤误检)
+        self.exit_threshold = exit_timeout_sec       # 消失多少秒后认定为离场
         
         # 数据质量配置
         self.min_valid_trajectory_points = min_valid_pts # 最小有效轨迹点数
         self.min_moving_distance_m = min_moving_dist     # 最小移动距离 (过滤静止车辆)
 
-    def update(self, detections, frame_id, model=None):
+    def update(self, detections, frame_id, timestamp, model=None):
         """
         根据 YOLO 检测结果更新车辆列表
         更新逻辑：
@@ -59,8 +59,10 @@ class VehicleRegistry:
                     'trajectory': [],
                     'valid_samples_count': 0,
                     'first_frame': frame_id,
+                    'first_time': timestamp,      # 记录首次出现的绝对时间
                     'max_conf': float(conf),
                     'last_seen_frame': frame_id,
+                    'last_seen_time': timestamp,  # 记录最后一次出现的绝对时间
                     'reported': False,
                     'plate_history': [],
                     # 宏观统计累积槽
@@ -75,6 +77,7 @@ class VehicleRegistry:
             
             rec = self.records[tid]
             rec['last_seen_frame'] = frame_id
+            rec['last_seen_time'] = timestamp     # 每次更新检测框时刷新绝对时间
             rec['class_votes'][cid] += weight
             
             # 更新主要车型判定 (Majority Vote)
@@ -160,14 +163,15 @@ class VehicleRegistry:
                 'color': color, 'area': area, 'conf': conf
             })
 
-    def check_exits(self, frame_id):
+    def check_exits(self, frame_id, current_timestamp):
         """
         检查哪些车辆已经离开画面（超时未更新）。
         :return: list of (tid, record)
         """
         timed_out_ids = []
         for tid, record in self.records.items():
-            if frame_id - record['last_seen_frame'] > self.exit_threshold:
+            # 使用时间戳差值判定超时 (例如：超过 1.0 秒未见)
+            if current_timestamp - record['last_seen_time'] > self.exit_timeout_sec:
                 timed_out_ids.append(tid)
 
         valid_exits = []
@@ -175,8 +179,8 @@ class VehicleRegistry:
             record = self.records[tid]
             
             # 1. 存活时间过滤
-            life_span = record['last_seen_frame'] - record['first_frame']
-            has_survival = life_span >= self.min_survival_frames
+            life_span = record['last_seen_time'] - record['first_time']
+            has_survival = life_span >= self.min_survival_sec
             
             # 2. 有效点数过滤
             min_valid_pts = getattr(self, 'min_valid_trajectory_points', 15)
