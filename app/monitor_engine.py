@@ -148,17 +148,17 @@ class TrafficMonitorEngine:
                         self.spatial.set_transformer(transformer)
 
                 # --- 核心处理流水线 ---
-                # annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
+                annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
                 
                 # --- 写入结果视频 ---
                 # if sink:
                 #     sink.write_frame(annotated_frame)
                 
                 # --- 实时预览 ---
-                # if self.frame_callback:
-                #     # 为了性能，直接在 Engine 端缩放到树莓派屏幕尺寸 800x480
-                #     display = resize_with_pad(annotated_frame, (800, 480))
-                #     self.frame_callback(display)
+                if self.frame_callback:
+                    # 为了性能，直接在 Engine 端缩放到树莓派屏幕尺寸 800x480
+                    display = resize_with_pad(annotated_frame, (800, 480))
+                    self.frame_callback(display)
                 
                 if not getattr(self, '_is_running', True):
                     break
