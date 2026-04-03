@@ -7,6 +7,7 @@ from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
 from domain.physics.spatial_analyzer import SpatialAnalyzer
 from domain.physics.kinematics_smoother import KinematicsSmoother
+from domain.vehicle.physical_filter import PhysicalVehicleFilter
 from perception.vision_pipeline import VisionPipeline
 
 class TrafficMonitorEngine:
@@ -59,6 +60,9 @@ class TrafficMonitorEngine:
         # 初始化空间分析器和运动滤波器
         self.spatial = SpatialAnalyzer()
         self.smoother = KinematicsSmoother(max_window=15)
+
+        # 初始化车辆检测框过滤器
+        self.box_filter = PhysicalVehicleFilter(self.cfg)
 
         # 从组件字典中获取热成像实例
         self.thermal_cam = components.get('thermal_cam')
@@ -183,6 +187,10 @@ class TrafficMonitorEngine:
         
         # --- Step 1: 视觉感知与目标追踪 (交由感知层流水线处理) ---
         detections = self.vision.process(frame, buffer)
+        # 为防止识别错误，采用物理与事实先验知识进行过滤
+        detections = self.box_filter.apply_pixel_filters(detections, frame.shape)
+        if self.comps.get('transformer'):
+            detections = self.box_filter.correct_classes_by_physics(detections, self.spatial)
 
         # --- Step 2: 注册表更新 (Registry Update) ---
         self.registry.update(detections, frame_id, frame_timestamp, None)
