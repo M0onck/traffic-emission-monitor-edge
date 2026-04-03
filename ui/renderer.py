@@ -55,13 +55,6 @@ class Visualizer:
             scene = self.trace_annotator.annotate(scene=scene, detections=detections)
 
         # 3. 自定义绘制车辆框、标签及车牌框
-        # 预设 OpenCV 颜色 (BGR格式)
-        vehicle_color_map = {
-            'car': (255, 255, 0),   # 青色 (Cyan)
-            'bus': (255, 0, 255),   # 品红 (Magenta)
-            'truck': (0, 255, 255)  # 黄色 (Yellow)
-        }
-        
         plate_color_map = {
             'blue': (255, 0, 0),      # 蓝牌
             'green': (0, 255, 0),     # 绿牌
@@ -77,43 +70,41 @@ class Visualizer:
             # 找到对应车辆的数据对象
             data = next((d for d in label_data_list if d.track_id == tid), None)
             
-            # --- 解析类型与主体颜色 ---
-            v_type = data.display_type if data and data.display_type else "vehicle"
-            box_color = vehicle_color_map.get(v_type, (255, 255, 255)) # 默认白色
+            # --- 解析类型与双分类二元颜色 ---
+            v_type = data.display_type if data and data.display_type else "LDV"
             
-            # [绘制 A] 车辆检测框
+            # 只要带有 HDV (重型车) 标志，就用橙色高亮警示；否则用亮青色表示普通轻型车
+            if "HDV" in v_type:
+                box_color = (0, 128, 255)  # 橙色 (OpenCV 是 BGR 格式)
+            else:
+                box_color = (255, 255, 0)  # 亮青色 (Cyan)
+            
+            # 绘制车辆检测框
             cv2.rectangle(scene, (x1, y1), (x2, y2), box_color, 2)
             
-            # [绘制 B] 极简标签 (仅保留 #ID 和 车型)
+            # 绘制极简标签 (例如: #5 LDV-Gasoline)
             label_text = f"#{tid} {v_type}"
             (text_w, text_h), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            # 画文字背景框
             cv2.rectangle(scene, (x1, y1 - text_h - 10), (x1 + text_w + 10, y1), box_color, -1)
-            # 画文字 (黑色字体反色显示)
             cv2.putText(scene, label_text, (x1 + 5, y1 - 5), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
             
-            # [绘制 C] 车牌关键点检测框
+            # 绘制车牌关键点检测框
             if data and data.plate_points is not None:
-                # 1. 设置默认颜色（在还没识别出颜色时显示，比如设为白色）
                 p_color = (255, 255, 255) 
-                
-                # 2. 如果后台缓存里已经拿到了识别出的颜色，则替换默认颜色
                 if data.plate_color:
                     p_color_str = data.plate_color.lower()
                     for k, v in plate_color_map.items():
                         if k in p_color_str:
                             p_color = v
                             break
-                
-                # 3. 绘制多边形 (增加 reshape 保证 OpenCV 兼容性最佳)
                 pts = data.plate_points.astype(np.int32).reshape((-1, 1, 2))
                 cv2.polylines(scene, [pts], isClosed=True, color=p_color, thickness=2)
 
         # 4. 在画面左上角绘制 FPS
         if fps is not None and fps > 0:
             cv2.putText(scene, f"FPS: {fps:.1f}", (30, 50), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (132, 201, 139), 3, cv2.LINE_AA)
         
         return scene
 

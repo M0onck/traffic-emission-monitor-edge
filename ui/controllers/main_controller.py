@@ -291,7 +291,7 @@ class MainController:
         if getattr(self, 'sampled_tid', None) == tid:
             return
             
-        # 捕获到了新的离场车辆！
+        # 捕获到了新的离场车辆
         self.sampled_tid = tid
         record = latest_data['record']
         type_str = latest_data['type_str']
@@ -305,12 +305,20 @@ class MainController:
         accels = [p['accel'] for p in trajectory if 'accel' in p]
         
         # 更新 UI 组件
-        self.view.lbl_dash_id.setText(f"目标 ID: #{tid} (已离场结算)")
-        display_type = type_str if type_str else "未知"
+        self.view.lbl_dash_id.setText(f"目标 ID: #{tid}")
+
+        type_zh_map = {
+            "LDV-Gasoline": "轻型燃油车 (LDV)",
+            "LDV-Electric": "轻型新能源 (LDV)",
+            "HDV-Diesel": "重型柴油车 (HDV)",
+            "HDV-Electric": "重型新能源 (HDV)"
+        }
+        display_type = type_zh_map.get(type_str, type_str) if type_str else "未知"
         self.view.lbl_dash_type.setText(f"车型: {display_type}")
+
         color_map = {'blue': '蓝色', 'green': '绿色', 'yellow': '黄色', 'white': '白色', 'black': '黑色', 'Unknown': '未知'}
         zh_color = color_map.get(plate_color, plate_color)
         self.view.lbl_dash_plate.setText(f"车牌颜色: {zh_color}")
-        self.view.lbl_dash_dist.setText(f"行驶里程: {record.get('total_distance_m', 0.0):.1f} m")
+        self.view.lbl_dash_dist.setText(f"行驶距离: {record.get('total_distance_m', 0.0):.1f} m")
         
         self.view.curve_widget.update_curve(speeds, accels)
