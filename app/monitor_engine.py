@@ -282,29 +282,13 @@ class TrafficMonitorEngine:
             
             x1, y1, x2, y2 = map(int, box)
             
-            # 使用检测框“底边中点”作为车辆物理触地点
-            bc_x, bc_y = (x1 + x2) / 2.0, float(y2)
-            pt_vec = np.array([bc_x, bc_y]) - p1
-
-            # 点到直线的垂直像素距离 (叉乘 / 底边长)
-            dist_to_bottom = np.abs(np.cross(line_vec, pt_vec)) / line_len
-            
-            # 车辆横向投影比例 
-            # (0 代表车辆位于左下角，1 代表位于右下角，超出这个范围说明车在线段延长线外)
-            proj_ratio = np.dot(pt_vec, line_vec) / (line_len ** 2)
-
-            # 智能触发条件
-            # 条件 A: 距离 ROI 下边线小于画面高度的 25% (如 1080p 下约 270 像素宽度的触发带)
-            # 条件 B: 车辆横向在底边之间 (放宽 ±10% 的容差，允许压线)
-            if dist_to_bottom < (img_h * 0.25) and -0.1 < proj_ratio < 1.1:
-                
-                # 尺寸筛选
-                scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
-                if (x2-x1)*(y2-y1) > scaled_min_area:
-                    vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
-                    if vehicle_crop.size > 0:
-                        if self.plate_worker.push_task(tid, vehicle_crop):
-                            self.plate_retry[tid] = frame_id
+            # 仅保留尺寸筛选：面积必须达标才送去 OCR
+            scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
+            if (x2-x1)*(y2-y1) > scaled_min_area:
+                vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
+                if vehicle_crop.size > 0:
+                    if self.plate_worker.push_task(tid, vehicle_crop):
+                        self.plate_retry[tid] = frame_id
 
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
@@ -371,15 +355,13 @@ class TrafficMonitorEngine:
                 elif yellow_count >= VETO_THRESHOLD:
                     voted_color = 'yellow'
                 else:
-                    # 如果没有达到少数派阈值，才退回到普通的置信度投票 (大概率会投出 blue)
-                    scores = defaultdict(float)
-                    for entry in history:
-                        scores[entry['color']] += entry.get('conf', 1.0)
-                    voted_color = max(scores, key=scores.get)
+                    # 若完全没有检出绿牌/黄牌，使用众数投票 (取出现次数最多的颜色，通常是蓝牌)
+                    colors = [h['color'] for h in history]
+                    voted_color = max(set(colors), key=colors.count)
             
             record['final_plate_color'] = voted_color
             
-            # Step 2. 微观时空轨迹与 VSP 结算 (核心逻辑)
+            # Step 2. 微观时空轨迹结算
             if 'trajectory' in record:
                 self._calculate_and_save_history(tid, record, final_type_str)
 
@@ -448,42 +430,6 @@ class TrafficMonitorEngine:
             self.db.insert_micro(point.get('frame_id', 0), tid, db_payload)
 
         self.db.flush_micro_buffer()
-
-    def _handle_ocr(self, frame, frame_id, detections):
-        """
-        处理车牌识别任务 (OCR)。
-        仅对位于 ROI 中心区域、且图像质量合格的车辆触发。
-        """
-        worker = self.comps.get('ocr_worker')
-        if not worker: return
-
-        img_h, img_w = frame.shape[:2]
-        
-        # Step 1. 任务分发 (按间隔触发)
-        if frame_id % self.cfg.OCR_INTERVAL == 0:
-            for tid, box, cid in zip(detections.tracker_id, detections.xyxy, detections.class_id):
-                # --- 冷却检查 ---
-                if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
-                    continue
-                
-                # --- 几何筛选: 仅处理画面中心区域的车辆 ---
-                x1, y1, x2, y2 = map(int, box)
-                cx, cy = (x1+x2)/2, (y1+y2)/2
-                if not (0.1*img_w < cx < 0.9*img_w and 0.4*img_h < cy < 0.98*img_h):
-                    continue
-                
-                # --- 尺寸筛选 ---
-                if (x2-x1)*(y2-y1) > self.cfg.MIN_PLATE_AREA:
-                    crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
-                    if worker.push_task(tid, crop, cid):
-                        self.plate_retry[tid] = frame_id
-
-        # Step 2. 结果回收
-        for (tid, color, conf, area) in worker.get_results():
-            self.registry.add_plate_history(tid, color, area, conf)
-            if conf > self.cfg.OCR_CONF_THRESHOLD:
-                self.plate_cache[tid] = color
-                if tid in self.plate_retry: del self.plate_retry[tid]
 
     def _prepare_labels(self, detections, landmarks_dict=None):
         """
