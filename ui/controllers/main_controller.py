@@ -53,15 +53,46 @@ class MainController:
         self.view.btn_zero_wind.clicked.connect(self.handle_zero_wind)
     
     def handle_sync_clock(self):
-        if self.weather_gw:
+        if not self.weather_gw:
+            return
+            
+        # 创建确认弹窗
+        msg_box = QMessageBox(self.view)
+        msg_box.setWindowTitle("时钟同步校准")
+        msg_box.setText("确认与远端系统同步时间吗？")
+        msg_box.setIcon(QMessageBox.Question)
+        
+        # 自定义按钮中文文本
+        yes_btn = msg_box.addButton("确认", QMessageBox.YesRole)
+        no_btn = msg_box.addButton("取消", QMessageBox.NoRole)
+        
+        msg_box.exec_()
+        
+        # 仅当用户点击确认时才下发指令
+        if msg_box.clickedButton() == yes_btn:
             self.weather_gw.sync_time()
-            # 可以利用 QMessageBox 弹窗提示，或直接通过 print 验证
-            print("前端控制器：已下发时钟同步指令")
+            print("前端控制器：已确认下发时钟同步指令")
             
     def handle_zero_wind(self):
-        if self.weather_gw:
+        if not self.weather_gw:
+            return
+            
+        # 创建确认弹窗
+        msg_box = QMessageBox(self.view)
+        msg_box.setWindowTitle("风速调零校准")
+        msg_box.setText("确认执行风速调零吗？\n请确保传感器处于无风环境，等待10秒后完成调零。")
+        msg_box.setIcon(QMessageBox.Warning) # 调零属于敏感操作，使用黄色警告图标
+        
+        # 自定义按钮中文文本
+        yes_btn = msg_box.addButton("确认", QMessageBox.YesRole)
+        no_btn = msg_box.addButton("取消", QMessageBox.NoRole)
+        
+        msg_box.exec_()
+        
+        # 仅当用户点击确认时才下发指令
+        if msg_box.clickedButton() == yes_btn:
             self.weather_gw.zero_wind()
-            print("前端控制器：已下发风速调零指令")
+            print("前端控制器：已确认下发风速调零指令")
 
     def route_app1_click(self):
         """主界面按钮的智能跳转路由"""
