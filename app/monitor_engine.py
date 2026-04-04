@@ -274,12 +274,13 @@ class TrafficMonitorEngine:
             
             x1, y1, x2, y2 = map(int, box)
 
-            # 车牌像素面积阈值过滤（采用绝对阈值）
-            if (x2-x1)*(y2-y1) > self.cfg.MIN_PLATE_AREA:
-                vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
-                if vehicle_crop.size > 0:
-                    if self.plate_worker.push_task(tid, vehicle_crop):
-                        self.plate_retry[tid] = frame_id
+            # 安全地裁剪车身区域 (防止越界)
+            vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
+
+            # 只要裁剪出来的图片有效，就投递给 OCR 工作进程
+            if vehicle_crop.size > 0:
+                if self.plate_worker.push_task(tid, vehicle_crop):
+                    self.plate_retry[tid] = frame_id
 
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""

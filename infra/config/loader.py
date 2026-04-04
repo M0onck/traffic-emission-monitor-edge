@@ -43,7 +43,6 @@ EXIT_TIMEOUT_SEC = _k.get("exit_timeout_sec", 1.0)
 KINEMATICS_POLY_ORDER = _k.get("poly_order", 3)
 
 _o = _cfg["ocr_params"]
-MIN_PLATE_AREA = _o["min_plate_area"]
 OCR_RETRY_COOLDOWN = _o["retry_cooldown"]
 OCR_INTERVAL = _o["run_interval"]
 OCR_CONF_THRESHOLD = _o["confidence_threshold"]
