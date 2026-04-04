@@ -12,10 +12,9 @@ class PhysicalVehicleFilter:
         self.min_aspect_ratio = 0.3    # 最小长宽比 (防狭长地标/箭头)
         self.max_aspect_ratio = 3.5    # 最大长宽比 (防横向异常色块)
         
-        # --- 物理级过滤阈值 (核心) ---
+        # --- 物理级过滤阈值 ---
         # 设定重型车辆(HDV)的最小物理截面面积阈值 (平方米)
-        # 轿车/SUV通常在 6~12 m²，重卡和公交车通常在 25~45 m²
-        self.hdv_min_surface_area_m2 = 12.0
+        self.hdv_min_surface_area_m2 = 10.0
         
         # 兼容当前的 COCO 类别 ID
         # 假设配置中未定义则使用默认的 COCO ID: 2(car), 5(bus), 7(truck)

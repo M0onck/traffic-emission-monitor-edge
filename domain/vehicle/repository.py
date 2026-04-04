@@ -21,7 +21,7 @@ class VehicleRegistry:
         self.min_valid_trajectory_points = min_valid_pts # 最小有效轨迹点数
         self.min_moving_distance_m = min_moving_dist     # 最小移动距离 (过滤静止车辆)
 
-    def update(self, detections, frame_id, timestamp, model=None):
+    def update(self, detections, frame_id, timestamp, model=None, roi_bounds=None):
         """
         根据 YOLO 检测结果更新车辆列表
         更新逻辑：
@@ -42,11 +42,35 @@ class VehicleRegistry:
             cid = int(cid)
             conf = float(conf)
             
-            # 使用面积加权置信度进行投票
+            # --- 基础面积计算 ---
             width = max(0.0, float(box[2] - box[0]))
             height = max(0.0, float(box[3] - box[1]))
             area = width * height
-            weight = conf * math.sqrt(area) 
+
+            # 采用对数平滑 (Logarithmic Smoothing) 为像素面积加权
+            # 原因：更符合神经网络感受野的信息边际递减规律
+            # 加 1.0 是防止面积为 0 时 log 报错
+            visual_quality = math.log(area + 1.0)
+
+            # --- 空间与视角惩罚加权 (Exponential Spatial Weighting) ---
+            spatial_multiplier = 1.0
+            if roi_bounds and roi_bounds[1] > roi_bounds[0]:
+                min_y, max_y = roi_bounds
+                y_bottom = float(box[3])  # 取车辆检测框的底边 Y 坐标 (最能代表车辆在路面的真实位置)
+                
+                # 计算车辆在 ROI 垂直方向的相对进度 (0.0 ~ 1.0)
+                # 0.0 表示在 ROI 最上方，1.0 表示到达 ROI 最下方的最佳抓拍底边
+                progress = (y_bottom - min_y) / (max_y - min_y)
+                progress = max(0.0, min(1.0, progress)) # 限制在 0 到 1 之间
+                
+                # 指数级放大系数 (alpha)
+                # alpha=3.0 时，底边(最佳观测区)的单帧投票权重是顶边(畸变区)的 e^3 ≈ 20.08 倍
+                alpha = 3.0 
+                spatial_multiplier = math.exp(alpha * progress)
+                
+            # 最终复合权重
+            # Conf (视觉模型置信度) * Visual Quality (视觉信息量) * Spatial Multiplier (观测位置增益)
+            weight = conf * visual_quality * spatial_multiplier
             
             # 动态获取类名，防止 model 为 None 时引发 AttributeError
             class_name = model.names[cid] if model and hasattr(model, 'names') else f"Class_{cid}"
@@ -65,7 +89,6 @@ class VehicleRegistry:
                     'last_seen_time': timestamp,  # 记录最后一次出现的绝对时间
                     'reported': False,
                     'plate_history': [],
-                    # 宏观统计累积槽
                     'op_mode_stats': defaultdict(int),
                     'brake_emission_mg': 0.0,
                     'tire_emission_mg': 0.0,

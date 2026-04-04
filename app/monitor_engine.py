@@ -187,7 +187,7 @@ class TrafficMonitorEngine:
 
     def process_frame(self, frame, buffer, frame_id, current_fps=0.0, frame_timestamp=0.0):
         """
-        单帧处理流水线 (混合架构版)。
+        单帧处理流水线。
         """
         h, w = frame.shape[:2]
         
@@ -199,7 +199,14 @@ class TrafficMonitorEngine:
             detections = self.box_filter.correct_classes_by_physics(detections, self.spatial)
 
         # --- Step 2: 注册表更新 (Registry Update) ---
-        self.registry.update(detections, frame_id, frame_timestamp, None)
+        # 提取标定区域的垂直边界 (用于空间加权)
+        roi_bounds = None
+        if self.comps.get('transformer'):
+            # 返回的是 (min_y, max_y)，代表画面中 ROI 的最上端和最下端
+            roi_bounds = self.comps['transformer'].get_roi_vertical_bounds()
+
+        # 将 roi_bounds 传给 update 方法
+        self.registry.update(detections, frame_id, frame_timestamp, None, roi_bounds=roi_bounds)
         self._handle_exits(frame_id, frame_timestamp)
         
         # --- Step 3: 异步车牌分类 ---
