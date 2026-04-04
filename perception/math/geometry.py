@@ -44,12 +44,12 @@ class ViewTransformer:
 
     def get_roi_vertical_bounds(self):
         """
-        [修复版] 获取 ROI 的垂直边界 (用于归一化坐标)
+        获取 ROI 的垂直边界 (用于归一化坐标)
         兼容 (N, 2) 和 (N, 1, 2) 两种数据形状。
         :return: (min_y, max_y)
         """
         if self.roi_contour is None or len(self.roi_contour) == 0:
-            return 0.0, 1080.0 # 兜底默认值
+            return 0.0, float('inf') # 兜底默认值
         
         # 自动判断维度以进行正确切片
         # 情况 A: Shape is (N, 1, 2) -> 常见于 cv2.findContours 输出

@@ -261,30 +261,15 @@ class TrafficMonitorEngine:
         if frame_id % self.cfg.OCR_INTERVAL != 0:
             return
 
-        # 获取用户标定的 ROI 4 个角点
-        pts = self.visualizer.calibration_points
-        if pts is None or len(pts) < 4:
-            return
-            
-        # 提取 ROI 的“下边线” (左下角 BL 与 右下角 BR)
-        p1 = pts[0].astype(np.float32)
-        p2 = pts[1].astype(np.float32)
-        
-        # 构建底边向量
-        line_vec = p2 - p1
-        line_len = np.linalg.norm(line_vec)
-        if line_len < 1e-4: return
-
         for tid, box in zip(detections.tracker_id, detections.xyxy):
             # 冷却检查
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
                 continue
             
             x1, y1, x2, y2 = map(int, box)
-            
-            # 仅保留尺寸筛选：面积必须达标才送去 OCR
-            scaled_min_area = self.cfg.MIN_PLATE_AREA * (img_w / 1920.0) * (img_h / 1080.0)
-            if (x2-x1)*(y2-y1) > scaled_min_area:
+
+            # 车牌像素面积阈值过滤（采用绝对阈值）
+            if (x2-x1)*(y2-y1) > self.cfg.MIN_PLATE_ARE:
                 vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
                 if vehicle_crop.size > 0:
                     if self.plate_worker.push_task(tid, vehicle_crop):
