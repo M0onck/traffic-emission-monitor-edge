@@ -176,10 +176,10 @@ class DatabaseManager:
         self.flush_micro_buffer() 
         
         query = """
-            SELECT tid, class_name, plate_number, plate_color, 
-                ROUND(max_speed, 2), ROUND(avg_speed, 2), ROUND(total_distance, 2)
+            SELECT tracker_id, class_name, plate_number, plate_color, 
+                ROUND(max_speed, 2), ROUND(average_speed, 2), ROUND(total_distance_m, 2)
             FROM vehicle_macro 
-            ORDER BY tid DESC 
+            ORDER BY tracker_id DESC 
             LIMIT ?
         """
         try:
