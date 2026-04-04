@@ -255,48 +255,57 @@ class TrafficMonitorEngine:
         return self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):
-        """派发任务给子进程：将车身裁剪出来，非阻塞地放入队列"""
+        """派发任务给子进程：基于清晰度评估与预处理的动态抽帧"""
         img_h, img_w = frame.shape[:2]
-        if frame_id % self.cfg.OCR_INTERVAL != 0:
-            return
+
+        # 【已删除】死板的全局间隔采样 (OCR_INTERVAL)
 
         for tid, box in zip(detections.tracker_id, detections.xyxy):
-            # 冷却检查
+            # 1. 冷却检查防爆栈：防止对同一辆车频繁提交识别请求
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
                 continue
             
             x1, y1, x2, y2 = map(int, box)
-
-            # 为目标框增加动态边缘填充
+            
+            # 2. 动态 Padding (保护低位悬挂的车牌)
             bw = x2 - x1
             bh = y2 - y1
+            pad_x = int(bw * 0.05)
+            pad_top = int(bh * 0.05)
+            pad_bottom = int(bh * 0.20) 
             
-            pad_x = int(bw * 0.05)       # 左右外扩 5%
-            pad_top = int(bh * 0.05)     # 顶部外扩 5%
-            pad_bottom = int(bh * 0.20)  # 底部外扩 20% (专治车头低矮车牌漏检)
-            
-            # 计算外扩后的安全坐标 (防止超过原图边界导致 numpy 切片报错)
             crop_x1 = max(0, x1 - pad_x)
             crop_y1 = max(0, y1 - pad_top)
             crop_x2 = min(img_w, x2 + pad_x)
             crop_y2 = min(img_h, y2 + pad_bottom)
             
-            # 使用扩充后的坐标进行裁切
             vehicle_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+            
+            if vehicle_crop.size == 0:
+                continue
 
-            if vehicle_crop.size > 0:
-                # 转换为 LAB 色彩空间，只对亮度通道(L)进行均衡化，不改变颜色
-                lab = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2LAB)
-                l, a, b = cv2.split(lab)
-                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-                cl = clahe.apply(l)
-                limg = cv2.merge((cl,a,b))
-                enhanced_crop = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+            # 3. 拉普拉斯方差图像清晰度评估
+            gray_crop = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2GRAY)
+            blur_score = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
+            
+            # 从配置中读取模糊阈值（提供默认兜底值 100.0）
+            blur_threshold = getattr(self.cfg, 'BLUR_THRESHOLD', 100.0)
+            
+            if blur_score < blur_threshold:
+                # 直接 continue 丢弃这一帧，把识别机会留给车辆驶近后更清晰的下一帧
+                continue
 
-            # 只要裁剪出来的图片有效，就投递给 OCR 工作进程
-            if vehicle_crop.size > 0:
-                if self.plate_worker.push_task(tid, enhanced_crop):
-                    self.plate_retry[tid] = frame_id
+            # 4. 亮度与对比度增强预处理 (CLAHE)
+            lab = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            cl = clahe.apply(l)
+            limg = cv2.merge((cl,a,b))
+            enhanced_crop = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+
+            # 5. 投递最终的优质任务
+            if self.plate_worker.push_task(tid, enhanced_crop):
+                self.plate_retry[tid] = frame_id
 
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""

@@ -56,6 +56,7 @@ _qc = _cfg.get("quality_control", {})
 MIN_VALID_POINTS = _qc.get("min_valid_trajectory_points", 15)
 QC_MIN_SURVIVAL_SEC = _qc.get("min_survival_sec", 1.0)
 MIN_MOVING_DIST = _qc.get("min_moving_distance_m", 2.0)
+BLUR_THRESHOLD = _qc.get("blur_threshold", 100.0)
 
 # --- 2. 核心常量 ---
 _y = _cfg["yolo_classes"]
