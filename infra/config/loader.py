@@ -28,6 +28,10 @@ DB_PATH = _sys["db_path"]
 FPS = _sys["fps"]
 DEBUG_MODE = _sys["debug_mode"]
 
+_d = _cfg["display"]
+FRAME_WIDTH = _d.get("frame_width", 1280)
+FRAME_HEIGHT = _d.get("frame_height", 720)
+
 _sw = _cfg["switches"]
 ENABLE_MOTION = _sw["enable_motion"]
 ENABLE_OCR = _sw["enable_ocr"]

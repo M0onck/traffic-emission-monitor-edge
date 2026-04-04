@@ -6,6 +6,10 @@
     "fps": 30,
     "debug_mode": true
   },
+  "display": {
+    "frame_width": 1280,
+    "frame_height": 720
+  },
   "edge_models": {
     "hef_path": "resources/yolov8s.hef",
     "post_so_path": "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so",

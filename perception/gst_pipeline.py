@@ -14,6 +14,9 @@ class GstPipelineManager:
         self.video_path = config.get("video_path", "resources/test_traffic.mp4")
         self.hef_path = config.get("hef_path", "resources/yolov8m.hef")
         self.post_so_path = config.get("post_so_path", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
+
+        self.out_w = config.get("FRAME_WIDTH", 1280) 
+        self.out_h = config.get("FRAME_HEIGHT", 720)
         
         self.pipeline_string = self._build_pipeline()
         self.pipeline = Gst.parse_launch(self.pipeline_string)
@@ -31,6 +34,7 @@ class GstPipelineManager:
             
             # --- 视频画面分支 ---
             f"t. ! queue max-size-buffers=30 ! "
+            f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
             f"appsink name=sink_video emit-signals=false max-buffers=2 drop=false sync=false "
             
