@@ -191,8 +191,12 @@ class VehicleRegistry:
             min_dist = getattr(self, 'min_moving_distance_m', 2.0)
             total_dist = record.get('total_distance_m', 0.0)
             has_movement = total_dist >= min_dist
+
+            # 4. 车牌存在性过滤 (过滤虚假检测框)
+            has_plate = len(record.get('plate_history', [])) > 0
             
-            if has_survival and has_quality and has_movement:
+            # 必须同时满足四个条件才算有效离场并落盘
+            if has_survival and has_quality and has_movement and has_plate:
                 valid_exits.append((tid, record))
 
             # 无论是否有效，都从内存中移除

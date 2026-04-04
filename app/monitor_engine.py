@@ -239,8 +239,21 @@ class TrafficMonitorEngine:
                     )
 
         # --- Step 5: 可视化渲染 ---
-        label_data_list = self._prepare_labels(detections)
-        return self.visualizer.render(frame, detections, label_data_list, fps=current_fps)
+        # 构建掩码：只保留那些在历史记录中成功识别过车牌的车辆
+        valid_mask = []
+        for tid in detections.tracker_id:
+            rec = self.registry.get_record(tid)
+            # 如果存在记录且 plate_history 列表不为空，则为 True
+            valid_mask.append(rec is not None and len(rec.get('plate_history', [])) > 0)
+        
+        # 将布尔列表转换为 numpy 数组，过滤掉无车牌的检测框
+        filtered_detections = detections[np.array(valid_mask, dtype=bool)]
+        
+        # 只为过滤后的真实车辆生成 UI 标签数据
+        label_data_list = self._prepare_labels(filtered_detections)
+        
+        # 传递过滤后的数据给视觉渲染器
+        return self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):
         """派发任务给子进程：将车身裁剪出来，非阻塞地放入队列"""
