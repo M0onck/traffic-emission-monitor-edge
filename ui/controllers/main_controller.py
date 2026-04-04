@@ -392,9 +392,9 @@ class MainController:
         layout.setContentsMargins(30, 30, 30, 20)
         
         # --- 模式选择 ---
-        radio_time = QRadioButton("按时间段删除 (默认)")
+        radio_time = QRadioButton("按时间段删除")
         radio_time.setChecked(True)
-        radio_all = QRadioButton("全部删除 (清空所有台账记录)")
+        radio_all = QRadioButton("全部删除")
         
         layout.addWidget(radio_time)
         layout.addSpacing(10)
@@ -466,7 +466,7 @@ class MainController:
         btn_cancel = QPushButton("取消")
         btn_cancel.setStyleSheet("background-color: #555; color: white; font-size: 16px; padding: 12px; border-radius: 5px;")
         
-        btn_confirm = QPushButton("确认执行")
+        btn_confirm = QPushButton("确认")
         btn_confirm.setStyleSheet("background-color: #d50000; color: white; font-weight: bold; font-size: 16px; padding: 12px; border-radius: 5px;")
         
         btn_layout.addStretch()
@@ -480,12 +480,12 @@ class MainController:
         def execute_delete():
             # 第二次危险确认弹窗
             msg_box = QMessageBox(dialog)
-            msg_box.setWindowTitle("⚠️ 危险操作确认")
+            msg_box.setWindowTitle("⚠️ 删除操作确认")
             msg_box.setIcon(QMessageBox.Critical)
             if radio_all.isChecked():
-                msg_box.setText("您即将【清空所有的历史排放台账记录】。\n此操作执行后数据将无法找回，确定继续吗？")
+                msg_box.setText("您即将【清空所有的历史数据记录】。\n此操作执行后数据将无法找回，确定继续吗？")
             else:
-                msg_box.setText(f"您即将删除【最近 {state['minutes']} 分钟】产生的所有检测数据。\n此操作执行后无法找回，确定继续吗？")
+                msg_box.setText(f"您即将删除【最近 {state['minutes']} 分钟】产生的所有数据。\n此操作执行后无法找回，确定继续吗？")
                 
             yes_btn = msg_box.addButton("确认删除", QMessageBox.YesRole)
             no_btn = msg_box.addButton("放弃删除", QMessageBox.NoRole)
