@@ -249,7 +249,7 @@ class TrafficMonitorEngine:
         filtered_detections = detections
         
         # 为真实车辆和正在识别中的车辆生成 UI 标签数据
-        label_data_list = self._prepare_labels(filtered_detections)
+        label_data_list = self._prepare_labels(filtered_detections, frame.shape)
         
         # 传递过滤后的数据给视觉渲染器
         return self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
@@ -267,8 +267,22 @@ class TrafficMonitorEngine:
             
             x1, y1, x2, y2 = map(int, box)
 
-            # 安全地裁剪车身区域 (防止越界)
-            vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
+            # 为目标框增加动态边缘填充
+            bw = x2 - x1
+            bh = y2 - y1
+            
+            pad_x = int(bw * 0.05)       # 左右外扩 5%
+            pad_top = int(bh * 0.05)     # 顶部外扩 5%
+            pad_bottom = int(bh * 0.20)  # 底部外扩 20% (专治车头低矮车牌漏检)
+            
+            # 计算外扩后的安全坐标 (防止超过原图边界导致 numpy 切片报错)
+            crop_x1 = max(0, x1 - pad_x)
+            crop_y1 = max(0, y1 - pad_top)
+            crop_x2 = min(img_w, x2 + pad_x)
+            crop_y2 = min(img_h, y2 + pad_bottom)
+            
+            # 使用扩充后的坐标进行裁切
+            vehicle_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
 
             # 只要裁剪出来的图片有效，就投递给 OCR 工作进程
             if vehicle_crop.size > 0:
@@ -416,24 +430,20 @@ class TrafficMonitorEngine:
 
         self.db.flush_micro_buffer()
 
-    def _prepare_labels(self, detections, landmarks_dict=None):
-        """
-        [UI 数据适配] 专为极简显示设计 + 动态车牌锚定
-        """
+    def _prepare_labels(self, detections, frame_shape):
+        img_h, img_w = frame_shape[:2]  # 获取画面边界
         labels = []
-        # 注意这里加了 enumerate(zip(...)) 以便获取当前车辆的索引 i
         for i, (tid, raw_class_id) in enumerate(zip(detections.tracker_id, detections.class_id)):
             record = self.registry.get_record(tid)
             if not record:
-                continue # 空记录防护
-
-            voted_class_id = record['class_id'] if record else int(raw_class_id)
+                continue 
+                
+            voted_class_id = record['class_id']
             data = LabelData(track_id=tid, class_id=voted_class_id)
             
             has_plate = len(record.get('plate_history', [])) > 0
             
             if has_plate:
-                # 已经有车牌记录，执行标准双分体系
                 plate_info = self.plate_cache.get(tid)
                 current_color = plate_info['color'] if plate_info else "Unknown"
                 _, final_type = self.classifier.resolve_type(
@@ -445,14 +455,28 @@ class TrafficMonitorEngine:
                 # 动态计算车牌框
                 if plate_info:
                     data.plate_color = plate_info['color']
-                    x1, y1, x2, y2 = detections.xyxy[i]
-                    vw = x2 - x1
-                    vh = y2 - y1
+                    x1, y1, x2, y2 = map(int, detections.xyxy[i])
+                    
+                    # 与裁切时的 Padding 规则保持一致
+                    bw = x2 - x1
+                    bh = y2 - y1
+                    pad_x = int(bw * 0.05)
+                    pad_top = int(bh * 0.05)
+                    pad_bottom = int(bh * 0.20)
+                    
+                    crop_x1 = max(0, x1 - pad_x)
+                    crop_y1 = max(0, y1 - pad_top)
+                    crop_x2 = min(img_w, x2 + pad_x)
+                    crop_y2 = min(img_h, y2 + pad_bottom)
+                    
+                    crop_w = crop_x2 - crop_x1
+                    crop_h = crop_y2 - crop_y1
+                    
+                    # 使用扩大后的 crop_w, crop_h 和 crop_x1, crop_y1 进行绝对坐标反算
                     rel_lms = plate_info['rel_landmarks']
-                    abs_lms = rel_lms * np.array([vw, vh]) + np.array([x1, y1])
+                    abs_lms = rel_lms * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
                     data.plate_points = abs_lms
             else:
-                # 尚未获得 OCR 结果，视觉降级为“等待识别”状态
                 data.display_type = "Pending..."
                 data.plate_color = "gray"
             
