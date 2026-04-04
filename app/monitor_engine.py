@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import supervision as sv
 import time
+import traceback
 from collections import defaultdict
 from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
@@ -152,7 +153,12 @@ class TrafficMonitorEngine:
                         self.spatial.set_transformer(transformer)
 
                 # --- 核心处理流水线 ---
-                annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
+                try:
+                    annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
+                except Exception as e:
+                    print(f">>> [Engine 致命错误] 引擎在处理第 {frame_id} 帧时崩溃: {e}")
+                    traceback.print_exc()
+                    break # 遇到严重逻辑错误直接跳出循环，释放资源
                 
                 # --- 写入结果视频 ---
                 # if sink:
@@ -269,7 +275,7 @@ class TrafficMonitorEngine:
             x1, y1, x2, y2 = map(int, box)
 
             # 车牌像素面积阈值过滤（采用绝对阈值）
-            if (x2-x1)*(y2-y1) > self.cfg.MIN_PLATE_ARE:
+            if (x2-x1)*(y2-y1) > self.cfg.MIN_PLATE_AREA:
                 vehicle_crop = frame[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)].copy()
                 if vehicle_crop.size > 0:
                     if self.plate_worker.push_task(tid, vehicle_crop):
