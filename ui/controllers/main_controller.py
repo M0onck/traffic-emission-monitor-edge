@@ -1,11 +1,13 @@
+import time
 import cv2
 import numpy as np
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtGui import QImage, QPixmap
-
+from datetime import datetime
 from ui.workers.engine_worker import EngineWorker
 from infra.sys.sys_monitor import SysMonitor
+from perception.sensor.weather_station import WeatherGateway
 
 class MainController:
     """Controller 层：负责状态管理、页面路由、信号绑定与定时更新"""
@@ -17,6 +19,14 @@ class MainController:
         
         self.dash_timer = QTimer(self.view)
         self.dash_timer.timeout.connect(self.update_timer_tasks)
+
+        # 实例化并启动气象网关
+        try:
+            self.weather_gw = WeatherGateway()
+            self.weather_gw.start()
+        except Exception as e:
+            print(f"气象驱动加载失败: {e}")
+            self.weather_gw = None
 
         self.bind_signals()
         self.view.close_callback = self.cleanup  # 注入关闭事件钩子
@@ -37,7 +47,22 @@ class MainController:
         self.view.btn_app1.clicked.connect(self.route_app1_click)
         self.view.btn_app2.clicked.connect(self.route_app2_click)
         self.view.btn_exit.clicked.connect(self.view.close)
+
+        # 绑定气象站的校准按钮事件
+        self.view.btn_sync_clock.clicked.connect(self.handle_sync_clock)
+        self.view.btn_zero_wind.clicked.connect(self.handle_zero_wind)
     
+    def handle_sync_clock(self):
+        if self.weather_gw:
+            self.weather_gw.sync_time()
+            # 可以利用 QMessageBox 弹窗提示，或直接通过 print 验证
+            print("前端控制器：已下发时钟同步指令")
+            
+    def handle_zero_wind(self):
+        if self.weather_gw:
+            self.weather_gw.zero_wind()
+            print("前端控制器：已下发风速调零指令")
+
     def route_app1_click(self):
         """主界面按钮的智能跳转路由"""
         if self.is_collecting:
@@ -173,10 +198,17 @@ class MainController:
         """处理整个应用的关闭回收"""
         if self.is_collecting:
             self.final_stop_process()
+        
+        # 安全关闭气象网关 C++ 后台线程，防止内存或串口泄漏
+        if self.weather_gw:
+            self.weather_gw.stop()
     
     # --- 界面渲染更新 ---
     def update_sys_board(self):
         """定期刷新左侧的系统状态看板"""
+        # --- 刷新气象站看板 (无视界面索引，后台统一刷新以备随时切换) ---
+        self._update_weather_boards()
+
         # 确保当前的界面是主菜单 (Index 0)，如果在其他界面就不白费性能去读了
         if self.view.stack.currentIndex() != 0:
             return
@@ -206,6 +238,48 @@ class MainController:
                 labels["NPU 温度"].setStyleSheet("color: #ff5555; border: none; font-weight: bold;")
             else:
                 labels["NPU 温度"].setStyleSheet("color: #ffffff; border: none;")
+
+    # 更新两个页面的气象标签
+    def _update_weather_boards(self):
+        if not self.weather_gw:
+            return
+            
+        data = self.weather_gw.get_data()
+        
+        if data["isOnline"]:
+            # 格式化数据字符串
+            vals = {
+                "温度": f"{data['temp']:.1f} °C",
+                "湿度": f"{data['humidity']:.1f} %",
+                "风速": f"{data['windSpeed']:.2f} m/s",
+                "风向": f"{data['windDir']} °",
+                "PM2.5": f"{data['pm25']} μg/m³",
+                "PM10": f"{data['pm10']} μg/m³"
+            }
+            # 将时间戳转换为可读时间
+            dt_str = datetime.fromtimestamp(data['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
+            ts_text = f"远端系统时间戳: {dt_str}"
+        else:
+            # 离线占位符
+            vals = {k: "--" for k in ["温度", "湿度", "风速", "风向", "PM2.5", "PM10"]}
+            ts_text = "远端系统时间戳: 离线 / 等待同步..."
+
+        # 同时刷新 Monitor 页 (Index 3) 和 校准页 (Index 4) 的字典
+        if hasattr(self.view, 'weather_monitor_labels'):
+            for key, lbl in self.view.weather_monitor_labels.items():
+                if key in vals: lbl.setText(vals[key])
+                
+        if hasattr(self.view, 'weather_calib_labels'):
+            for key, lbl in self.view.weather_calib_labels.items():
+                if key in vals: lbl.setText(vals[key])
+                
+        # 更新校准页的时间戳标签
+        if hasattr(self.view, 'lbl_calib_timestamp'):
+            self.view.lbl_calib_timestamp.setText(ts_text)
+            if data["isOnline"]:
+                self.view.lbl_calib_timestamp.setStyleSheet("color: #00e676; border: none;") # 上线变绿
+            else:
+                self.view.lbl_calib_timestamp.setStyleSheet("color: #f39c12; border: none;") # 离线变黄
 
     def update_video_frame(self, rgb_img):
         h, w, ch = rgb_img.shape
