@@ -191,6 +191,42 @@ class DatabaseManager:
             print(f"[Database Error] 查询宏观数据失败: {e}")
             return []
 
+    def delete_all_data(self) -> bool:
+        """清空数据库中的所有宏观和微观记录"""
+        try:
+            self.cursor.execute("DELETE FROM vehicle_micro")
+            self.cursor.execute("DELETE FROM vehicle_macro")
+            self.conn.commit()
+            print(">>> [Database] 所有历史数据已被清空。")
+            return True
+        except sqlite3.Error as e:
+            print(f"[Database Error] 清空所有数据失败: {e}")
+            return False
+
+    def delete_recent_data(self, minutes: int) -> bool:
+        """删除最近 N 分钟内入场的记录及其微观轨迹"""
+        import time
+        # 计算时间阈值
+        threshold_time = time.time() - (minutes * 60)
+        try:
+            # 1. 级联删除微观表 (先删外键引用的子表)
+            self.cursor.execute("""
+                DELETE FROM vehicle_micro 
+                WHERE tracker_id IN (
+                    SELECT tracker_id FROM vehicle_macro WHERE entry_time >= ?
+                )
+            """, (threshold_time,))
+            
+            # 2. 删除宏观表 (再删主表)
+            self.cursor.execute("DELETE FROM vehicle_macro WHERE entry_time >= ?", (threshold_time,))
+            
+            self.conn.commit()
+            print(f">>> [Database] 已删除最近 {minutes} 分钟产生的数据。")
+            return True
+        except sqlite3.Error as e:
+            print(f"[Database Error] 按时间段删除失败: {e}")
+            return False
+
     def close(self):
         self.flush_micro_buffer()
         self.conn.close()

@@ -3,8 +3,10 @@ import json
 import cv2
 import numpy as np
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtWidgets import QMessageBox, QTableWidgetItem
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtWidgets import (QMessageBox, QTableWidgetItem, QDialog, 
+                             QVBoxLayout, QHBoxLayout, QLabel, 
+                             QPushButton, QRadioButton)
+from PyQt5.QtGui import QImage, QPixmap, QFont
 from datetime import datetime
 from ui.workers.engine_worker import EngineWorker
 from infra.sys.sys_monitor import SysMonitor
@@ -55,8 +57,9 @@ class MainController:
         self.view.btn_sync_clock.clicked.connect(self.handle_sync_clock)
         self.view.btn_zero_wind.clicked.connect(self.handle_zero_wind)
 
-        # 数据表单的刷新按钮绑定
+        # 数据表单的按钮绑定
         self.view.btn_refresh_db.clicked.connect(self.handle_db_refresh)
+        self.view.btn_delete_db.clicked.connect(self.show_batch_delete_dialog)
     
     def handle_sync_clock(self):
         if not self.weather_gw:
@@ -160,6 +163,9 @@ class MainController:
         
         # 只有在运行面板（Index 3）且正在采集时，才显示“结束采集”按钮
         self.view.btn_stop.setVisible(idx == 3 and self.is_collecting)
+
+        # 仅在数据库浏览界面显示批量删除按钮
+        self.view.btn_delete_db.setVisible(idx == 5)
 
         # 现在的步骤页面索引是 1 -> 2 -> 3
         self.view.btn_prev.setVisible(idx > 1 and idx < 3) 
@@ -369,6 +375,141 @@ class MainController:
 
         finally:
             self.view.btn_refresh_db.setText(" 刷新数据 ")
+
+    def show_batch_delete_dialog(self):
+        """弹出批量删除数据的交互对话框"""
+        dialog = QDialog(self.view)
+        dialog.setWindowTitle("批量清理历史数据")
+        dialog.setFixedSize(480, 260) # 考虑到触屏手指粗细，对话框稍大一些
+        dialog.setStyleSheet("""
+            QDialog { background-color: #1a1d2d; border: 2px solid #2d324f; }
+            QLabel { color: white; font-size: 16px; }
+            QRadioButton { color: white; font-size: 18px; font-weight: bold; }
+            QRadioButton::indicator { width: 20px; height: 20px; }
+        """)
+        
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 30, 30, 20)
+        
+        # --- 模式选择 ---
+        radio_time = QRadioButton("按时间段删除 (默认)")
+        radio_time.setChecked(True)
+        radio_all = QRadioButton("全部删除 (清空所有台账记录)")
+        
+        layout.addWidget(radio_time)
+        layout.addSpacing(10)
+        layout.addWidget(radio_all)
+        layout.addSpacing(20)
+        
+        # --- 触控调节区 (不使用键盘输入) ---
+        time_layout = QHBoxLayout()
+        lbl_desc = QLabel("删除最近：")
+        
+        btn_style = """
+            QPushButton { background-color: #333; color: white; font-size: 24px; border-radius: 8px; }
+            QPushButton:pressed { background-color: #555; }
+            QPushButton:disabled { background-color: #222; color: #555; }
+        """
+        # 减号按钮
+        btn_minus = QPushButton("-")
+        btn_minus.setFixedSize(60, 50)
+        btn_minus.setStyleSheet(btn_style)
+        
+        # 数字显示
+        lbl_val = QLabel("1")
+        lbl_val.setFont(QFont("Arial", 22, QFont.Bold))
+        lbl_val.setStyleSheet("color: #00e676;") # 绿字高亮
+        lbl_val.setAlignment(Qt.AlignCenter)
+        lbl_val.setMinimumWidth(80)
+        
+        # 加号按钮
+        btn_plus = QPushButton("+")
+        btn_plus.setFixedSize(60, 50)
+        btn_plus.setStyleSheet(btn_style)
+        
+        lbl_unit = QLabel("分钟")
+        
+        time_layout.addWidget(lbl_desc)
+        time_layout.addWidget(btn_minus)
+        time_layout.addWidget(lbl_val)
+        time_layout.addWidget(btn_plus)
+        time_layout.addWidget(lbl_unit)
+        time_layout.addStretch()
+        layout.addLayout(time_layout)
+        
+        # --- 联动逻辑 ---
+        state = {'minutes': 1}
+        def update_val(delta):
+            state['minutes'] = max(1, state['minutes'] + delta) # 最少 1 分钟
+            lbl_val.setText(str(state['minutes']))
+            
+        btn_minus.clicked.connect(lambda: update_val(-1))
+        btn_plus.clicked.connect(lambda: update_val(1))
+        
+        # 当选择“全部删除”时，让时间调节器灰显（禁用）
+        def on_radio_toggled():
+            is_time = radio_time.isChecked()
+            btn_minus.setEnabled(is_time)
+            btn_plus.setEnabled(is_time)
+            lbl_val.setEnabled(is_time)
+            lbl_desc.setEnabled(is_time)
+            lbl_unit.setEnabled(is_time)
+            lbl_val.setStyleSheet("color: #00e676;" if is_time else "color: #555;")
+            
+        radio_time.toggled.connect(on_radio_toggled)
+        radio_all.toggled.connect(on_radio_toggled)
+        
+        layout.addStretch()
+        
+        # --- 底部确认/取消按钮 ---
+        btn_layout = QHBoxLayout()
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setStyleSheet("background-color: #555; color: white; font-size: 16px; padding: 12px; border-radius: 5px;")
+        
+        btn_confirm = QPushButton("确认执行")
+        btn_confirm.setStyleSheet("background-color: #d50000; color: white; font-weight: bold; font-size: 16px; padding: 12px; border-radius: 5px;")
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_confirm)
+        layout.addLayout(btn_layout)
+        
+        btn_cancel.clicked.connect(dialog.reject)
+        
+        # --- 第二级最终确认逻辑 ---
+        def execute_delete():
+            # 第二次危险确认弹窗
+            msg_box = QMessageBox(dialog)
+            msg_box.setWindowTitle("⚠️ 危险操作确认")
+            msg_box.setIcon(QMessageBox.Critical)
+            if radio_all.isChecked():
+                msg_box.setText("您即将【清空所有的历史排放台账记录】。\n此操作执行后数据将无法找回，确定继续吗？")
+            else:
+                msg_box.setText(f"您即将删除【最近 {state['minutes']} 分钟】产生的所有检测数据。\n此操作执行后无法找回，确定继续吗？")
+                
+            yes_btn = msg_box.addButton("确认删除", QMessageBox.YesRole)
+            no_btn = msg_box.addButton("放弃删除", QMessageBox.NoRole)
+            
+            msg_box.exec_()
+            
+            if msg_box.clickedButton() == yes_btn:
+                db = DatabaseManager()
+                success = False
+                if radio_all.isChecked():
+                    success = db.delete_all_data()
+                else:
+                    success = db.delete_recent_data(state['minutes'])
+                db.close()
+                
+                if success:
+                    # 删除成功后立即触发 UI 重新读取数据
+                    self.handle_db_refresh() 
+                dialog.accept()
+                
+        btn_confirm.clicked.connect(execute_delete)
+        
+        # 阻塞显示对话框
+        dialog.exec_()
 
     def update_video_frame(self, rgb_img):
         h, w, ch = rgb_img.shape

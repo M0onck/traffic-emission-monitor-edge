@@ -52,6 +52,13 @@ class MainWindow(QMainWindow):
         self.btn_stop.setMinimumHeight(50)
         self.btn_stop.setStyleSheet("background-color: #c0392b; color: white;") 
 
+        # 批量删除按钮 (红色预警，默认隐藏)
+        self.btn_delete_db = QPushButton("批量删除数据")
+        self.btn_delete_db.setFont(font)
+        self.btn_delete_db.setMinimumHeight(50)
+        self.btn_delete_db.setStyleSheet("background-color: #d50000; color: white; border-radius: 5px;")
+        self.btn_delete_db.setVisible(False)
+
         self.btn_prev = QPushButton("◀ 上一步")
         self.btn_prev.setFont(font)
         self.btn_prev.setMinimumHeight(50)
@@ -62,6 +69,7 @@ class MainWindow(QMainWindow):
 
         self.nav_layout.addWidget(self.btn_home)
         self.nav_layout.addWidget(self.btn_stop)
+        self.nav_layout.addWidget(self.btn_delete_db)
         self.nav_layout.addWidget(self.btn_prev)
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_next)
@@ -582,7 +590,7 @@ class MainWindow(QMainWindow):
         # 数据库表格控件
         self.db_table = QTableWidget()
         self.db_table.setColumnCount(7)
-        # 【修改点】更新表头为重构后的字段定义
+        # 设置表头字段定义
         self.db_table.setHorizontalHeaderLabels([
             "目标 ID", "车型(LDV/HDV)", "能源类型", "入场时间", "离场时间", "平均车速(m/s)", "主导工况"
         ])
