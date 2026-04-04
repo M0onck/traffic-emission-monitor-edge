@@ -26,7 +26,7 @@
     "exit_timeout_sec": 1.0  
   },
   "ocr_params": {
-    "min_plate_area": 3000,
+    "min_plate_area": 1000,
     "retry_cooldown": 5,
     "run_interval": 5,
     "confidence_threshold": 0.4
