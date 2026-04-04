@@ -32,9 +32,21 @@ class KinematicsSmoother:
                 downsampled_indices.append(i)
                 last_t = timestamps[i]
 
-        # 强制保留最后一个点（确保离场时的轨迹终点不被截断）
+        # 安全保留离场点，消除了可能出现的过小采样间隔
         if downsampled_indices[-1] != n_points - 1:
-            downsampled_indices.append(n_points - 1)
+            # 计算最后一点与当前已采样列表中最后一个点的时间差
+            dt_to_last = timestamps[n_points - 1] - timestamps[downsampled_indices[-1]]
+            
+            # 设定安全间距阈值
+            safe_dt_threshold = self.target_dt * 0.5 
+            
+            if dt_to_last < safe_dt_threshold:
+                # 如果采样点够多，直接用真实的离场点替换掉倒数第一个采样点
+                if len(downsampled_indices) > 1:
+                    downsampled_indices[-1] = n_points - 1
+            else:
+                # 间距足够大：直接追加离场点
+                downsampled_indices.append(n_points - 1)
 
         # 判断抽样后的点数是否足够进行滤波
         if len(downsampled_indices) >= 5:
@@ -51,7 +63,7 @@ class KinematicsSmoother:
         if window_length < 3:
             return smoothed_x, raw_y, np.zeros(n_points), np.zeros(n_points)
 
-        # 3. 在时间极其均匀的“降频骨架”上执行 S-G 滤波
+        # 3. 在时间均匀的降频轨迹上执行 S-G 滤波
         sm_y_down = savgol_filter(y_down, window_length=window_length, polyorder=self.polyorder)
 
         # 4. 计算一维速度
