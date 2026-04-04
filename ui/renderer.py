@@ -41,7 +41,7 @@ class Visualizer:
         )
 
     def render(self, frame: np.ndarray, detections: sv.Detections, label_data_list: list, fps: float) -> np.ndarray:
-        scene = frame.copy()
+        scene = frame
         
         # 1. 绘制基础图层 (ROI 区域)
         if self.calibration_points is not None and len(self.calibration_points) > 0:
