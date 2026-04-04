@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QStackedWidget, QTabWidget, 
                              QGridLayout, QFrame)
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 
 import infra.config.loader as cfg
 from ui.components.speed_curve import SpeedCurveWidget
@@ -423,18 +423,45 @@ class MainWindow(QMainWindow):
             
         w_layout.addWidget(weather_left_panel, 7)
         
-        # === 右侧：预留给动态 GIF 的空白位置 ===
+        # === 右侧：气象站插画展示区 ===
         weather_right_panel = QFrame()
-        weather_right_panel.setStyleSheet("background-color: #0f111a; border: 2px dashed #444; border-radius: 12px;")
+        # 修改边框样式为实线，保持视觉统一
+        weather_right_panel.setStyleSheet("background-color: #0f111a; border: 2px solid #2d324f; border-radius: 12px;")
         w_right_layout = QVBoxLayout(weather_right_panel)
+        w_right_layout.setContentsMargins(10, 10, 10, 10)
         
-        self.lbl_weather_gif = QLabel("预留动态 GIF 展示区\n\n(等待资源接入...)")
-        self.lbl_weather_gif.setFont(QFont("Arial", 14))
-        self.lbl_weather_gif.setStyleSheet("color: #666; border: none;")
-        self.lbl_weather_gif.setAlignment(Qt.AlignCenter)
-        w_right_layout.addWidget(self.lbl_weather_gif)
+        self.lbl_weather_img = QLabel()
+        self.lbl_weather_img.setAlignment(Qt.AlignCenter)
         
-        w_layout.addWidget(weather_right_panel, 3)
+        # 加载 PNG 图片
+        pixmap = QPixmap("resources/weather_station.png")
+        
+        if not pixmap.isNull():
+            # 1. 精确物理可用尺寸 (依据 800x480 分辨率及当前 Margin 倒推)
+            target_w, target_h = 200, 310
+            
+            # 2. 核心要求 A：保持原图比例，锁定高度缩放
+            scaled_pixmap = pixmap.scaledToHeight(target_h, Qt.SmoothTransformation)
+            
+            # 3. 核心要求 B：如果水平方向太长，则从中间截断
+            if scaled_pixmap.width() > target_w:
+                # 计算中心裁剪的起始 X 坐标
+                crop_x = (scaled_pixmap.width() - target_w) // 2
+                # 执行裁剪 copy(x, y, width, height)
+                final_pixmap = scaled_pixmap.copy(crop_x, 0, target_w, target_h)
+            else:
+                final_pixmap = scaled_pixmap
+                
+            self.lbl_weather_img.setPixmap(final_pixmap)
+            self.lbl_weather_img.setScaledContents(False) # 必须关闭自动拉伸，否则会破坏原图比例
+        else:
+            self.lbl_weather_img.setText("图像加载失败\n请检查 resources 目录")
+            self.lbl_weather_img.setStyleSheet("color: #e74c3c; border: none;")
+            self.lbl_weather_img.setFont(QFont("Arial", 12))
+            
+        w_right_layout.addWidget(self.lbl_weather_img)
+        
+        w_layout.addWidget(weather_right_panel, 3) # 保持右侧占比 3
         self.tabs.addTab(tab_weather, "气象数据监测")
         
         self.stack.addWidget(self.page3)
