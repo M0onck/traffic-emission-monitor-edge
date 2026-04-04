@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self.init_page_1_calibration()   # 索引 1：标定步骤
         self.init_page_2_settings()      # 索引 2：设置步骤
         self.init_page_3_monitor()       # 索引 3：运行面板
+        self.init_page_4_weather_calib() # 索引 4：气象站校准页面
 
     def init_page_0_main_menu(self):
         """主调度界面"""
@@ -161,16 +162,17 @@ class MainWindow(QMainWindow):
         
         self.btn_app1 = QPushButton("多源数据采集")
         self.btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_app1.setStyleSheet(btn_style)
 
-        self.btn_app2 = QPushButton("气象站校准 (开发中)")
+        self.btn_app2 = QPushButton("气象设备校准")
         self.btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_app2.setStyleSheet(btn_style)
+
         # 灰色未激活样式
         btn_style2 = btn_style.replace("#2962ff", "#455a64").replace("#0039cb", "#37474f").replace("#00227b", "#263238")
-        self.btn_app2.setStyleSheet(btn_style2)
 
         self.btn_app3 = QPushButton("浏览历史数据 (开发中)")
         self.btn_app3.setFont(QFont("Arial", 14, QFont.Bold))
-        # 灰色未激活样式
         self.btn_app3.setStyleSheet(btn_style2)
 
         self.btn_exit = QPushButton("退出程序")
@@ -384,10 +386,9 @@ class MainWindow(QMainWindow):
         w_grid_layout.setContentsMargins(25, 25, 25, 25)
         w_grid_layout.setSpacing(20)
         
-        # 预留字典供 Controller 实现 1Hz 刷新时调用
-        self.weather_labels = {}
+        # 重命名为 monitor_labels，与校准页区分
+        self.weather_monitor_labels = {}
         
-        # 定义 6 个气象参数及其物理单位
         weather_items = [
             ("温度", "°C"), ("湿度", "%"),
             ("风速", "m/s"), ("风向", "°"),
@@ -398,45 +399,118 @@ class MainWindow(QMainWindow):
         font_w_val = QFont("Consolas", 20, QFont.Bold)
         
         for i, (name, unit) in enumerate(weather_items):
-            row = i // 2  # 0, 0, 1, 1, 2, 2
-            col = i % 2   # 0, 1, 0, 1, 0, 1
-            
+            row = i // 2
+            col = i % 2
             cell_widget = QWidget()
             cell_layout = QVBoxLayout(cell_widget)
             cell_layout.setContentsMargins(0, 0, 0, 0)
             
             lbl_title = QLabel(name)
             lbl_title.setFont(font_w_title)
-            lbl_title.setStyleSheet("color: #8ab4f8; border: none;") # 统一的科技蓝字体
+            lbl_title.setStyleSheet("color: #8ab4f8; border: none;")
             
-            # 初始状态显示占位符和单位
             lbl_val = QLabel(f"-- {unit}")
             lbl_val.setFont(font_w_val)
-            lbl_val.setStyleSheet("color: #00e676; border: none;") # 数据高亮为荧光绿
+            lbl_val.setStyleSheet("color: #00e676; border: none;")
             lbl_val.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             
-            self.weather_labels[name] = lbl_val # 保存句柄，方便后续刷新
+            self.weather_monitor_labels[name] = lbl_val 
             
             cell_layout.addWidget(lbl_title)
             cell_layout.addWidget(lbl_val)
             cell_layout.addStretch()
-            
             w_grid_layout.addWidget(cell_widget, row, col)
             
-        w_layout.addWidget(weather_left_panel, 7) # 左侧数据面板占比 7
+        w_layout.addWidget(weather_left_panel, 7)
+        
+        # === 右侧：预留给动态 GIF 的空白位置 ===
+        weather_right_panel = QFrame()
+        weather_right_panel.setStyleSheet("background-color: #0f111a; border: 2px dashed #444; border-radius: 12px;")
+        w_right_layout = QVBoxLayout(weather_right_panel)
+        
+        self.lbl_weather_gif = QLabel("预留动态 GIF 展示区\n\n(等待资源接入...)")
+        self.lbl_weather_gif.setFont(QFont("Arial", 14))
+        self.lbl_weather_gif.setStyleSheet("color: #666; border: none;")
+        self.lbl_weather_gif.setAlignment(Qt.AlignCenter)
+        w_right_layout.addWidget(self.lbl_weather_gif)
+        
+        w_layout.addWidget(weather_right_panel, 3)
+        self.tabs.addTab(tab_weather, "气象数据监测")
+        
+        self.stack.addWidget(self.page3)
+    
+    def init_page_4_weather_calib(self):
+        """气象站独立校准面板 (Index 4)"""
+        page = QWidget()
+        page.setStyleSheet("background-color: #0f111a;")
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(30)
+        
+        # === 左侧：气象数据看板 + 时间戳 ===
+        left_panel = QFrame()
+        left_panel.setStyleSheet("background-color: #1a1d2d; border: 2px solid #2d324f; border-radius: 12px;")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(25, 25, 25, 25)
+        
+        grid_widget = QWidget()
+        grid_layout = QGridLayout(grid_widget)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(20)
+        
+        self.weather_calib_labels = {}
+        weather_items = [
+            ("温度", "°C"), ("湿度", "%"),
+            ("风速", "m/s"), ("风向", "°"),
+            ("PM2.5", "μg/m³"), ("PM10", "μg/m³")
+        ]
+        font_w_title = QFont("Arial", 14)
+        font_w_val = QFont("Consolas", 20, QFont.Bold)
+        
+        for i, (name, unit) in enumerate(weather_items):
+            row = i // 2; col = i % 2
+            cell_widget = QWidget()
+            cell_layout = QVBoxLayout(cell_widget)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            
+            lbl_title = QLabel(name)
+            lbl_title.setFont(font_w_title)
+            lbl_title.setStyleSheet("color: #8ab4f8; border: none;")
+            lbl_val = QLabel(f"-- {unit}")
+            lbl_val.setFont(font_w_val)
+            lbl_val.setStyleSheet("color: #00e676; border: none;")
+            self.weather_calib_labels[name] = lbl_val
+            
+            cell_layout.addWidget(lbl_title)
+            cell_layout.addWidget(lbl_val)
+            grid_layout.addWidget(cell_widget, row, col)
+            
+        left_layout.addWidget(grid_widget)
+        
+        # 底部分隔线与时间戳
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("border: 1px solid #2d324f;")
+        left_layout.addSpacing(15)
+        left_layout.addWidget(line)
+        left_layout.addSpacing(15)
+        
+        self.lbl_calib_timestamp = QLabel("气象设备时间戳: 等待同步...")
+        self.lbl_calib_timestamp.setFont(QFont("Consolas", 14, QFont.Bold))
+        self.lbl_calib_timestamp.setStyleSheet("color: #f39c12; border: none;")
+        self.lbl_calib_timestamp.setAlignment(Qt.AlignCenter)
+        left_layout.addWidget(self.lbl_calib_timestamp)
+        
+        layout.addWidget(left_panel, 6)
         
         # === 右侧：控制按钮 ===
-        weather_right_panel = QFrame()
-        w_right_layout = QVBoxLayout(weather_right_panel)
-        w_right_layout.setAlignment(Qt.AlignVCenter)
-        w_right_layout.setSpacing(30)
+        right_panel = QFrame()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setAlignment(Qt.AlignVCenter)
+        right_layout.setSpacing(30)
         
-        # 复用你之前的按钮样式风格
         btn_style = """
-            QPushButton {
-                background-color: #2962ff; color: white; border: none; border-radius: 8px;
-                padding: 20px;
-            }
+            QPushButton { background-color: #2962ff; color: white; border: none; border-radius: 8px; padding: 20px; }
             QPushButton:hover { background-color: #0039cb; }
             QPushButton:pressed { background-color: #00227b; }
         """
@@ -450,16 +524,12 @@ class MainWindow(QMainWindow):
         self.btn_zero_wind.setFont(btn_font)
         self.btn_zero_wind.setStyleSheet(btn_style)
         
-        w_right_layout.addWidget(self.btn_sync_clock)
-        w_right_layout.addWidget(self.btn_zero_wind)
+        right_layout.addWidget(self.btn_sync_clock)
+        right_layout.addWidget(self.btn_zero_wind)
         
-        w_layout.addWidget(weather_right_panel, 3) # 右侧按钮区域占比 3
-        
-        # 将新页面加入 Tabs
-        self.tabs.addTab(tab_weather, "气象数据监测")
-        
-        self.stack.addWidget(self.page3)
-    
+        layout.addWidget(right_panel, 4)
+        self.stack.addWidget(page)
+
     def closeEvent(self, event):
         """窗口关闭时，转交 Controller 处理清理工作"""
         if hasattr(self, 'close_callback') and self.close_callback:

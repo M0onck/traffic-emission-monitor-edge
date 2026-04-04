@@ -35,6 +35,7 @@ class MainController:
         self.view.btn_prev.clicked.connect(self.prev_page)
         self.view.btn_next.clicked.connect(self.next_page)
         self.view.btn_app1.clicked.connect(self.route_app1_click)
+        self.view.btn_app2.clicked.connect(self.route_app2_click)
         self.view.btn_exit.clicked.connect(self.view.close)
     
     def route_app1_click(self):
@@ -46,6 +47,10 @@ class MainController:
             # 如果尚未运行，按照正常流程进入第一步标定环节 (Index 1)
             self.enter_app(1)
     
+    def route_app2_click(self):
+        """跳转至气象站校准页面 (Index 4)"""
+        self.enter_app(4)
+
     def enter_app(self, target_idx):
         """进入具体功能的槽函数"""
         self.view.stack.setCurrentIndex(target_idx)
@@ -99,7 +104,7 @@ class MainController:
             self.view.btn_next.setVisible(True)
             self.view.btn_next.setText(" 开 始 ")
             self.view.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
-        elif idx == 3:
+        elif idx == 3 or idx == 4:
             self.view.btn_next.setVisible(False) 
             self.view.btn_prev.setVisible(False)
     
