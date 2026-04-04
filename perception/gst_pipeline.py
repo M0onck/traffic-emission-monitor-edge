@@ -15,9 +15,6 @@ class GstPipelineManager:
         self.hef_path = config.get("hef_path", "resources/yolov8m.hef")
         self.post_so_path = config.get("post_so_path", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
         
-        self.out_w = 1280
-        self.out_h = 720
-        
         self.pipeline_string = self._build_pipeline()
         self.pipeline = Gst.parse_launch(self.pipeline_string)
         
@@ -30,8 +27,7 @@ class GstPipelineManager:
         abs_path = os.path.abspath(self.video_path)
         pipeline = (
             f"filesrc location={abs_path} ! decodebin ! video/x-raw ! "
-            f"videoconvert ! video/x-raw, format=NV12 ! "
-            f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! tee name=t "
+            f"videoconvert ! video/x-raw, format=NV12 ! tee name=t "
             
             # --- 视频画面分支 ---
             f"t. ! queue max-size-buffers=30 ! "
@@ -82,12 +78,21 @@ class GstPipelineManager:
         try:
             success, map_info = buffer_video.map(Gst.MapFlags.READ)
             if not success: return None, None
-            expected_size = self.out_w * self.out_h * 3
+            
+            # 动态获取视频的真实宽高
+            caps = sample_video.get_caps()
+            struct = caps.get_structure(0)
+            actual_w = struct.get_value("width")
+            actual_h = struct.get_value("height")
+            
+            # 使用动态获取的宽高计算预期大小
+            expected_size = actual_w * actual_h * 3
             if map_info.size < expected_size:
                 buffer_video.unmap(map_info)
                 return None, None
 
-            frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
+            # 使用动态宽高重塑 numpy 数组
+            frame = np.ndarray((actual_h, actual_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
             buffer_video.unmap(map_info)
 
             return frame, buffer_meta
