@@ -136,26 +136,27 @@ class DatabaseManager:
         except Exception as e:
             print(f"[Database Error] Batch insert failed: {e}")
 
-    def insert_macro(self, tid: int, record: dict, final_type_str: str, final_plate: str):
+    def insert_macro(self, tid: int, record: dict, vehicle_type: str, energy_type: str, dominant_opmodes: list):
+        """
+        向宏观表写入精简后的车辆统计数据
+        :param dominant_opmodes: list，例如 ["Cruise", "Braking"]
+        """
         # 计算平均速度
         speed_count = record.get('speed_count', 0)
         avg_speed = record.get('speed_sum', 0.0) / speed_count if speed_count > 0 else 0.0
         
-        # 直接读取引擎层结算好的最终投票颜色
-        plate_color = record.get('final_plate_color', 'Unknown')
+        # 将工况数组序列化为 JSON 字符串
+        opmodes_json = json.dumps(dominant_opmodes)
 
-        # 全面类型强转，并修复 final_type_str 未被使用的逻辑 Bug
+        # 构建与 queries.sql 对应的参数元组
         params = (
-            int(tid),                                    # INTEGER PRIMARY KEY 必须是纯正的 int
-            int(record.get('first_frame', 0)),
-            int(record.get('last_seen_frame', 0)),
-            int(record.get('class_id', -1)),
-            str(final_type_str),                         # 使用传入的准确车型，替换掉之前的 get('class_name')
-            str(final_plate),
-            str(plate_color),
-            float(record.get('max_speed', 0.0)),
+            int(tid),
+            str(vehicle_type),
+            str(energy_type),
+            float(record.get('first_time', 0.0)),     # 依赖 repository.py 中的 first_time
+            float(record.get('last_seen_time', 0.0)), # 依赖 repository.py 中的 last_seen_time
             float(avg_speed),
-            float(record.get('total_distance_m', 0.0))
+            opmodes_json
         )
         
         sql = self.queries.get('insert_macro')

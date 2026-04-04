@@ -9,6 +9,8 @@ from infra.time.ntp_sync import TimeSynchronizer
 from domain.physics.spatial_analyzer import SpatialAnalyzer
 from domain.physics.kinematics_smoother import KinematicsSmoother
 from domain.vehicle.physical_filter import PhysicalVehicleFilter
+from domain.physics.vsp_calculator import VSPCalculator
+from domain.physics.opmode_mapper import OpModeMapper
 from perception.vision_pipeline import VisionPipeline
 
 class TrafficMonitorEngine:
@@ -67,6 +69,10 @@ class TrafficMonitorEngine:
 
         # 从组件字典中获取热成像实例
         self.thermal_cam = components.get('thermal_cam')
+
+        # 初始化 VSP 和 工况计算器
+        self.vsp_calc = VSPCalculator(getattr(config, 'VSP_CONFIG', {}))
+        self.opmode_mapper = OpModeMapper(duration_threshold=1.0)
 
     def run(self):
         """
@@ -128,7 +134,7 @@ class TrafficMonitorEngine:
                     # 给 video_info 赋值，打破 None 状态，保证此代码块只运行一次
                     video_info = True
 
-                    # 视频录制相关逻辑
+                    # 视频录制相关逻辑（已废弃，若想重新启用，应换用GStreamer管道分流）
                     # video_info = sv.VideoInfo(width=w, height=h, fps=self.cfg.FPS)
                     # sink = sv.VideoSink(self.cfg.TARGET_VIDEO_PATH, video_info=video_info)
                     # sink.__enter__()
@@ -384,13 +390,30 @@ class TrafficMonitorEngine:
                     voted_color = max(set(colors), key=colors.count)
             
             record['final_plate_color'] = voted_color
+
+            # 将车牌颜色映射为能源类型 (新能源绿牌为 Electric，其他为 Normal)
+            energy_type = "Electric" if voted_color == 'green' else "Normal"
+            record['energy_type'] = energy_type
             
             # Step 2. 微观时空轨迹结算
             if 'trajectory' in record:
                 self._calculate_and_save_history(tid, record, final_type_str)
 
             # Step 3. 宏观数据入库
-            self.db.insert_macro(tid, record, final_type_str, final_plate)
+            # 从 record 中安全获取刚算好的工况，如果因为轨迹太短没算出来就给兜底值
+            dominant_opmodes = record.get('dominant_opmodes', ["Unknown"])
+            
+            # 提取基础车型用于存入数据库 (比如 "LDV-Gasoline" -> "LDV")
+            base_vehicle_type = final_type_str.split('-')[0] if final_type_str else "LDV"
+
+            # 调用修改后的数据库插入方法
+            self.db.insert_macro(
+                tid=tid, 
+                record=record, 
+                vehicle_type=base_vehicle_type, 
+                energy_type=energy_type, 
+                dominant_opmodes=dominant_opmodes
+            )
     
     def _calculate_and_save_history(self, tid, record, final_type_str):
         trajectory = record.get('trajectory', [])
@@ -403,20 +426,39 @@ class TrafficMonitorEngine:
         # 直接调用领域服务，一行代码完成所有降维、平滑与求导逻辑 (运动学职责)
         sm_x, sm_y, speeds, accels = self.smoother.process_1d(timestamps, raw_x, raw_y)
 
-        # 增加一个列表，用于收集平滑过滤后的“纯净物理坐标”
-        pts_phys_clean = []
+        pts_phys_clean = [] # 用于收集平滑过滤后的物理坐标
+        vsp_data_for_mapper = []  # 用于收集 OpModeMapper 需要的时序数据
         
-        # 覆盖原始轨迹并暴露给 UI Dashboard 展示
+        # 覆盖原始轨迹并计算 VSP
         for i in range(len(trajectory)):
+            # 1. 基础物理量赋值
             trajectory[i]['raw_x'] = float(sm_x[i])
             trajectory[i]['raw_y'] = float(sm_y[i])
             trajectory[i]['speed'] = float(speeds[i])
             trajectory[i]['accel'] = float(accels[i])
             
-            # 收集坐标
+            # 2. 计算 VSP
+            vsp_val = self.vsp_calc.calculate(
+                v_ms=float(speeds[i]),
+                a_ms2=float(accels[i]),
+                vehicle_type=final_type_str.split('-')[0] 
+            )
+            trajectory[i]['vsp'] = vsp_val # 顺便存入轨迹字典，方便UI预览或除错
+
+            # 3. 收集坐标
             pts_phys_clean.append([float(sm_x[i]), float(sm_y[i])])
 
-        record['trajectory'] = trajectory 
+            # 4. 按 opmode_mapper 需要的格式收集时序数据
+            vsp_data_for_mapper.append({
+                'timestamp': float(timestamps[i]),
+                'v_ms': float(speeds[i]),
+                'vsp': vsp_val
+            })
+
+        record['trajectory'] = trajectory
+
+        # 批处理整条平滑轨迹，提取主导工况，并将结果直接挂载到 record 字典上
+        record['dominant_opmodes'] = self.opmode_mapper.extract_dominant_opmodes(vsp_data_for_mapper)
 
         # 将平滑后的纯净坐标交给 SpatialAnalyzer，计算纯几何距离 (空间职责)
         record['total_distance_m'] = self.spatial.calculate_geometric_distance(pts_phys_clean)

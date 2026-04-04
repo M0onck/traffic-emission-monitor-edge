@@ -1,8 +1,8 @@
 -- name: insert_macro
 INSERT OR REPLACE INTO vehicle_macro (
-    tracker_id, first_frame, last_seen_frame, class_id, class_name,
-    plate_number, plate_color, max_speed, average_speed, total_distance_m
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    tracker_id, vehicle_type, energy_type, entry_time, exit_time,
+    average_speed, dominant_opmodes
+) VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: insert_micro
 INSERT INTO vehicle_micro (
