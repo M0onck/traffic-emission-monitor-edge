@@ -176,9 +176,10 @@ class DatabaseManager:
         # 强制将内存中还没写入的缓冲刷入磁盘，保证查到最新数据
         self.flush_micro_buffer() 
         
+        # 宏观表查询语句
         query = """
-            SELECT tracker_id, class_name, plate_number, plate_color, 
-                ROUND(max_speed, 2), ROUND(average_speed, 2), ROUND(total_distance_m, 2)
+            SELECT tracker_id, vehicle_type, energy_type, 
+                   entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes
             FROM vehicle_macro 
             ORDER BY tracker_id DESC 
             LIMIT ?

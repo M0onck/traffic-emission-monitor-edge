@@ -582,7 +582,10 @@ class MainWindow(QMainWindow):
         # 数据库表格控件
         self.db_table = QTableWidget()
         self.db_table.setColumnCount(7)
-        self.db_table.setHorizontalHeaderLabels(["目标 ID", "车型", "车牌", "颜色", "最高车速(m/s)", "平均车速(m/s)", "行驶距离(m)"])
+        # 【修改点】更新表头为重构后的字段定义
+        self.db_table.setHorizontalHeaderLabels([
+            "目标 ID", "车型(LDV/HDV)", "能源类型", "入场时间", "离场时间", "平均车速(m/s)", "主导工况"
+        ])
 
         # 表格样式调整，适应深色主题
         self.db_table.setStyleSheet("""

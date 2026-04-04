@@ -1,4 +1,5 @@
 import time
+import json
 import cv2
 import numpy as np
 from PyQt5.QtCore import QTimer, Qt
@@ -152,7 +153,7 @@ class MainController:
     def update_nav_buttons(self):
         idx = self.view.stack.currentIndex()
         
-        # 核心逻辑：如果在 BIOS 界面 (0)，直接隐藏底部的所有控制按钮
+        # 如果在 BIOS 界面 (0)，直接隐藏底部的所有控制按钮
         self.view.nav_widget.setVisible(idx > 0)
         if idx == 0:
             return
@@ -340,8 +341,25 @@ class MainController:
             for row_idx, row_data in enumerate(records):
                 table.insertRow(row_idx)
                 for col_idx, col_value in enumerate(row_data):
-                    # 处理空值和未知标签
                     val_str = str(col_value) if col_value is not None else "--"
+                    
+                    # 格式化入场与离场时间戳 (第 4, 5 列，对应索引 3, 4)
+                    if col_idx in [3, 4] and col_value is not None:
+                        try:
+                            dt = datetime.fromtimestamp(float(col_value))
+                            val_str = dt.strftime('%H:%M:%S.%f')[:-4] # 转换为 14:35:12.55 格式
+                        except Exception:
+                            pass
+                            
+                    # 格式化工况 JSON 数组 (第 7 列，对应索引 6)
+                    if col_idx == 6 and col_value is not None:
+                        try:
+                            # 将 '["Cruise", "Acceleration"]' 渲染为 'Cruise, Acceleration'
+                            opmodes_list = json.loads(col_value)
+                            val_str = ", ".join(opmodes_list)
+                        except Exception:
+                            pass
+
                     item = QTableWidgetItem(val_str)
                     item.setTextAlignment(Qt.AlignCenter)
                     table.setItem(row_idx, col_idx, item)
