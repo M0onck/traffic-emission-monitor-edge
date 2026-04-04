@@ -245,17 +245,10 @@ class TrafficMonitorEngine:
                     )
 
         # --- Step 5: 可视化渲染 ---
-        # 构建掩码：只保留那些在历史记录中成功识别过车牌的车辆
-        valid_mask = []
-        for tid in detections.tracker_id:
-            rec = self.registry.get_record(tid)
-            # 如果存在记录且 plate_history 列表不为空，则为 True
-            valid_mask.append(rec is not None and len(rec.get('plate_history', [])) > 0)
+        # 传入所有追踪到的目标
+        filtered_detections = detections
         
-        # 将布尔列表转换为 numpy 数组，过滤掉无车牌的检测框
-        filtered_detections = detections[np.array(valid_mask, dtype=bool)]
-        
-        # 只为过滤后的真实车辆生成 UI 标签数据
+        # 为真实车辆和正在识别中的车辆生成 UI 标签数据
         label_data_list = self._prepare_labels(filtered_detections)
         
         # 传递过滤后的数据给视觉渲染器
@@ -425,45 +418,43 @@ class TrafficMonitorEngine:
 
     def _prepare_labels(self, detections, landmarks_dict=None):
         """
-        [修改版 UI 数据适配] 专为极简显示设计 + 动态车牌锚定
+        [UI 数据适配] 专为极简显示设计 + 动态车牌锚定
         """
         labels = []
         # 注意这里加了 enumerate(zip(...)) 以便获取当前车辆的索引 i
         for i, (tid, raw_class_id) in enumerate(zip(detections.tracker_id, detections.class_id)):
             record = self.registry.get_record(tid)
-            voted_class_id = record['class_id'] if record else int(raw_class_id)
+            if not record:
+                continue # 空记录防护
 
+            voted_class_id = record['class_id'] if record else int(raw_class_id)
             data = LabelData(track_id=tid, class_id=voted_class_id)
             
-            # --- 1. 调用领域层双分体系获取标准的 HDV/LDV 类型 ---
-            # 尝试获取当前的实时车牌颜色，用于辅助能源/车型分类
-            plate_info = self.plate_cache.get(tid)
-            current_color = plate_info['color'] if plate_info else "Unknown"
+            has_plate = len(record.get('plate_history', [])) > 0
             
-            # 使用 domain/vehicle/classifier.py 中的核心分类逻辑
-            # 返回值示例： ("blue", "LDV-Gasoline") 或 ("green", "HDV-Electric")
-            _, final_type = self.classifier.resolve_type(
-                voted_class_id, 
-                plate_color_override=current_color
-            )
-            
-            # 将解析出的标准格式赋值给显示类型
-            data.display_type = final_type
+            if has_plate:
+                # 已经有车牌记录，执行标准双分体系
+                plate_info = self.plate_cache.get(tid)
+                current_color = plate_info['color'] if plate_info else "Unknown"
+                _, final_type = self.classifier.resolve_type(
+                    voted_class_id, 
+                    plate_color_override=current_color
+                )
+                data.display_type = final_type
                 
-            # --- 2. 动态计算车牌框 (相对坐标映射核心逻辑) ---
-            plate_info = self.plate_cache.get(tid)
-            if plate_info:
-                data.plate_color = plate_info['color']
-                
-                # 获取该车在当前这刚刚到来的一帧里的最新检测框
-                x1, y1, x2, y2 = detections.xyxy[i]
-                vw = x2 - x1
-                vh = y2 - y1
-                
-                # 将 0~1 的相对坐标放大到当前车身尺寸，并加上车身的左上角偏移
-                rel_lms = plate_info['rel_landmarks']
-                abs_lms = rel_lms * np.array([vw, vh]) + np.array([x1, y1])
-                data.plate_points = abs_lms
+                # 动态计算车牌框
+                if plate_info:
+                    data.plate_color = plate_info['color']
+                    x1, y1, x2, y2 = detections.xyxy[i]
+                    vw = x2 - x1
+                    vh = y2 - y1
+                    rel_lms = plate_info['rel_landmarks']
+                    abs_lms = rel_lms * np.array([vw, vh]) + np.array([x1, y1])
+                    data.plate_points = abs_lms
+            else:
+                # 尚未获得 OCR 结果，视觉降级为“等待识别”状态
+                data.display_type = "Pending..."
+                data.plate_color = "gray"
             
             labels.append(data)
             

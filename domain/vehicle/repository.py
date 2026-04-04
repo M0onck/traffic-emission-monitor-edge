@@ -8,7 +8,7 @@ class VehicleRegistry:
     负责维护所有在场车辆的生命周期、状态累积和轨迹记录。
     并不直接处理图像，而是处理由 MonitorEngine 传入的数据对象。
     """
-    def __init__(self, target_fps: int = 30, min_survival_sec: float = 1.0, exit_timeout_sec: float = 1.0,
+    def __init__(self, target_fps: int = 30, min_survival_sec: float = 1.0, exit_timeout_sec: float = 3.0,
                  min_valid_pts: int = 15, min_moving_dist: float = 2.0):
         self.records = {}
         self.target_fps = target_fps

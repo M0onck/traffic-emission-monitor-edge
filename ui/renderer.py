@@ -73,11 +73,18 @@ class Visualizer:
             # --- 解析类型与双分类二元颜色 ---
             v_type = data.display_type if data and data.display_type else "LDV"
             
+            # --- 分配视觉样式 ---
+            # 若还在检测具体类型，使用灰色标注
             # 只要带有 HDV (重型车) 标志，就用橙色高亮显示；否则用亮青色表示普通轻型车
-            if "HDV" in v_type:
-                box_color = (0, 128, 255)  # 橙色 (OpenCV 是 BGR 格式)
+            if v_type == "Pending...":
+                box_color = (128, 128, 128)  # 灰色：表示系统正在追踪并排队等待 OCR
+                short_type = "Detecting"
+            elif "HDV" in v_type:
+                box_color = (0, 128, 255)    # 橙色
+                short_type = v_type.split('-')[0]
             else:
-                box_color = (255, 255, 0)  # 亮青色 (Cyan)
+                box_color = (255, 255, 0)    # 亮青色
+                short_type = v_type.split('-')[0]
             
             # 将 "LDV-Gasoline" 按照 "-" 切分，只取第一部分的 "LDV"
             short_type = v_type.split('-')[0]
