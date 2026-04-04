@@ -6,19 +6,23 @@ import queue
 from perception.plate_classifier.core.multitask_detect import letter_box, post_precessing
 
 class AsyncPlateRecognizer:
-    def __init__(self, y5fu_onnx_path, litemodel_onnx_path):
+    def __init__(self, y5fu_onnx_path, litemodel_onnx_path, num_workers=2):
         ctx = mp.get_context('spawn')
         self.task_queue = ctx.Queue(maxsize=30)
         self.result_queue = ctx.Queue()
+        self.workers = [] # 保存子进程的引用
 
-        print(">>> [AsyncRecognizer] 启动独立 Spawn 进程 ONNX 引擎...")
+        print(f">>> [AsyncRecognizer] 启动 {num_workers} 个独立 Spawn 进程 ONNX 引擎...")
 
-        self.worker_process = ctx.Process(
-            target=self._worker_loop,
-            args=(self.task_queue, self.result_queue, y5fu_onnx_path, litemodel_onnx_path),
-            daemon=True
-        )
-        self.worker_process.start()
+        # 启动多个并行的 Worker 进程
+        for i in range(num_workers):
+            worker_process = ctx.Process(
+                target=self._worker_loop,
+                args=(self.task_queue, self.result_queue, y5fu_onnx_path, litemodel_onnx_path, i),
+                daemon=True
+            )
+            worker_process.start()
+            self.workers.append(worker_process)
 
     def push_task(self, track_id, vehicle_crop):
         if not self.task_queue.full():
@@ -39,7 +43,7 @@ class AsyncPlateRecognizer:
         return results
 
     @staticmethod
-    def _worker_loop(task_queue, result_queue, y5fu_path, lite_path):
+    def _worker_loop(task_queue, result_queue, y5fu_path, lite_path, worker_id):
         sess_options = ort.SessionOptions()
         sess_options.intra_op_num_threads = 1
         sess_options.inter_op_num_threads = 1
