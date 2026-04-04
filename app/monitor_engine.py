@@ -284,9 +284,18 @@ class TrafficMonitorEngine:
             # 使用扩充后的坐标进行裁切
             vehicle_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
 
+            if vehicle_crop.size > 0:
+                # 转换为 LAB 色彩空间，只对亮度通道(L)进行均衡化，不改变颜色
+                lab = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                cl = clahe.apply(l)
+                limg = cv2.merge((cl,a,b))
+                enhanced_crop = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+
             # 只要裁剪出来的图片有效，就投递给 OCR 工作进程
             if vehicle_crop.size > 0:
-                if self.plate_worker.push_task(tid, vehicle_crop):
+                if self.plate_worker.push_task(tid, enhanced_crop):
                     self.plate_retry[tid] = frame_id
 
     def _collect_plate_results(self):
