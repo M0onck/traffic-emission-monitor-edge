@@ -168,6 +168,27 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'insert_macro' 未定义")
 
+    def fetch_recent_macro_records(self, limit: int = 50) -> List[tuple]:
+        """
+        获取最近写入的宏观车辆记录，限制条数以保护边缘设备内存
+        """
+        # 强制将内存中还没写入的缓冲刷入磁盘，保证查到最新数据
+        self.flush_micro_buffer() 
+        
+        query = """
+            SELECT tid, class_name, plate_number, plate_color, 
+                ROUND(max_speed, 2), ROUND(avg_speed, 2), ROUND(total_distance, 2)
+            FROM vehicle_macro 
+            ORDER BY tid DESC 
+            LIMIT ?
+        """
+        try:
+            self.cursor.execute(query, (limit,))
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"[Database Error] 查询宏观数据失败: {e}")
+            return []
+
     def close(self):
         self.flush_micro_buffer()
         self.conn.close()

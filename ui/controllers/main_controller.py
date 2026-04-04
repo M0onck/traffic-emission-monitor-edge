@@ -2,11 +2,12 @@ import time
 import cv2
 import numpy as np
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QTableWidgetItem
 from PyQt5.QtGui import QImage, QPixmap
 from datetime import datetime
 from ui.workers.engine_worker import EngineWorker
 from infra.sys.sys_monitor import SysMonitor
+from infra.store.sqlite_manager import DatabaseManager
 from perception.sensor.weather_station import WeatherGateway
 
 class MainController:
@@ -46,11 +47,15 @@ class MainController:
         self.view.btn_next.clicked.connect(self.next_page)
         self.view.btn_app1.clicked.connect(self.route_app1_click)
         self.view.btn_app2.clicked.connect(self.route_app2_click)
+        self.view.btn_app3.clicked.connect(self.route_app3_click)
         self.view.btn_exit.clicked.connect(self.view.close)
 
         # 绑定气象站的校准按钮事件
         self.view.btn_sync_clock.clicked.connect(self.handle_sync_clock)
         self.view.btn_zero_wind.clicked.connect(self.handle_zero_wind)
+
+        # 数据表单的刷新按钮绑定
+        self.view.btn_refresh_db.clicked.connect(self.handle_db_refresh)
     
     def handle_sync_clock(self):
         if not self.weather_gw:
@@ -106,6 +111,12 @@ class MainController:
     def route_app2_click(self):
         """跳转至气象站校准页面 (Index 4)"""
         self.enter_app(4)
+        # TODO 进入时自动对齐时间
+
+    def route_app3_click(self):
+        """跳转至历史数据浏览页面 (Index 5)"""
+        self.enter_app(5)
+        self.handle_db_refresh() # 进入时自动拉取一次最新数据
 
     def enter_app(self, target_idx):
         """进入具体功能的槽函数"""
@@ -160,7 +171,7 @@ class MainController:
             self.view.btn_next.setVisible(True)
             self.view.btn_next.setText(" 开 始 ")
             self.view.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
-        elif idx == 3 or idx == 4:
+        elif idx in [3, 4, 5]:
             self.view.btn_next.setVisible(False) 
             self.view.btn_prev.setVisible(False)
     
@@ -311,6 +322,35 @@ class MainController:
                 self.view.lbl_calib_timestamp.setStyleSheet("color: #00e676; border: none;") # 上线变绿
             else:
                 self.view.lbl_calib_timestamp.setStyleSheet("color: #f39c12; border: none;") # 离线变黄
+
+    def handle_db_refresh(self):
+        """手动刷新 SQLite 数据并渲染到 QTableWidget"""
+        self.view.btn_refresh_db.setText(" 读取中... ")
+        self.view.btn_refresh_db.repaint() # 强制界面重绘，给予用户反馈
+
+        try:
+            # 实例化 DB Manager 进行一次性查询
+            db = DatabaseManager()
+            records = db.fetch_recent_macro_records(limit=50) # 读取最新的 50 条记录
+            db.close()
+
+            table = self.view.db_table
+            table.setRowCount(0) # 清空旧数据
+
+            for row_idx, row_data in enumerate(records):
+                table.insertRow(row_idx)
+                for col_idx, col_value in enumerate(row_data):
+                    # 处理空值和未知标签
+                    val_str = str(col_value) if col_value is not None else "--"
+                    item = QTableWidgetItem(val_str)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    table.setItem(row_idx, col_idx, item)
+
+        except Exception as e:
+            print(f"数据表格刷新失败: {e}")
+
+        finally:
+            self.view.btn_refresh_db.setText(" 刷新数据 ")
 
     def update_video_frame(self, rgb_img):
         h, w, ch = rgb_img.shape

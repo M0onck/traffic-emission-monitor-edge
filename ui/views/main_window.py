@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QStackedWidget, QTabWidget, 
-                             QGridLayout, QFrame)
+                             QGridLayout, QFrame, QTableWidget, QTableWidgetItem, 
+                             QHeaderView)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QPixmap
 
@@ -72,6 +73,7 @@ class MainWindow(QMainWindow):
         self.init_page_2_settings()      # 索引 2：设置步骤
         self.init_page_3_monitor()       # 索引 3：运行面板
         self.init_page_4_weather_calib() # 索引 4：气象站校准页面
+        self.init_page_5_db_browser()    # 索引 5：数据库浏览页面
 
     def init_page_0_main_menu(self):
         """主调度界面"""
@@ -168,12 +170,9 @@ class MainWindow(QMainWindow):
         self.btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
         self.btn_app2.setStyleSheet(btn_style)
 
-        # 灰色未激活样式
-        btn_style2 = btn_style.replace("#2962ff", "#455a64").replace("#0039cb", "#37474f").replace("#00227b", "#263238")
-
-        self.btn_app3 = QPushButton("浏览历史数据 (开发中)")
+        self.btn_app3 = QPushButton("浏览历史数据")
         self.btn_app3.setFont(QFont("Arial", 14, QFont.Bold))
-        self.btn_app3.setStyleSheet(btn_style2)
+        self.btn_app3.setStyleSheet(btn_style)
 
         self.btn_exit = QPushButton("退出程序")
         self.btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
@@ -555,6 +554,46 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.btn_zero_wind)
         
         layout.addWidget(right_panel, 4)
+        self.stack.addWidget(page)
+
+    def init_page_5_db_browser(self):
+        """历史数据浏览面板 (Index 5)"""
+        page = QWidget()
+        page.setStyleSheet("background-color: #0f111a;")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+
+        # 顶部控制栏
+        top_layout = QHBoxLayout()
+        title = QLabel("车辆宏观排放数据台账 (vehicle_macro)")
+        title.setFont(QFont("Arial", 16, QFont.Bold))
+        title.setStyleSheet("color: #ffffff; border: none;")
+
+        self.btn_refresh_db = QPushButton(" 刷新数据 ")
+        self.btn_refresh_db.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_refresh_db.setStyleSheet("background-color: #f39c12; color: white; border-radius: 5px; padding: 10px;")
+
+        top_layout.addWidget(title)
+        top_layout.addStretch()
+        top_layout.addWidget(self.btn_refresh_db)
+        layout.addLayout(top_layout)
+        layout.addSpacing(15)
+
+        # 数据库表格控件
+        self.db_table = QTableWidget()
+        self.db_table.setColumnCount(7)
+        self.db_table.setHorizontalHeaderLabels(["目标 ID", "车型", "车牌", "颜色", "最高车速(m/s)", "平均车速(m/s)", "行驶距离(m)"])
+
+        # 表格样式调整，适应深色主题
+        self.db_table.setStyleSheet("""
+            QTableWidget { background-color: #1a1d2d; color: #ffffff; gridline-color: #2d324f; border: 1px solid #2d324f; }
+            QHeaderView::section { background-color: #2962ff; color: white; font-weight: bold; padding: 5px; border: 1px solid #2d324f; }
+        """)
+        self.db_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.db_table.setEditTriggers(QTableWidget.NoEditTriggers) # 禁止双击编辑
+        self.db_table.setSelectionBehavior(QTableWidget.SelectRows) # 整行选中
+
+        layout.addWidget(self.db_table)
         self.stack.addWidget(page)
 
     def closeEvent(self, event):
