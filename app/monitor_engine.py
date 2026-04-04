@@ -495,7 +495,10 @@ class TrafficMonitorEngine:
                     abs_lms = rel_lms * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
                     data.plate_points = abs_lms
             else:
-                data.display_type = "Pending..."
+                # 即使没有车牌，也调用分类器获取基于 YOLO 尺寸的默认分类
+                _, default_type = self.classifier.resolve_type(voted_class_id)
+                # 加上 "..." 后缀，让用户/调试者知道这是由于无车牌触发的兜底推断
+                data.display_type = f"{default_type}..." 
                 data.plate_color = "gray"
             
             labels.append(data)
