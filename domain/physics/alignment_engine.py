@@ -109,19 +109,19 @@ class DelayedAlignmentEngine:
                 x_sum, pt_count = 0.0, 0
                 
                 # 在时间窗内对单车高频VSP进行数值积分
-                traj.sort(key=lambda p: p.get('t', 0))
+                traj.sort(key=lambda p: p.get('timestamp', 0))
                 for i in range(1, len(traj)):
                     p_prev = traj[i-1]
                     p = traj[i]
-                    t_p = p.get('t', 0.0)
+                    t_p = p.get('timestamp', 0.0)
                     
                     if t_start <= t_p <= t_align:
-                        dt = t_p - p_prev.get('t', 0.0)
+                        dt = t_p - p_prev.get('timestamp', 0.0)
                         if 0 < dt < 0.5: # 剔除由于追踪中断造成的异常大跨步时间
                             vsp = p.get('vsp', 0.0)
                             e_point = vsp * m_i * dt
                             e_i_vehicle += e_point
-                            x_sum += p.get('x', 0.0)
+                            x_sum += p.get('raw_x', 0.0)
                             pt_count += 1
                             
                 if e_i_vehicle > 0 and pt_count > 0:
