@@ -24,3 +24,11 @@ INSERT INTO Veh_Sum (
     session_id, tracker_id, vehicle_type, energy_type, 
     entry_time, exit_time, average_speed, dominant_opmodes
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: insert_aligned_dataset
+INSERT INTO Aligned_Dataset (
+    session_id, aligned_timestamp, 
+    pmc_raw, pmc_baseline, delta_c_flux, 
+    e_traffic, 
+    d_trans, w_cross, delta_tv
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);

@@ -22,13 +22,9 @@ class DatabaseManager:
         
         # 1. 初始化表结构 (DDL)
         self._init_schema()
-        self._migrate_old_data() # 清洗历史数据
         
         # 2. 加载查询模板 (DML)
         self.queries = self._load_queries()
-        
-        self.micro_buffer: List[tuple] = []
-        self.BATCH_SIZE = 100 
 
     def _init_schema(self):
         """加载并执行 schema.sql"""
@@ -80,32 +76,6 @@ class DatabaseManager:
             print(f"[Database Error] 解析 queries.sql 失败: {e}")
             
         return queries
-
-    def _migrate_old_data(self):
-        """
-        [数据迁移] 将历史遗留的 YOLO 英文类别强制清洗为排放大类
-        旧数据：car, bus, truck (或大写)
-        新数据映射：LDV-Gasoline, HDV-Diesel
-        """
-        try:
-            # 1. 将 bus 和 truck 替换为重型柴油车 (HDV-Diesel)
-            self.cursor.execute("""
-                UPDATE vehicle_macro 
-                SET class_name = 'HDV-Diesel' 
-                WHERE class_name IN ('bus', 'truck', 'Bus', 'Truck')
-            """)
-            
-            # 2. 将 car 替换为轻型燃油车 (LDV-Gasoline)
-            self.cursor.execute("""
-                UPDATE vehicle_macro 
-                SET class_name = 'LDV-Gasoline' 
-                WHERE class_name IN ('car', 'Car')
-            """)
-            
-            self.conn.commit()
-            print(">>> [Database] 历史数据校验与清洗完成 (Car->LDV, Bus/Truck->HDV)")
-        except sqlite3.Error as e:
-            print(f"[Database Error] 历史数据迁移失败: {e}")
 
     def create_session(self, session_id: str, start_time: float, location_desc: str = "默认路口"):
         """
@@ -218,6 +188,25 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'insert_veh_sum' 未定义")
 
+    def insert_aligned_dataset(self, session_id: str, aligned_timestamp: float, 
+                               pmc_raw: float, pmc_baseline: float, delta_c_flux: float, 
+                               e_traffic: float, d_trans: float, w_cross: float, delta_tv: float):
+        """
+        写入对齐后的多源数据集，用于后续气象归一化反演
+        """
+        sql = self.queries.get('insert_aligned_dataset')
+        if sql:
+            params = (session_id, float(aligned_timestamp), 
+                      float(pmc_raw), float(pmc_baseline), float(delta_c_flux), 
+                      float(e_traffic), float(d_trans), float(w_cross), float(delta_tv))
+            try:
+                self.cursor.execute(sql, params)
+                self.conn.commit()
+            except Exception as e:
+                print(f"[Database Error] 插入 Aligned_Dataset 失败: {e}")
+        else:
+            print("[Database Error] SQL模板 'insert_aligned_dataset' 未定义")
+
     def fetch_recent_macro_records(self, limit: int = 50) -> List[tuple]:
         """
         获取最近写入的宏观车辆记录，供前端 UI 表格渲染
@@ -235,42 +224,6 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"[Database Error] 查询 Veh_Sum 数据失败: {e}")
             return []
-
-    def delete_all_data(self) -> bool:
-        """清空数据库中的所有宏观和微观记录"""
-        try:
-            self.cursor.execute("DELETE FROM vehicle_micro")
-            self.cursor.execute("DELETE FROM vehicle_macro")
-            self.conn.commit()
-            print(">>> [Database] 所有历史数据已被清空。")
-            return True
-        except sqlite3.Error as e:
-            print(f"[Database Error] 清空所有数据失败: {e}")
-            return False
-
-    def delete_recent_data(self, minutes: int) -> bool:
-        """删除最近 N 分钟内入场的记录及其微观轨迹"""
-        import time
-        # 计算时间阈值
-        threshold_time = time.time() - (minutes * 60)
-        try:
-            # 1. 级联删除微观表 (先删外键引用的子表)
-            self.cursor.execute("""
-                DELETE FROM vehicle_micro 
-                WHERE tracker_id IN (
-                    SELECT tracker_id FROM vehicle_macro WHERE entry_time >= ?
-                )
-            """, (threshold_time,))
-            
-            # 2. 删除宏观表 (再删主表)
-            self.cursor.execute("DELETE FROM vehicle_macro WHERE entry_time >= ?", (threshold_time,))
-            
-            self.conn.commit()
-            print(f">>> [Database] 已删除最近 {minutes} 分钟产生的数据。")
-            return True
-        except sqlite3.Error as e:
-            print(f"[Database Error] 按时间段删除失败: {e}")
-            return False
 
     def close(self):
         self.flush_micro_buffer()
