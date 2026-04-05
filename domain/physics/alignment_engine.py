@@ -121,7 +121,7 @@ class DelayedAlignmentEngine:
                             vsp = p.get('vsp', 0.0)
                             e_point = vsp * m_i * dt
                             e_i_vehicle += e_point
-                            x_sum += p.get('raw_x', 0.0)
+                            x_sum += p.get('x', 0.0)
                             pt_count += 1
                             
                 if e_i_vehicle > 0 and pt_count > 0:

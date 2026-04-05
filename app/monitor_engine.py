@@ -550,8 +550,18 @@ class TrafficMonitorEngine:
         # 复用平滑器中带尾点安全间距处理的降采样逻辑
         valid_indices = KinematicsSmoother.get_downsampled_indices(timestamps, target_db_dt)
         
-        # 根据返回的索引，利用列表推导式提取纯净轨迹
-        trajectory_for_db = [trajectory[i] for i in valid_indices]
+        # 构建干净的物理时空轨迹数据结构，隔离底层的CV像素与帧率参数
+        trajectory_for_db = []
+        for i in valid_indices:
+            p = trajectory[i]
+            trajectory_for_db.append({
+                'timestamp': float(p['timestamp']),
+                'x': float(p['raw_x']),   # 映射为纯粹的物理横向坐标 (米)
+                'y': float(p['raw_y']),   # 映射为纯粹的物理纵向坐标 (米)
+                'v': float(p['speed']),   # 平滑后的物理速度 (m/s)
+                'a': float(p['accel']),   # 平滑后的物理加速度 (m/s^2)
+                'vsp': float(p.get('vsp', 0.0)) # 单点比功率
+            })
 
         # 将打包好的纯净轨迹挂载到 record，供 _handle_exits 写入 Veh_Raw
         record['trajectory_blob_data'] = trajectory_for_db
