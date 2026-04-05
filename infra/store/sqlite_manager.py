@@ -107,6 +107,63 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'complete_session' 未定义")
 
+    def fetch_all_sessions(self) -> List[tuple]:
+        """查询所有历史采集任务，用于填充下拉菜单"""
+        query = "SELECT session_id, start_time, location_desc FROM Session_Task ORDER BY start_time DESC"
+        try:
+            self.cursor.execute(query)
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"[Database Error] 查询 Session_Task 失败: {e}")
+            return []
+
+    def fetch_macro_records_by_session(self, session_id: str, limit: int = 50) -> List[tuple]:
+        """获取指定采集任务的车辆记录"""
+        query = """
+            SELECT tracker_id, vehicle_type, energy_type, 
+                   entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes
+            FROM Veh_Sum 
+            WHERE session_id = ?
+            ORDER BY exit_time DESC 
+            LIMIT ?
+        """
+        try:
+            self.cursor.execute(query, (session_id, limit))
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"[Database Error] 查询 Veh_Sum 数据失败: {e}")
+            return []
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除指定采集任务的所有关联数据"""
+        try:
+            self.cursor.execute("DELETE FROM Env_Raw WHERE session_id = ?", (session_id,))
+            self.cursor.execute("DELETE FROM Veh_Raw WHERE session_id = ?", (session_id,))
+            self.cursor.execute("DELETE FROM Veh_Sum WHERE session_id = ?", (session_id,))
+            self.cursor.execute("DELETE FROM Aligned_Dataset WHERE session_id = ?", (session_id,))
+            self.cursor.execute("DELETE FROM Session_Task WHERE session_id = ?", (session_id,))
+            self.conn.commit()
+            print(f">>> [Database] 任务 {session_id} 数据已被彻底删除。")
+            return True
+        except sqlite3.Error as e:
+            print(f"[Database Error] 删除任务 {session_id} 失败: {e}")
+            return False
+
+    def delete_all_data(self) -> bool:
+        """清空数据库中的所有任务数据"""
+        try:
+            self.cursor.execute("DELETE FROM Env_Raw")
+            self.cursor.execute("DELETE FROM Veh_Raw")
+            self.cursor.execute("DELETE FROM Veh_Sum")
+            self.cursor.execute("DELETE FROM Aligned_Dataset")
+            self.cursor.execute("DELETE FROM Session_Task")
+            self.conn.commit()
+            print(">>> [Database] 所有历史数据已被清空。")
+            return True
+        except sqlite3.Error as e:
+            print(f"[Database Error] 清空数据失败: {e}")
+            return False
+
     def insert_env_raw(self, session_id: str, timestamp: float, env_data: dict):
         """
         高频实时写入环境微观数据 (1Hz)

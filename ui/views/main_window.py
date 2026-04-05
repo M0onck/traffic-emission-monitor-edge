@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QStackedWidget, QTabWidget, 
                              QGridLayout, QFrame, QTableWidget, QTableWidgetItem, 
-                             QHeaderView)
+                             QHeaderView, QComboBox)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QPixmap
 
@@ -573,15 +573,27 @@ class MainWindow(QMainWindow):
 
         # 顶部控制栏
         top_layout = QHBoxLayout()
-        title = QLabel("车辆宏观排放数据台账 (vehicle_macro)")
+        title = QLabel("车辆宏观监测数据浏览")
         title.setFont(QFont("Arial", 16, QFont.Bold))
         title.setStyleSheet("color: #ffffff; border: none;")
+
+        # 采集任务列表的下拉菜单
+        self.session_combo = QComboBox()
+        self.session_combo.setFont(QFont("Arial", 12))
+        self.session_combo.setMinimumWidth(280)
+        self.session_combo.setStyleSheet("""
+            QComboBox { background-color: #1a1d2d; color: white; border: 1px solid #2d324f; border-radius: 5px; padding: 5px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #1a1d2d; color: white; selection-background-color: #2962ff; }
+        """)
 
         self.btn_refresh_db = QPushButton(" 刷新数据 ")
         self.btn_refresh_db.setFont(QFont("Arial", 14, QFont.Bold))
         self.btn_refresh_db.setStyleSheet("background-color: #f39c12; color: white; border-radius: 5px; padding: 10px;")
 
         top_layout.addWidget(title)
+        top_layout.addSpacing(20)
+        top_layout.addWidget(self.session_combo)
         top_layout.addStretch()
         top_layout.addWidget(self.btn_refresh_db)
         layout.addLayout(top_layout)
