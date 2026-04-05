@@ -467,7 +467,7 @@ class TrafficMonitorEngine:
             # 提取基础车型用于存入数据库 (比如 "LDV-Gasoline" -> "LDV")
             base_vehicle_type = final_type_str.split('-')[0] if final_type_str else "LDV"
 
-            # 调用修改后的数据库插入方法
+            # 调用修改后的数据库插入方法(宏观表 - 供前端看)
             self.db.insert_macro(
                 tid=tid, 
                 record=record, 
@@ -475,6 +475,18 @@ class TrafficMonitorEngine:
                 energy_type=energy_type, 
                 dominant_opmodes=dominant_opmodes
             )
+
+            # 微观轨迹入库 (Veh_Raw)
+            if getattr(self, 'current_session_id', None) and 'trajectory_blob_data' in record:
+                self.db.insert_veh_raw(
+                    session_id=self.current_session_id,
+                    tid=tid,
+                    vehicle_type=base_vehicle_type,
+                    energy_type=energy_type,
+                    entry_time=record.get('first_time', 0.0),
+                    exit_time=record.get('last_seen_time', 0.0),
+                    trajectory=record['trajectory_blob_data'] # 传入上面打包好的列表
+                )
     
     def _calculate_and_save_history(self, tid, record, final_type_str):
         trajectory = record.get('trajectory', [])
@@ -528,35 +540,19 @@ class TrafficMonitorEngine:
             'tid': tid, 'record': record, 'type_str': final_type_str
         }
 
-        # 基于物理时间的动态抽样 (与平滑器里的逻辑对齐)
+        # 微观轨迹入库准备 (准备喂给 Veh_Raw 表的 BLOB)
+        # 数据库写入的目标频率 (5Hz)
         db_fps = 5.0
         target_db_dt = 1.0 / db_fps
-        trajectory_for_db = []
         
-        if trajectory:
-            trajectory_for_db.append(trajectory[0]) # 始终保留起点
-            last_t = trajectory[0].get('timestamp', 0.0)
-            
-            for point in trajectory[1:]:
-                curr_t = point.get('timestamp', 0.0)
-                if curr_t - last_t >= target_db_dt:
-                    trajectory_for_db.append(point)
-                    last_t = curr_t
-                    
-            # 始终保留终点，防止离场时刻缺失
-            if trajectory[-1] not in trajectory_for_db:
-                trajectory_for_db.append(trajectory[-1])
+        # 复用平滑器中带尾点安全间距处理的降采样逻辑
+        valid_indices = KinematicsSmoother.get_downsampled_indices(timestamps, target_db_dt)
+        
+        # 根据返回的索引，利用列表推导式提取纯净轨迹
+        trajectory_for_db = [trajectory[i] for i in valid_indices]
 
-        # 极简且降频的微观轨迹入库
-        for point in trajectory_for_db:
-            db_payload = {
-                'timestamp': point.get('timestamp', 0.0),
-                'ipm_x': point.get('raw_x', 0.0),   
-                'ipm_y': point.get('raw_y', 0.0)    
-            }
-            self.db.insert_micro(point.get('frame_id', 0), tid, db_payload)
-
-        self.db.flush_micro_buffer()
+        # 将打包好的纯净轨迹挂载到 record，供 _handle_exits 写入 Veh_Raw
+        record['trajectory_blob_data'] = trajectory_for_db
 
     def _prepare_labels(self, detections, frame_shape):
         img_h, img_w = frame_shape[:2]  # 获取画面边界

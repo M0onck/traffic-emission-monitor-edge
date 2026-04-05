@@ -19,7 +19,8 @@ INSERT OR REPLACE INTO vehicle_macro (
     average_speed, dominant_opmodes
 ) VALUES (?, ?, ?, ?, ?, ?, ?);
 
--- name: insert_micro
-INSERT INTO vehicle_micro (
-    tracker_id, frame_id, timestamp, ipm_x, ipm_y
-) VALUES (?, ?, ?, ?, ?);
+-- name: insert_veh_raw
+INSERT INTO Veh_Raw (
+    session_id, tracker_id, vehicle_type, energy_type,
+    entry_time, exit_time, trajectory_blob
+) VALUES (?, ?, ?, ?, ?, ?, ?);

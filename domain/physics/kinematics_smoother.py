@@ -13,6 +13,42 @@ class KinematicsSmoother:
         self.target_fps = target_fps
         self.target_dt = 1.0 / target_fps  # 目标时间间隔 (如 5FPS 对应 0.2 秒)
 
+    @staticmethod
+    def get_downsampled_indices(timestamps: np.ndarray, target_dt: float) -> list:
+        """
+        根据目标时间间隔对时间戳序列进行降采样，返回保留的索引列表。
+        包含对离场点（尾点）安全间距的严谨边界处理。
+        """
+        n_points = len(timestamps)
+        if n_points == 0:
+            return []
+        if n_points < 3:
+            return list(range(n_points))
+
+        downsampled_indices = [0]  # 强制保留起点
+        last_t = timestamps[0]
+
+        for i in range(1, n_points):
+            # 只有当距离上一个采样点的时间差达到目标间隔时，才进行采摘
+            if timestamps[i] - last_t >= target_dt:
+                downsampled_indices.append(i)
+                last_t = timestamps[i]
+
+        # 安全保留离场点，消除了可能出现的过小采样间隔
+        if downsampled_indices[-1] != n_points - 1:
+            dt_to_last = timestamps[n_points - 1] - timestamps[downsampled_indices[-1]]
+            safe_dt_threshold = target_dt * 0.5 
+            
+            if dt_to_last < safe_dt_threshold:
+                # 间距太小：用离场点替换掉倒数第一个采样点
+                if len(downsampled_indices) > 1:
+                    downsampled_indices[-1] = n_points - 1
+            else:
+                # 间距足够：直接追加离场点
+                downsampled_indices.append(n_points - 1)
+
+        return downsampled_indices
+
     def process_1d(self, timestamps: np.ndarray, raw_x: np.ndarray, raw_y: np.ndarray):
         n_points = len(timestamps)
         if n_points < 3:
@@ -23,30 +59,7 @@ class KinematicsSmoother:
         smoothed_x = np.full(n_points, mean_x)
 
         # 2. 基于绝对时间戳的动态抽样
-        downsampled_indices = [0]  # 强制保留起点
-        last_t = timestamps[0]
-
-        for i in range(1, n_points):
-            # 只有当距离上一个采样点的时间差达到目标间隔时，才进行采摘
-            if timestamps[i] - last_t >= self.target_dt:
-                downsampled_indices.append(i)
-                last_t = timestamps[i]
-
-        # 安全保留离场点，消除了可能出现的过小采样间隔
-        if downsampled_indices[-1] != n_points - 1:
-            # 计算最后一点与当前已采样列表中最后一个点的时间差
-            dt_to_last = timestamps[n_points - 1] - timestamps[downsampled_indices[-1]]
-            
-            # 设定安全间距阈值
-            safe_dt_threshold = self.target_dt * 0.5 
-            
-            if dt_to_last < safe_dt_threshold:
-                # 如果采样点够多，直接用真实的离场点替换掉倒数第一个采样点
-                if len(downsampled_indices) > 1:
-                    downsampled_indices[-1] = n_points - 1
-            else:
-                # 间距足够大：直接追加离场点
-                downsampled_indices.append(n_points - 1)
+        downsampled_indices = self.get_downsampled_indices(timestamps, self.target_dt)
 
         # 判断抽样后的点数是否足够进行滤波
         if len(downsampled_indices) >= 5:

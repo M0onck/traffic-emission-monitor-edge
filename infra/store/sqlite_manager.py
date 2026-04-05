@@ -163,34 +163,30 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'insert_env_raw' 未定义")
 
-    def insert_micro(self, fid: int, tid: int, payload: dict):
-        # 只提取最核心的 3 个物理维度数据，极大地降低序列化与 I/O 开销
-        params = (
-            int(tid),
-            int(fid),
-            float(payload.get('timestamp', 0.0)),
-            float(payload.get('ipm_x', 0.0)),
-            float(payload.get('ipm_y', 0.0))
-        )
-        self.micro_buffer.append(params)
-        if len(self.micro_buffer) >= self.BATCH_SIZE:
-            self.flush_micro_buffer()
-
-    def flush_micro_buffer(self):
-        """强制写入微观数据缓冲区"""
-        if not self.micro_buffer: return
-        
-        sql = self.queries.get('insert_micro')
-        if not sql:
-            print("[Database Error] SQL模板 'insert_micro' 未定义")
-            return
-            
-        try:
-            self.cursor.executemany(sql, self.micro_buffer)
-            self.conn.commit()
-            self.micro_buffer.clear()
-        except Exception as e:
-            print(f"[Database Error] Batch insert failed: {e}")
+    def insert_veh_raw(self, session_id: str, tid: int, vehicle_type: str, energy_type: str, entry_time: float, exit_time: float, trajectory: list):
+        """
+        车辆离场后，写入一条包含完整平滑轨迹的微观记录
+        """
+        sql = self.queries.get('insert_veh_raw')
+        if sql:
+            try:
+                # 将列表形式的物理轨迹序列化为 JSON 字符串
+                trajectory_blob = json.dumps(trajectory)
+                params = (
+                    session_id,
+                    int(tid),
+                    str(vehicle_type),
+                    str(energy_type),
+                    float(entry_time),
+                    float(exit_time),
+                    trajectory_blob
+                )
+                self.cursor.execute(sql, params)
+                self.conn.commit() 
+            except Exception as e:
+                print(f"[Database Error] 插入 Veh_Raw 失败: {e}")
+        else:
+            print("[Database Error] SQL模板 'insert_veh_raw' 未定义")
 
     def insert_macro(self, tid: int, record: dict, vehicle_type: str, energy_type: str, dominant_opmodes: list):
         """
