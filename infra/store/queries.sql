@@ -13,14 +13,14 @@ INSERT INTO Env_Raw (
     wind_speed, wind_dir, air_temp, humidity, ground_temp
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
--- name: insert_macro
-INSERT OR REPLACE INTO vehicle_macro (
-    tracker_id, vehicle_type, energy_type, entry_time, exit_time,
-    average_speed, dominant_opmodes
-) VALUES (?, ?, ?, ?, ?, ?, ?);
-
 -- name: insert_veh_raw
 INSERT INTO Veh_Raw (
     session_id, tracker_id, vehicle_type, energy_type,
     entry_time, exit_time, trajectory_blob
 ) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: insert_veh_sum
+INSERT INTO Veh_Sum (
+    session_id, tracker_id, vehicle_type, energy_type, 
+    entry_time, exit_time, average_speed, dominant_opmodes
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);

@@ -188,59 +188,52 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'insert_veh_raw' 未定义")
 
-    def insert_macro(self, tid: int, record: dict, vehicle_type: str, energy_type: str, dominant_opmodes: list):
+    def insert_veh_sum(self, session_id: str, tid: int, record: dict, vehicle_type: str, energy_type: str, dominant_opmodes: list):
         """
-        向宏观表写入精简后的车辆统计数据
-        :param dominant_opmodes: list，例如 ["Cruise", "Braking"]
+        向前端看板专用表写入精简后的车辆统计数据
         """
-        # 计算平均速度
         speed_count = record.get('speed_count', 0)
         avg_speed = record.get('speed_sum', 0.0) / speed_count if speed_count > 0 else 0.0
-        
-        # 将工况数组序列化为 JSON 字符串
         opmodes_json = json.dumps(dominant_opmodes)
 
-        # 构建与 queries.sql 对应的参数元组
+        # 构建与 queries.sql 对应的参数元组 (新增了 session_id)
         params = (
+            session_id,
             int(tid),
             str(vehicle_type),
             str(energy_type),
-            float(record.get('first_time', 0.0)),     # 依赖 repository.py 中的 first_time
-            float(record.get('last_seen_time', 0.0)), # 依赖 repository.py 中的 last_seen_time
+            float(record.get('first_time', 0.0)),
+            float(record.get('last_seen_time', 0.0)),
             float(avg_speed),
             opmodes_json
         )
         
-        sql = self.queries.get('insert_macro')
+        sql = self.queries.get('insert_veh_sum')
         if sql:
             try:
                 self.cursor.execute(sql, params)
                 self.conn.commit()
             except Exception as e:
-                print(f"[Database Error] insert_macro 失败: {e}")
+                print(f"[Database Error] insert_veh_sum 失败: {e}")
         else:
-            print("[Database Error] SQL模板 'insert_macro' 未定义")
+            print("[Database Error] SQL模板 'insert_veh_sum' 未定义")
 
     def fetch_recent_macro_records(self, limit: int = 50) -> List[tuple]:
         """
-        获取最近写入的宏观车辆记录，限制条数以保护边缘设备内存
+        获取最近写入的宏观车辆记录，供前端 UI 表格渲染
         """
-        # 强制将内存中还没写入的缓冲刷入磁盘，保证查到最新数据
-        self.flush_micro_buffer() 
-        
-        # 宏观表查询语句
         query = """
             SELECT tracker_id, vehicle_type, energy_type, 
                    entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes
-            FROM vehicle_macro 
-            ORDER BY tracker_id DESC 
+            FROM Veh_Sum 
+            ORDER BY exit_time DESC 
             LIMIT ?
         """
         try:
             self.cursor.execute(query, (limit,))
             return self.cursor.fetchall()
         except sqlite3.Error as e:
-            print(f"[Database Error] 查询宏观数据失败: {e}")
+            print(f"[Database Error] 查询 Veh_Sum 数据失败: {e}")
             return []
 
     def delete_all_data(self) -> bool:

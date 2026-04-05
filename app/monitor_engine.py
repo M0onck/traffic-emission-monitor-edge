@@ -467,26 +467,28 @@ class TrafficMonitorEngine:
             # 提取基础车型用于存入数据库 (比如 "LDV-Gasoline" -> "LDV")
             base_vehicle_type = final_type_str.split('-')[0] if final_type_str else "LDV"
 
-            # 调用修改后的数据库插入方法(宏观表 - 供前端看)
-            self.db.insert_macro(
-                tid=tid, 
-                record=record, 
-                vehicle_type=base_vehicle_type, 
-                energy_type=energy_type, 
-                dominant_opmodes=dominant_opmodes
-            )
-
-            # 微观轨迹入库 (Veh_Raw)
-            if getattr(self, 'current_session_id', None) and 'trajectory_blob_data' in record:
-                self.db.insert_veh_raw(
+            if getattr(self, 'current_session_id', None):
+                # 1. 宏观统计入库 (Veh_Sum - 供前端预览)
+                self.db.insert_veh_sum(
                     session_id=self.current_session_id,
-                    tid=tid,
-                    vehicle_type=base_vehicle_type,
-                    energy_type=energy_type,
-                    entry_time=record.get('first_time', 0.0),
-                    exit_time=record.get('last_seen_time', 0.0),
-                    trajectory=record['trajectory_blob_data'] # 传入上面打包好的列表
+                    tid=tid, 
+                    record=record, 
+                    vehicle_type=base_vehicle_type, 
+                    energy_type=energy_type, 
+                    dominant_opmodes=dominant_opmodes
                 )
+
+                # 2. 微观轨迹入库 (Veh_Raw - 供后端分析)
+                if 'trajectory_blob_data' in record:
+                    self.db.insert_veh_raw(
+                        session_id=self.current_session_id,
+                        tid=tid,
+                        vehicle_type=base_vehicle_type,
+                        energy_type=energy_type,
+                        entry_time=record.get('first_time', 0.0),
+                        exit_time=record.get('last_seen_time', 0.0),
+                        trajectory=record['trajectory_blob_data']
+                    )
     
     def _calculate_and_save_history(self, tid, record, final_type_str):
         trajectory = record.get('trajectory', [])
