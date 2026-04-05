@@ -40,27 +40,7 @@
     "yolo_class_truck": 7
   },
   "physics_params": {
-    "mass_factor_ev": 1.25,
     "road_grade_percent": 0.0
-  },
-  "vsp_coefficients": {
-    "car":   {"a_m": 0.1564, "b_m": 0.0020, "c_m": 0.00049},
-    "bus":   {"a_m": 0.1000, "b_m": 0.0000, "c_m": 0.00030},
-    "truck": {"a_m": 0.0920, "b_m": 0.0000, "c_m": 0.00021},
-    "default": {"a_m": 0.1564, "b_m": 0.0020, "c_m": 0.00049}
-  },
-  "type_map": {
-    "car,Blue": "Car-gasoline",
-    "bus,Blue": "Bus-gasoline",
-    "truck,Blue": "Truck-gasoline",
-    "car,Yellow": "Car-diesel",
-    "bus,Yellow": "Bus-diesel",
-    "truck,Yellow": "Truck-diesel",
-    "car,Green": "Car-electric",
-    "bus,Green": "Bus-electric",
-    "truck,Green": "Truck-electric",
-    "Default_Car": "LDV-gasoline",
-    "Default_Heavy": "HDV-diesel"
   },
   "quality_control": {
     "min_valid_trajectory_points": 15,

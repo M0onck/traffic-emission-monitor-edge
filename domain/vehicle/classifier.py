@@ -8,9 +8,8 @@ class VehicleClassifier:
     职责：基于 YOLO 物理过滤后的类别和 OCR 车牌颜色，输出标准的微观排放大类
     (如 'LDV-Gasoline', 'LDV-Electric', 'HDV-Diesel', 'HDV-Electric')。
     """
-    def __init__(self, type_map=None, yolo_classes=None):
+    def __init__(self, yolo_classes=None):
         """
-        :param type_map: 废弃参数，保留仅为了兼容旧的外部调用代码，防止报错
         :param yolo_classes: 类别ID配置，默认为 COCO 标准 {'car': 2, 'bus': 5, 'truck': 7}
         """
         yolo_classes = yolo_classes or {'car': 2, 'bus': 5, 'truck': 7}
