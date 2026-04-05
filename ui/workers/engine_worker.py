@@ -15,6 +15,7 @@ class EngineWorker(QThread):
         self.source_points = source_points
         self.phys_w = phys_w
         self.phys_h = phys_h
+        self.weather_station = weather_station
         self.engine = None
 
     def run(self):
@@ -39,7 +40,7 @@ class EngineWorker(QThread):
         # 4. 装配所有组件
         # 引导模块会根据 config 自动创建 db, registry, camera, plate_worker 等
         components = AppBootstrap.setup_components(config)
-        if self.weather_station:
+        if getattr(self, 'weather_station', None):
             components['weather_station'] = self.weather_station
 
         # 5. 启动引擎
