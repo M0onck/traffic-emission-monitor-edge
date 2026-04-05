@@ -372,6 +372,43 @@ class MainController:
         finally:
             self.view.btn_refresh_db.setText(" 刷新数据 ")
 
+    def update_db_table(self):
+        """拉取当前选中 Session 的数据并渲染到表格"""
+        session_id = self.view.session_combo.currentData()
+        table = self.view.db_table
+        table.setRowCount(0) # 清空旧数据
+        
+        if not session_id:
+            return
+            
+        try:
+            db = DatabaseManager()
+            records = db.fetch_macro_records_by_session(session_id, limit=50)
+            db.close()
+
+            for row_idx, row_data in enumerate(records):
+                table.insertRow(row_idx)
+                for col_idx, col_value in enumerate(row_data):
+                    val_str = str(col_value) if col_value is not None else "--"
+                    
+                    if col_idx in [3, 4] and col_value is not None:
+                        try:
+                            dt = datetime.fromtimestamp(float(col_value))
+                            val_str = dt.strftime('%H:%M:%S.%f')[:-4]
+                        except Exception: pass
+                            
+                    if col_idx == 6 and col_value is not None:
+                        try:
+                            opmodes_list = json.loads(col_value)
+                            val_str = ", ".join(opmodes_list)
+                        except Exception: pass
+
+                    item = QTableWidgetItem(val_str)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    table.setItem(row_idx, col_idx, item)
+        except Exception as e:
+            print(f"数据表格刷新失败: {e}")
+
     def show_batch_delete_dialog(self):
         """弹出基于 Session 的删除数据对话框"""
         dialog = QDialog(self.view)
