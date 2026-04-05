@@ -29,13 +29,10 @@ class TrafficMonitorEngine:
         self.time_sync = TimeSynchronizer() # 初始化时钟同步器
         
         # --- 核心组件引用 ---
-        # 注意：model (YOLO) 和 tracker (ByteTrack) 已被移除，交由硬件管道完成
         self.camera = components['camera']          # GstPipelineManager (GStreamer管道)
         self.registry = components['registry']      # 车辆注册表 (内存数据库)
         self.visualizer = components['visualizer']  # 可视化渲染器
         self.db = components['db']                  # 持久化存储 (SQLite)
-
-        # 替换掉了原来的 plate_classifier
         self.plate_worker = components.get('plate_worker') 
         
         # --- 状态缓存 ---
@@ -47,7 +44,7 @@ class TrafficMonitorEngine:
         self.motion_on = config.ENABLE_MOTION       
         self.ocr_on = config.ENABLE_OCR             
 
-        # --- 标签到 ID 的映射字典 (适配原有逻辑) ---
+        # --- 标签到 ID 的映射字典 ---
         self.label_map = {
             "car": self.cfg.YOLO_CLASS_CAR,
             "bus": self.cfg.YOLO_CLASS_BUS,
@@ -74,6 +71,9 @@ class TrafficMonitorEngine:
         self.vsp_calc = VSPCalculator(getattr(config, 'VSP_CONFIG', {}))
         self.opmode_mapper = OpModeMapper(duration_threshold=1.0)
 
+        # 当前采集任务的会话 ID
+        self.current_session_id = None
+
     def run(self):
         """
         启动基于 GStreamer 轮询的主处理循环。
@@ -99,8 +99,20 @@ class TrafficMonitorEngine:
             frame_count = 0
             current_fps = 0.0
 
-            # 软件级限速计算器
+            # 软件级限速计算器（配置 FPS 的功能似乎有些混乱，未来需要厘清）
             target_delay = 1.0 / self.cfg.FPS
+
+            # 生成全局唯一的 Session ID (前缀+时间戳)
+            start_timestamp = time.time()
+            time_str = time.strftime('%Y%m%d_%H%M%S', time.localtime(start_timestamp))
+            self.current_session_id = f"Task_{time_str}"
+            
+            # 在数据库中注册本次采集任务
+            self.db.create_session(
+                session_id=self.current_session_id, 
+                start_time=start_timestamp, 
+                location_desc="试验路口A" # 后续可以从 config.json 读取
+            )
 
             while True:
                 # 记录循环开始时间
@@ -566,4 +578,9 @@ class TrafficMonitorEngine:
         import time
         force_exit_timestamp = time.time() + 1000.0
         self._handle_exits(final_frame_id + 1000, force_exit_timestamp)
+
+        # 宣告采集任务结束
+        if getattr(self, 'current_session_id', None):
+            self.db.complete_session(self.current_session_id, time.time())
+
         self.db.close()

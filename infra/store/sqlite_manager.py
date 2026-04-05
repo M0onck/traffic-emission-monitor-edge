@@ -107,6 +107,36 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"[Database Error] 历史数据迁移失败: {e}")
 
+    def create_session(self, session_id: str, start_time: float, location_desc: str = "默认路口"):
+        """
+        创建一个新的采集任务会话
+        """
+        sql = self.queries.get('insert_session')
+        if sql:
+            try:
+                self.cursor.execute(sql, (session_id, start_time, location_desc))
+                self.conn.commit()
+                print(f">>> [Database] 成功创建新采集任务: {session_id}")
+            except Exception as e:
+                print(f"[Database Error] 创建任务会话失败: {e}")
+        else:
+            print("[Database Error] SQL模板 'insert_session' 未定义")
+
+    def complete_session(self, session_id: str, end_time: float):
+        """
+        结束当前的采集任务会话
+        """
+        sql = self.queries.get('complete_session')
+        if sql:
+            try:
+                self.cursor.execute(sql, (end_time, session_id))
+                self.conn.commit()
+                print(f">>> [Database] 采集任务已结束并归档: {session_id}")
+            except Exception as e:
+                print(f"[Database Error] 结束任务会话失败: {e}")
+        else:
+            print("[Database Error] SQL模板 'complete_session' 未定义")
+
     def insert_micro(self, fid: int, tid: int, payload: dict):
         # 只提取最核心的 3 个物理维度数据，极大地降低序列化与 I/O 开销
         params = (
