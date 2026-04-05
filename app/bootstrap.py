@@ -34,7 +34,7 @@ class AppBootstrap:
             'bus': config.YOLO_CLASS_BUS,
             'truck': config.YOLO_CLASS_TRUCK
         }
-        classifier = VehicleClassifier(type_map=config.TYPE_MAP, yolo_classes=yolo_classes_dict)
+        classifier = VehicleClassifier(yolo_classes=yolo_classes_dict)
 
         # 3. 感知层：GStreamer 视频流硬件管道 (组装成期待的 dict)
         camera_cfg = {

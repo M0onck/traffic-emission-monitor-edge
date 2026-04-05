@@ -283,6 +283,5 @@ class DatabaseManager:
             return []
 
     def close(self):
-        self.flush_micro_buffer()
         self.conn.close()
         print("[Database] Connection closed.")
