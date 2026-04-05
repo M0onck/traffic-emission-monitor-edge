@@ -1,8 +1,20 @@
 import sqlite3
 import json
 import os
+import numpy as np
 import re # 正则表达式
 from typing import List, Dict, Any
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON 编码器，解决 Numpy 数据类型无法被 json.dumps 序列化的问题"""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
 
 class DatabaseManager:
     """
@@ -198,7 +210,7 @@ class DatabaseManager:
         if sql:
             try:
                 # 将列表形式的物理轨迹序列化为 JSON 字符串
-                trajectory_blob = json.dumps(trajectory)
+                trajectory_blob = json.dumps(trajectory, cls=NumpyEncoder)
                 params = (
                     session_id,
                     int(tid),
