@@ -67,5 +67,16 @@
     "min_survival_sec": 1.0,
     "min_moving_distance_m": 2.0,
     "blur_threshold": 100.0
+  },
+  "time_windows": {
+    "alignment_delay_sec": 60.0,
+    "integration_window_sec": 30.0,
+    "baseline_window_minute": 10.0,
+    "db_align_frequency_hz": 1.0
+  },
+  "physics_priors": {
+    "weather_station_x_pos": 0.0,
+    "road_direction_angle": 0.0,
+    "nev_mass_penalty_ratio": 1.2
   }
 }
