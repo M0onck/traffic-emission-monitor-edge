@@ -214,7 +214,7 @@ class MainController:
         source_points = self.view.canvas.get_real_points()
         
         # 启动后台引擎线程
-        self.worker = EngineWorker(source_points, self.view.phys_w, self.view.phys_h)
+        self.worker = EngineWorker(source_points, self.view.phys_w, self.view.phys_h, weather_station=self.weather_gw)
         self.worker.frame_ready.connect(self.update_video_frame)
         self.worker.start()
 

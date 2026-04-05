@@ -10,7 +10,7 @@ from app.bootstrap import AppBootstrap
 class EngineWorker(QThread):
     frame_ready = pyqtSignal(np.ndarray)
 
-    def __init__(self, source_points, phys_w, phys_h):
+    def __init__(self, source_points, phys_w, phys_h, weather_station=None):
         super().__init__()
         self.source_points = source_points
         self.phys_w = phys_w
@@ -39,6 +39,8 @@ class EngineWorker(QThread):
         # 4. 装配所有组件
         # 引导模块会根据 config 自动创建 db, registry, camera, plate_worker 等
         components = AppBootstrap.setup_components(config)
+        if self.weather_station:
+            components['weather_station'] = self.weather_station
 
         # 5. 启动引擎
         # 此时的 components 已经是一个包含了所有依赖的干净字典
