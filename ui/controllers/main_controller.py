@@ -628,10 +628,17 @@ class MainController:
         if not hasattr(self, 'worker') or not self.worker.engine:
             return
             
-        current_session_id = getattr(self.worker.engine, 'session_id', None)
+        # 正确的属性名是 current_session_id
+        current_session_id = getattr(self.worker.engine, 'current_session_id', None)
         if not current_session_id:
             return
 
-        # 传递会话 ID 与系统绝对时间执行提取
-        current_time = time.time()
+        # 统一使用底层引擎的 NTP 同步时钟（物理基准时间），避免时间窗偏移
+        if hasattr(self.worker.engine, 'time_sync'):
+            current_time = self.worker.engine.time_sync.get_precise_timestamp()
+        else:
+            import time
+            current_time = time.time()
+
+        # 触发对齐作业
         self.align_engine.align_step(current_session_id, current_time)
