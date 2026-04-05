@@ -64,8 +64,9 @@ class TrafficMonitorEngine:
         # 初始化车辆检测框过滤器
         self.box_filter = PhysicalVehicleFilter(self.cfg)
 
-        # 从组件字典中获取热成像实例
+        # 从组件字典中获取多源传感器实例
         self.thermal_cam = components.get('thermal_cam')
+        self.weather_station = components.get('weather_station')
 
         # 初始化 VSP 和 工况计算器
         self.vsp_calc = VSPCalculator(getattr(config, 'VSP_CONFIG', {}))
@@ -111,14 +112,14 @@ class TrafficMonitorEngine:
             self.db.create_session(
                 session_id=self.current_session_id, 
                 start_time=start_timestamp, 
-                location_desc="试验路口A" # 后续可以从 config.json 读取
+                location_desc="试验路段A" # 后续可以从 config.json 读取
             )
 
             while True:
                 # 记录循环开始时间
                 loop_start = time.time()
 
-                # 1. 阻塞拉取底层已经处理好的数据
+                # 阻塞拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
 
                 # 拿到帧的同时打上时间戳
@@ -131,15 +132,62 @@ class TrafficMonitorEngine:
                 
                 frame_id += 1
 
-                # 计算每秒的实时帧率 (平滑显示，避免数值疯狂闪烁)
+                # 执行1Hz频率的轮询，用于实时计算fps和采集环境数据
                 frame_count += 1
                 now = time.time()
                 if now - prev_time >= 1.0:
+                    # ====================================================
+                    # 计算每秒的实时帧率
+                    # ====================================================
                     current_fps = frame_count / (now - prev_time)
                     prev_time = now
                     frame_count = 0
+
+                    # ====================================================
+                    # 环境数据采样与入库
+                    # ====================================================
+                    if getattr(self, 'current_session_id', None):
+                        env_data = {}
+                        
+                        # 1. 采集气象与粉尘数据 (键名映射对齐)
+                        if getattr(self, 'weather_station', None):
+                            try:
+                                ws_data = self.weather_station.get_data() # 注意这里调用的是 get_data()
+                                if ws_data and ws_data.get('isOnline', False):
+                                    # 将气象站的字典键映射为数据库所需的字段名
+                                    env_data['air_temp'] = ws_data.get('temp', 0.0)
+                                    env_data['humidity'] = ws_data.get('humidity', 0.0)
+                                    env_data['wind_speed'] = ws_data.get('windSpeed', 0.0)
+                                    env_data['wind_dir'] = ws_data.get('windDir', 0.0)
+                                    env_data['pm25_raw'] = ws_data.get('pm25', 0.0)
+                                    env_data['pm10_raw'] = ws_data.get('pm10', 0.0)
+                            except Exception as e:
+                                print(f"[Sensor Error] 气象站读取失败: {e}")
+                                
+                        # 2. 采集路面温度 (热成像画面中心点提取)
+                        if getattr(self, 'thermal_cam', None):
+                            try:
+                                thermal_frame = self.thermal_cam.read()
+                                if thermal_frame is not None:
+                                    # thermal_frame 维度是 (24, 32)
+                                    h, w = thermal_frame.shape
+                                    cy, cx = h // 2, w // 2
+                                    
+                                    # 取中心 2x2 矩阵的均值作为路面代表温度，提升鲁棒性
+                                    center_temp = np.mean(thermal_frame[cy-1:cy+1, cx-1:cx+1])
+                                    env_data['ground_temp'] = float(center_temp)
+                            except Exception as e:
+                                print(f"[Sensor Error] 热成像读取失败: {e}")
+                                
+                        # 3. 写入数据库
+                        self.db.insert_env_raw(
+                            session_id=self.current_session_id,
+                            timestamp=frame_timestamp, # 使用 NTP 同步的绝对物理时间
+                            env_data=env_data
+                        )
+                    # ====================================================
                 
-                # 2. 延迟初始化 VideoSink (因为需要确切知道输出的分辨率)
+                # 延迟初始化 VideoSink (因为需要确切知道输出的分辨率)
                 if video_info is None:
                     h, w = frame.shape[:2]
 
@@ -150,6 +198,7 @@ class TrafficMonitorEngine:
                     # video_info = sv.VideoInfo(width=w, height=h, fps=self.cfg.FPS)
                     # sink = sv.VideoSink(self.cfg.TARGET_VIDEO_PATH, video_info=video_info)
                     # sink.__enter__()
+
                     print(f">>> [Engine] 视频流已接入: {w}x{h} @ {self.cfg.FPS}fps")
                 
                     #  第一帧到达时，动态适配底层坐标系
@@ -178,7 +227,7 @@ class TrafficMonitorEngine:
                     traceback.print_exc()
                     break # 遇到严重逻辑错误直接跳出循环，释放资源
                 
-                # --- 写入结果视频 ---
+                # --- 写入结果视频（已废弃，若想重新启用，应换用GStreamer管道分流） ---
                 # if sink:
                 #     sink.write_frame(annotated_frame)
                 

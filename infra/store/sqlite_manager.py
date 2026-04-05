@@ -137,6 +137,32 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'complete_session' 未定义")
 
+    def insert_env_raw(self, session_id: str, timestamp: float, env_data: dict):
+        """
+        高频实时写入环境微观数据 (1Hz)
+        """
+        sql = self.queries.get('insert_env_raw')
+        if sql:
+            # 使用 .get() 附带默认兜底值，防止传感器离线导致报错
+            params = (
+                session_id,
+                timestamp,
+                float(env_data.get('pm25_raw', 0.0)),
+                float(env_data.get('pm10_raw', 0.0)),
+                float(env_data.get('wind_speed', 0.0)),
+                float(env_data.get('wind_dir', 0.0)),
+                float(env_data.get('air_temp', 0.0)),
+                float(env_data.get('humidity', 0.0)),
+                float(env_data.get('ground_temp', 0.0))
+            )
+            try:
+                self.cursor.execute(sql, params)
+                self.conn.commit() # 1Hz的写入频率较低，由于开启了WAL模式，直接commit保证实时性无压力
+            except Exception as e:
+                print(f"[Database Error] 插入 Env_Raw 失败: {e}")
+        else:
+            print("[Database Error] SQL模板 'insert_env_raw' 未定义")
+
     def insert_micro(self, fid: int, tid: int, payload: dict):
         # 只提取最核心的 3 个物理维度数据，极大地降低序列化与 I/O 开销
         params = (
