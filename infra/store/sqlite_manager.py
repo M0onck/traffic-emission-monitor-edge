@@ -133,7 +133,7 @@ class DatabaseManager:
         """获取指定采集任务的车辆记录"""
         query = """
             SELECT tracker_id, vehicle_type, energy_type, 
-                   entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes
+                   entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes, settlement_status
             FROM Veh_Sum 
             WHERE session_id = ?
             ORDER BY exit_time DESC 
@@ -276,25 +276,6 @@ class DatabaseManager:
                 print(f"[Database Error] 插入 Aligned_Dataset 失败: {e}")
         else:
             print("[Database Error] SQL模板 'insert_aligned_dataset' 未定义")
-
-    def fetch_recent_macro_records(self, limit: int = 50) -> List[tuple]:
-        """
-        获取最近写入的宏观车辆记录，供前端 UI 表格渲染
-        """
-        query = """
-            SELECT tracker_id, vehicle_type, energy_type, 
-                   entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes, settlement_status
-            FROM Veh_Sum 
-            WHERE session_id = ?
-            ORDER BY exit_time DESC 
-            LIMIT ?
-        """
-        try:
-            self.cursor.execute(query, (limit,))
-            return self.cursor.fetchall()
-        except sqlite3.Error as e:
-            print(f"[Database Error] 查询 Veh_Sum 数据失败: {e}")
-            return []
 
     def close(self):
         self.conn.close()
