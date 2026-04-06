@@ -183,7 +183,6 @@ class MainWindow(QMainWindow):
         self.btn_exit = QPushButton("退出程序")
         self.btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
         self.btn_exit.setStyleSheet(self.style_hollow_red)
-        self.btn_exit.clicked.connect(self.close)
 
         right_layout.addWidget(self.btn_app1)
         right_layout.addSpacing(15)

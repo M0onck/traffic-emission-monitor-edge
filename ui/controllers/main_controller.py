@@ -73,6 +73,9 @@ class MainController:
         self.view.btn_refresh_db.clicked.connect(self.handle_db_refresh)
         self.view.btn_delete_db.clicked.connect(self.show_batch_delete_dialog)
         self.view.session_combo.currentIndexChanged.connect(self.update_db_table)
+
+        # 退出程序按钮的绑定
+        self.view.btn_exit.clicked.connect(self.handle_exit_request)
     
     def handle_sync_clock(self):
         if not self.weather_gw: return
@@ -252,6 +255,20 @@ class MainController:
         self.update_main_menu_btn_style()
         self.return_to_home()
     
+    def handle_exit_request(self):
+        """主界面退出系统拦截"""
+        dialog = EdgeMessageBox(
+            self.view, 
+            "退出系统确认", 
+            "确定要关闭应用程序吗？", 
+            "若有运行中的任务，系统将安全停机并保存数据。", 
+            is_warning=True # 警告样式，按钮描红
+        )
+        if dialog.exec_() == EdgeMessageBox.Accepted:
+            # 调用界面的 close 方法。
+            # 这将触发 MainWindow 中的 closeEvent，进而执行清理回调，保证安全！
+            self.view.close()
+
     def cleanup(self):
         """处理整个应用的关闭回收"""
         if self.is_collecting:
@@ -419,6 +436,20 @@ class MainController:
 
     def show_batch_delete_dialog(self):
         """弹出基于 Session 的删除数据对话框"""
+
+        # 空数据库拦截
+        if self.view.session_combo.count() == 0:
+            # 默认 is_warning=False，会弹出一个带有白色/绿色确认按钮的常规提示框
+            dialog = EdgeMessageBox(
+                self.view, 
+                "无历史数据", 
+                "当前边缘节点数据库为空。", 
+                info_text="没有任何可被清理的任务数据。"
+            )
+            dialog.exec_()
+            return
+
+        # 数据库不为空才进行后续步骤
         dialog = EdgeAnimatedDialog(self.view, target_height=260, is_warning=True)
         
         layout = QVBoxLayout(dialog.panel)
