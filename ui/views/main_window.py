@@ -53,7 +53,7 @@ class MainWindow(QMainWindow):
         self.btn_stop.setStyleSheet("background-color: #c0392b; color: white;") 
 
         # 批量删除按钮 (红色预警，默认隐藏)
-        self.btn_delete_db = QPushButton("批量删除数据")
+        self.btn_delete_db = QPushButton("批量删除")
         self.btn_delete_db.setFont(font)
         self.btn_delete_db.setMinimumHeight(50)
         self.btn_delete_db.setStyleSheet("background-color: #d50000; color: white; border-radius: 5px;")
@@ -604,7 +604,7 @@ class MainWindow(QMainWindow):
         self.db_table.setColumnCount(8)
         # 设置表头字段定义
         self.db_table.setHorizontalHeaderLabels([
-            "目标 ID", "车型(LDV/HDV)", "能源类型", "入场时间", "离场时间", "平均车速(m/s)", "主导工况", "结算状态"
+            "目标 ID", "车型", "能源类型", "入场时间", "离场时间", "均速(m/s)", "主导工况", "结算状态"
         ])
 
         # 表格样式调整，适应深色主题
