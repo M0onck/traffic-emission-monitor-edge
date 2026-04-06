@@ -8,17 +8,17 @@ class EdgeAnimatedDialog(QDialog):
     def __init__(self, parent=None, target_height=220, is_warning=False):
         super().__init__(parent)
         
-        # 针对 Wayland 适配：更改窗口类型为 Tool 工具层
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
+        # 去掉会引发崩溃的 Qt.Tool，恢复为标准 Qt.Dialog
+        # 配合 FramelessWindowHint 抹除系统边框
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowState(Qt.WindowFullScreen)
         
         self.target_height = target_height
         self.v_center = 230 
         
         # 1. 全屏半透明暗黑遮罩
         self.bg = QFrame(self)
-        self.bg.setGeometry(0, 0, 800, 480) # 内部绘制仍保持 800x480 的比例
+        self.bg.setGeometry(0, 0, 800, 480) 
         self.bg.setStyleSheet("background-color: rgba(0, 0, 0, 190);")
         
         # 2. 动画承载面板
@@ -26,12 +26,18 @@ class EdgeAnimatedDialog(QDialog):
         border_color = "#ff4d4f" if is_warning else "#555555" 
         self.panel.setStyleSheet(f"background-color: #0a0a0a; border-top: 2px solid {border_color}; border-bottom: 2px solid {border_color};")
         
-        # 3. 动画引擎 (此时实例化它，后续 showEvent 调用就安全了)
+        # 3. 动画引擎
         self.anim = QPropertyAnimation(self.panel, b"geometry")
         self.anim.setDuration(250)
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
         
         self.panel.setGeometry(0, self.v_center, 800, 0)
+
+    # 在 Controller 调用 exec_() 阻塞程序前，先向底层申请全屏
+    # 这样既符合 Wayland 对 Dialog 的安全规定，又能完美挤掉系统预留的顶部缝隙
+    def exec_(self):
+        self.showFullScreen()
+        return super().exec_()
         
     def showEvent(self, event):
         super().showEvent(event)
