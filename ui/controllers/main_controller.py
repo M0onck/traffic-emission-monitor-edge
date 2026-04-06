@@ -6,7 +6,8 @@ import infra.config.loader as cfg
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import (QTableWidgetItem, QVBoxLayout, 
                              QHBoxLayout, QLabel, 
-                             QPushButton, QRadioButton)
+                             QPushButton, QRadioButton,
+                             QFileDialog)
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from datetime import datetime
 from ui.workers.engine_worker import EngineWorker
@@ -73,8 +74,9 @@ class MainController:
         self.view.btn_delete_db.clicked.connect(self.show_batch_delete_dialog)
         self.view.session_combo.currentIndexChanged.connect(self.update_db_table)
 
-        # 设置按钮的绑定
+        # 设置界面相关按钮的绑定
         self.view.btn_settings.clicked.connect(self.route_settings_click)
+        self.view.btn_browse_local.clicked.connect(self.handle_browse_local_video)
 
         # 退出程序按钮的绑定
         self.view.btn_exit.clicked.connect(self.handle_exit_request)
@@ -550,6 +552,31 @@ class MainController:
         
         self._update_thermal_view()  # 1. 实时刷新热成像
         self._update_dashboard()     # 2. 刷新车辆抽样看板
+
+    def handle_browse_local_video(self):
+        """处理点击浏览本地视频文件的逻辑"""
+        # 用户既然点击了浏览，就顺便自动帮其勾选上“本地视频”单选框
+        self.view.radio_source_local.setChecked(True)
+        
+        # 呼出系统文件选择对话框
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.view,
+            "选择本地测试视频文件",
+            "", # 默认路径（为空则基于上次记忆）
+            "视频文件 (*.mp4 *.avi *.mkv *.mov);;所有文件 (*.*)"
+        )
+        
+        if file_path:
+            # 1. 更新 UI 显示
+            self.view.lbl_local_path.setText(file_path)
+            
+            # 2. 调用 config/loader.py 中的新方法更新并落盘
+            cfg.update_video_path(file_path)
+            
+            # 如果此时在标定页，可能需要重新加载第一帧
+            self.view.canvas.load_frame(cfg.VIDEO_PATH) 
+            
+            print(f"前端控制器：已更新视频输入路径为 {file_path}，并保存至配置文件")
 
     def _update_thermal_view(self):
         """处理热力图渲染与数据提取"""

@@ -253,18 +253,40 @@ class MainWindow(QMainWindow):
         vs_layout.addSpacing(30)
 
         # 选项：本地视频
+        local_layout = QHBoxLayout()
+        
         self.radio_source_local = QRadioButton("本地视频文件")
         self.radio_source_local.setFont(QFont("Arial", 16))
         self.radio_source_local.setStyleSheet("color: white;")
         self.radio_source_local.setChecked(True) # 默认选中本地
+
+        # 浏览按钮
+        self.btn_browse_local = QPushButton(" 浏览文件 ")
+        self.btn_browse_local.setFont(QFont("Arial", 14))
+        self.btn_browse_local.setStyleSheet(self.style_hollow_white)
+        self.btn_browse_local.setFixedHeight(40) # 控制一下高度不要太大
+
+        # 路径显示标签 (初始加载 loader 中当前的配置路径)
+        self.lbl_local_path = QLabel(cfg.VIDEO_PATH) 
+        self.lbl_local_path.setFont(QFont("Arial", 12))
+        self.lbl_local_path.setStyleSheet("color: #aaaaaa; border: none;")
+
+        # 将组件拼装进水平布局
+        local_layout.addWidget(self.radio_source_local)
+        local_layout.addSpacing(15)
+        local_layout.addWidget(self.btn_browse_local)
+        local_layout.addSpacing(15)
+        local_layout.addWidget(self.lbl_local_path)
+        local_layout.addStretch() # 靠左对齐，剩余空间留白
+
+        vs_layout.addLayout(local_layout) # 加入主布局
+        vs_layout.addSpacing(20)
 
         # 选项：真实摄像头
         self.radio_source_camera = QRadioButton("IMX296摄像头")
         self.radio_source_camera.setFont(QFont("Arial", 16))
         self.radio_source_camera.setStyleSheet("color: white;")
 
-        vs_layout.addWidget(self.radio_source_local)
-        vs_layout.addSpacing(20)
         vs_layout.addWidget(self.radio_source_camera)
         vs_layout.addStretch()
 

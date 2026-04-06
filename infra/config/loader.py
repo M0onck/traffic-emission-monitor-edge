@@ -93,3 +93,20 @@ _pp = _cfg.get("physics_priors", {})
 WEATHER_STATION_X_POS = _pp.get("weather_station_x_pos", 0.0)
 ROAD_DIRECTION_ANGLE = _pp.get("road_direction_angle", 0.0)
 NEV_MASS_PENALTY_RATIO = _pp.get("nev_mass_penalty_ratio", 1.2)
+
+def update_video_path(new_path):
+    """更新视频源路径，并持久化到 config.json 文件中"""
+    global VIDEO_PATH
+    
+    # 1. 更新内存中的字典
+    _cfg["system"]["video_path"] = new_path
+    
+    # 2. 更新运行时的全局变量
+    VIDEO_PATH = new_path
+    
+    # 3. 将更改写回 config.json 磁盘文件
+    try:
+        with open(CONFIG_FILE, "w", encoding='utf-8') as f:
+            json.dump(_cfg, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"配置文件写入失败: {e}")
