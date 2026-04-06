@@ -2,6 +2,7 @@ import gi
 import cv2
 import numpy as np
 import os
+import infra.config.loader as cfg
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
@@ -40,10 +41,11 @@ class GstPipelineManager:
         self.sink_meta = self.pipeline.get_by_name("sink_meta")
         self.bus = self.pipeline.get_bus() 
         self.is_running = False
+        self.use_camera = cfg.USE_CAMERA
 
     def _build_pipeline(self) -> str:
         # === 智能判断：当前视频源是本地文件，还是物理摄像头的管道流 ===
-        is_camera = self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
+        is_camera = self.use_camera or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
         if is_camera:
             # 物理摄像头源头：放弃前端带 appsink 的预览管道，重新构建原生的树莓派相机源头
@@ -64,18 +66,18 @@ class GstPipelineManager:
             f"{source_head} ! tee name=t "
             
             # --- 分支1: 视频画面分支 (送往 UI 渲染) ---
-            f"t. ! queue max-size-buffers=30 ! "
+            f"t. ! queue max-size-buffers=5 leaky=downstream ! "
             f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! "
-            f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=2 drop=false sync=false "
+            f"videoconvert ! video/x-raw, format=RGBA ! videoconvert ! video/x-raw, format=BGR ! "
+            f"appsink name=sink_video emit-signals=false max-buffers=2 drop=true sync=false "
             
             # --- 分支2: 硬件推理分支 (送往 Hailo-8 NPU) ---
-            f"t. ! queue max-size-buffers=30 ! "
+            f"t. ! queue max-size-buffers=5 leaky=downstream ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
-            f"videoconvert ! video/x-raw, format=RGB ! "
+            f"videoconvert ! video/x-raw, format=RGBA ! videoconvert ! video/x-raw, format=RGB ! "
             f"hailonet hef-path={self.hef_path} vdevice-group-id=1 ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=false sync=false "
+            f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=true sync=false "
         )
         return pipeline
 
