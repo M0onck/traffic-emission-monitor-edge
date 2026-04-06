@@ -98,9 +98,8 @@ class GstPipelineManager:
         # 2. 尝试拉取 AI 结果 (仅等待 1ms，非阻塞)
         # 不管 AI 算没算完，我们绝不能在这里死等，否则就会拖慢画面导致卡顿
         sample_meta = self.sink_meta.emit("try-pull-sample", 1000000)
-        if sample_meta:
-            # 如果有新的 AI 结果，更新缓存（防止 C 底层野指针被垃圾回收）
-            self._last_sample_meta = sample_meta
+        
+        buffer_meta = sample_meta.get_buffer() if sample_meta else None
 
         buffer_video = sample_video.get_buffer()
         try:
@@ -112,6 +111,7 @@ class GstPipelineManager:
             actual_w = struct.get_value("width")
             actual_h = struct.get_value("height")
             
+            # 这里使用了 .copy()，数据被安全转移到 Python 堆内存，安全释放硬件内存
             frame = np.ndarray((actual_h, actual_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
             buffer_video.unmap(map_info)
 
