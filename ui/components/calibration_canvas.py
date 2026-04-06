@@ -1,6 +1,7 @@
 import time
 import cv2
 import numpy as np
+import gc
 from PyQt5.QtWidgets import QLabel
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -49,13 +50,20 @@ class CalibrationCanvas(QLabel):
                 self.gst_pipeline.set_state(Gst.State.PLAYING)
                 
                 # 预热 ISP
-                time.sleep(0.5) 
+                print(">>> 正在预热 ISP 并等待首帧出流...")
+                frame_received = False
+                for _ in range(20):  # 最长容忍等待 2 秒 (20次 * 0.1秒)
+                    ret, frame = self._read_gst_frame()
+                    if ret:
+                        self._start_preview(frame)
+                        frame_received = True
+                        break
+                    time.sleep(0.1)
                 
-                ret, frame = self._read_gst_frame()
-                if ret:
-                    self._start_preview(frame)
-                else:
-                    self._show_error_screen("Stream Error")
+                if not frame_received:
+                    print(">>> 警告：摄像头拉流超时！")
+                    self._show_error_screen("Video Stream Error")
+                
             except Exception as e:
                 print(f">>> GStreamer 启动失败: {e}")
                 self._show_error_screen("Pipeline Fatal")
@@ -132,8 +140,13 @@ class CalibrationCanvas(QLabel):
             
         if self.gst_pipeline is not None:
             self.gst_pipeline.set_state(Gst.State.NULL)
+            # 删除引用
+            del self.gst_appsink
+            del self.gst_pipeline
             self.gst_pipeline = None
             self.gst_appsink = None
+            # 要求 Python 立即执行垃圾回收，彻底释放底层 /dev/video0 文件描述符
+            gc.collect()
 
     def init_points(self):
         h, w = self.orig_frame.shape[:2]
