@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import QLabel
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
 # --- UI 组件：可拖拽且支持触控微调的标定画布 ---
@@ -16,14 +16,55 @@ class CalibrationCanvas(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(800, 380)
 
+        # 预览循环控制
+        self.cap = None
+        self.preview_timer = QTimer(self)
+        self.preview_timer.timeout.connect(self._read_next_frame)
+
     def load_frame(self, video_path):
-        cap = cv2.VideoCapture(video_path)
-        ret, frame = cap.read()
-        cap.release()
+        """加载视频源并开启实时预览"""
+        self.stop_preview() # 启动前先确保清理可能存在的旧实例
+        
+        api_preference = cv2.CAP_GSTREAMER if "libcamerasrc" in video_path else cv2.CAP_ANY
+        self.cap = cv2.VideoCapture(video_path, api_preference)
+        
+        if not self.cap.isOpened():
+            print(">>> 错误：无法打开视频流")
+            return
+            
+        # 预读取第一帧以初始化画布
+        ret, frame = self.cap.read()
         if ret:
             self.orig_frame = frame
-            self.init_points()
+            # 仅在首次加载时初始化标定点，防止切出再切回时点位被重置
+            if not self.real_points: 
+                self.init_points()
             self.update_display()
+            
+            # 启动定时器，约 30 FPS 刷新率 (33ms)
+            self.preview_timer.start(33)
+
+    def _read_next_frame(self):
+        """定时器回调：读取下一帧并渲染"""
+        if not self.cap or not self.cap.isOpened():
+            return
+            
+        ret, frame = self.cap.read()
+        if not ret:
+            # 如果是本地视频播放完毕，自动重置到开头循环播放
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, frame = self.cap.read()
+            
+        if ret:
+            self.orig_frame = frame
+            self.update_display() # 利用原有的渲染逻辑，不仅更新画面，还会把标定点浮在视频上面
+
+    def stop_preview(self):
+        """停止预览并释放硬件设备"""
+        self.preview_timer.stop()
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
 
     def init_points(self):
         h, w = self.orig_frame.shape[:2]
@@ -71,7 +112,7 @@ class CalibrationCanvas(QLabel):
                 cv2.circle(canvas, (ux, uy), 22, (0, 255, 255), 2)
             cv2.putText(canvas, labels[i], (ux+20, uy-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-        # ====== 新增：如果选中了点，绘制局部放大镜和中心方向键 ======
+        # ====== 如果选中了点，绘制局部放大镜和中心方向键 ======
         self.dpad_rects.clear()
         if self.selected_idx != -1:
             # 1. 绘制局部放大镜 (Loupe)

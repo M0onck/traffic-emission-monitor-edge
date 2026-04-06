@@ -132,14 +132,20 @@ class MainController:
         self.enter_app(self.view.page_settings)
 
     def enter_app(self, target_widget):
-        """进入具体功能的槽函数"""
+        """进入具体功能的槽函数（统一的页面跳转入口）"""
+        current_widget = self.view.stack.currentWidget()
+        
+        # 硬件资源安全锁：只要离开标定页面，立即释放摄像头
+        if current_widget == self.view.page_calibration and target_widget != self.view.page_calibration:
+            self.view.canvas.stop_preview()
+            print("前端控制器：已释放标定页面的视频资源")
+        
         self.view.stack.setCurrentWidget(target_widget)
         self.update_nav_buttons()
 
     def return_to_home(self):
         """返回主界面"""
-        self.view.stack.setCurrentWidget(self.view.page_main_menu)
-        self.update_nav_buttons()
+        self.enter_app(self.view.page_main_menu) # 可复用硬件资源安全锁
         self.update_main_menu_btn_style()
 
     def prev_page(self):
