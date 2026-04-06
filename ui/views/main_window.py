@@ -111,33 +111,24 @@ class MainWindow(QMainWindow):
 
         # --- 左侧：硬件与状态信息看板 (BIOS 仪表盘风格) ---
         left_panel = QFrame()
-        left_panel.setStyleSheet("background-color: #1a1d2d; border: 2px solid #2d324f; border-radius: 12px;")
+        # 替换为灰黑底色和暗色边框
+        left_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(25, 25, 25, 25)
 
         title = QLabel("系统状态")
         title.setFont(QFont("Consolas", 18, QFont.Bold))
-        title.setStyleSheet("color: #00e676; border: none;") # 荧光绿点缀
+        title.setStyleSheet("color: #ffffff; border: none;") # 标题用纯白
         left_layout.addWidget(title)
         
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("border: 1px solid #2d324f;")
+        line.setStyleSheet("border: 1px solid #333;") # 暗色分割线
         left_layout.addWidget(line)
         left_layout.addSpacing(15)
 
-        # 定义一个字典作为类成员，用于保存所有数值 Label 的句柄
         self.status_labels = {}
-        
-        # 定义需要展示的监控项（初始值先用占位符 "--"，稍后由 Controller 填写真实数据）
-        status_keys = [
-            "系统时间",
-            "边缘存储",
-            "网络连接",
-            "气象网关",
-            "CPU 温度",
-            "NPU 温度"
-        ]
+        status_keys = ["系统时间", "存储空间", "网络连接", "气象网关", "CPU 温度", "NPU 温度"]
 
         font_label = QFont("Consolas", 14)
         font_value = QFont("Consolas", 14, QFont.Bold)
@@ -147,15 +138,14 @@ class MainWindow(QMainWindow):
             row = QHBoxLayout()
             
             lbl_k = QLabel(key)
-            lbl_k.setStyleSheet("color: #8ab4f8; border: none;")
+            lbl_k.setStyleSheet("color: #aaaaaa; border: none;") # 键名：暗灰，降低视觉干扰
             lbl_k.setFont(font_label)
             
-            lbl_v = QLabel("--")  # 默认占位符
-            lbl_v.setStyleSheet("color: #ffffff; border: none;")
+            lbl_v = QLabel("--")  
+            lbl_v.setStyleSheet("color: #ffffff; border: none;") # 键值：明亮白，突出数据本身
             lbl_v.setFont(font_value)
             lbl_v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             
-            # 将对应项的 QLabel 存入字典
             self.status_labels[key] = lbl_v
             
             row.addWidget(lbl_k)
@@ -528,19 +518,13 @@ class MainWindow(QMainWindow):
         
         # === 左侧：气象数据看板 (3行2列) ===
         weather_left_panel = QFrame()
-        weather_left_panel.setStyleSheet("background-color: #1a1d2d; border: 2px solid #2d324f; border-radius: 12px;")
+        weather_left_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
         w_grid_layout = QGridLayout(weather_left_panel)
         w_grid_layout.setContentsMargins(25, 25, 25, 25)
         w_grid_layout.setSpacing(20)
         
-        # 重命名为 monitor_labels，与校准页区分
         self.weather_monitor_labels = {}
-        
-        weather_items = [
-            ("温度", "°C"), ("湿度", "%"),
-            ("风速", "m/s"), ("风向", "°"),
-            ("PM2.5", "μg/m³"), ("PM10", "μg/m³")
-        ]
+        weather_items = [("温度", "°C"), ("湿度", "%"), ("风速", "m/s"), ("风向", "°"), ("PM2.5", "μg/m³"), ("PM10", "μg/m³")]
         
         font_w_title = QFont("Arial", 14)
         font_w_val = QFont("Consolas", 20, QFont.Bold)
@@ -554,11 +538,11 @@ class MainWindow(QMainWindow):
             
             lbl_title = QLabel(name)
             lbl_title.setFont(font_w_title)
-            lbl_title.setStyleSheet("color: #8ab4f8; border: none;")
+            lbl_title.setStyleSheet("color: #aaaaaa; border: none;") # 键名去色暗化
             
             lbl_val = QLabel(f"-- {unit}")
             lbl_val.setFont(font_w_val)
-            lbl_val.setStyleSheet("color: #00e676; border: none;")
+            lbl_val.setStyleSheet("color: #ffffff; border: none;") # 键值提亮
             lbl_val.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             
             self.weather_monitor_labels[name] = lbl_val 
@@ -572,8 +556,7 @@ class MainWindow(QMainWindow):
         
         # === 右侧：气象站插画展示区 ===
         weather_right_panel = QFrame()
-        # 修改边框样式为实线，保持视觉统一
-        weather_right_panel.setStyleSheet("background-color: #0f111a; border: 2px solid #2d324f; border-radius: 12px;")
+        weather_right_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
         w_right_layout = QVBoxLayout(weather_right_panel)
         w_right_layout.setContentsMargins(10, 10, 10, 10)
         
@@ -623,7 +606,7 @@ class MainWindow(QMainWindow):
         
         # === 左侧：气象数据看板 + 时间戳 ===
         left_panel = QFrame()
-        left_panel.setStyleSheet("background-color: #1a1d2d; border: 2px solid #2d324f; border-radius: 12px;")
+        left_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(25, 25, 25, 25)
         
@@ -649,10 +632,10 @@ class MainWindow(QMainWindow):
             
             lbl_title = QLabel(name)
             lbl_title.setFont(font_w_title)
-            lbl_title.setStyleSheet("color: #8ab4f8; border: none;")
+            lbl_title.setStyleSheet("color: #aaaaaa; border: none;")
             lbl_val = QLabel(f"-- {unit}")
             lbl_val.setFont(font_w_val)
-            lbl_val.setStyleSheet("color: #00e676; border: none;")
+            lbl_val.setStyleSheet("color: #ffffff; border: none;")
             self.weather_calib_labels[name] = lbl_val
             
             cell_layout.addWidget(lbl_title)
@@ -664,7 +647,7 @@ class MainWindow(QMainWindow):
         # 底部分隔线与时间戳
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("border: 1px solid #2d324f;")
+        line.setStyleSheet("border: 1px solid #333;")
         left_layout.addSpacing(15)
         left_layout.addWidget(line)
         left_layout.addSpacing(15)

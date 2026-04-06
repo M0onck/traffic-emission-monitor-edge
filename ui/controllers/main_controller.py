@@ -4,12 +4,13 @@ import cv2
 import numpy as np
 import infra.config.loader as cfg
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtWidgets import (QMessageBox, QTableWidgetItem, QDialog, 
-                             QVBoxLayout, QHBoxLayout, QLabel, 
+from PyQt5.QtWidgets import (QTableWidgetItem, QVBoxLayout, 
+                             QHBoxLayout, QLabel, 
                              QPushButton, QRadioButton)
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from datetime import datetime
 from ui.workers.engine_worker import EngineWorker
+from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
 from perception.sensor.weather_station import WeatherGateway
@@ -74,44 +75,16 @@ class MainController:
         self.view.session_combo.currentIndexChanged.connect(self.update_db_table)
     
     def handle_sync_clock(self):
-        if not self.weather_gw:
-            return
-            
-        # 创建确认弹窗
-        msg_box = QMessageBox(self.view)
-        msg_box.setWindowTitle("时钟同步校准")
-        msg_box.setText("确认与远端系统同步时间吗？")
-        msg_box.setIcon(QMessageBox.Question)
-        
-        # 自定义按钮中文文本
-        yes_btn = msg_box.addButton("确认", QMessageBox.YesRole)
-        no_btn = msg_box.addButton("取消", QMessageBox.NoRole)
-        
-        msg_box.exec_()
-        
-        # 仅当用户点击确认时才下发指令
-        if msg_box.clickedButton() == yes_btn:
+        if not self.weather_gw: return
+        dialog = EdgeMessageBox(self.view, "时钟同步校准", "确认与远端系统同步时间吗？")
+        if dialog.exec_() == EdgeMessageBox.Accepted: # 捕获自定义关闭信号
             self.weather_gw.sync_time()
             print("前端控制器：已确认下发时钟同步指令")
             
     def handle_zero_wind(self):
-        if not self.weather_gw:
-            return
-            
-        # 创建确认弹窗
-        msg_box = QMessageBox(self.view)
-        msg_box.setWindowTitle("风速调零校准")
-        msg_box.setText("确认执行风速调零吗？\n请确保传感器处于无风环境，等待10秒后完成调零。")
-        msg_box.setIcon(QMessageBox.Warning) # 调零属于敏感操作，使用黄色警告图标
-        
-        # 自定义按钮中文文本
-        yes_btn = msg_box.addButton("确认", QMessageBox.YesRole)
-        no_btn = msg_box.addButton("取消", QMessageBox.NoRole)
-        
-        msg_box.exec_()
-        
-        # 仅当用户点击确认时才下发指令
-        if msg_box.clickedButton() == yes_btn:
+        if not self.weather_gw: return
+        dialog = EdgeMessageBox(self.view, "风速调零校准", "确认执行风速调零吗？", "请确保传感器处于无风环境，等待10秒后完成调零。", is_warning=True)
+        if dialog.exec_() == EdgeMessageBox.Accepted:
             self.weather_gw.zero_wind()
             print("前端控制器：已确认下发风速调零指令")
 
@@ -263,19 +236,8 @@ class MainController:
     
     def stop_collection_trigger(self):
         """触发结束采集：弹出确认窗口"""
-        msg_box = QMessageBox(self.view)
-        msg_box.setWindowTitle("确认操作")
-        msg_box.setText("确定要结束当前的采集任务并关闭引擎吗？")
-        msg_box.setInformativeText("未保存的缓冲区数据可能会丢失。")
-        msg_box.setIcon(QMessageBox.Question)
-        
-        # 自定义按钮文字
-        yes_btn = msg_box.addButton("确定", QMessageBox.YesRole)
-        no_btn = msg_box.addButton("取消", QMessageBox.NoRole)
-        
-        msg_box.exec_()
-        
-        if msg_box.clickedButton() == yes_btn:
+        dialog = EdgeMessageBox(self.view, "结束任务确认", "确定要结束当前的采集任务并关闭引擎吗？", "未保存的缓冲区数据可能会丢失。", is_warning=True)
+        if dialog.exec_() == EdgeMessageBox.Accepted:
             self.final_stop_process()
     
     def final_stop_process(self):
@@ -457,66 +419,58 @@ class MainController:
 
     def show_batch_delete_dialog(self):
         """弹出基于 Session 的删除数据对话框"""
-        dialog = QDialog(self.view)
-        dialog.setWindowTitle("清理历史数据")
-        dialog.setFixedSize(480, 220) 
-        dialog.setStyleSheet("""
-            QDialog { background-color: #1a1d2d; border: 2px solid #2d324f; }
-            QLabel { color: white; font-size: 16px; }
-            QRadioButton { color: white; font-size: 18px; font-weight: bold; }
-            QRadioButton::indicator { width: 20px; height: 20px; }
-        """)
+        dialog = EdgeAnimatedDialog(self.view, target_height=260, is_warning=True)
         
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(30, 30, 30, 20)
+        layout = QVBoxLayout(dialog.panel)
+        layout.setContentsMargins(40, 30, 40, 30)
+
+        title = QLabel("清理历史数据")
+        title.setFont(QFont("Arial", 18, QFont.Bold))
+        title.setStyleSheet("color: #ffffff; border: none;")
+        layout.addWidget(title)
+        layout.addSpacing(15)
         
-        # 获取当前选中的会话信息
         current_session_id = self.view.session_combo.currentData()
         current_session_text = self.view.session_combo.currentText()
         
         # --- 模式选择 ---
-        radio_session = QRadioButton(f"删除当前选中的任务:\n({current_session_text})")
+        radio_session = QRadioButton(f"删除当前选中的任务: {current_session_text}")
+        radio_session.setStyleSheet("color: #dddddd; font-size: 16px;")
         radio_session.setChecked(True)
-        if not current_session_id:
-            radio_session.setEnabled(False) # 如果没有数据，禁用此选项
+        if not current_session_id: radio_session.setEnabled(False)
             
         radio_all = QRadioButton("清空【所有】历史任务数据")
+        radio_all.setStyleSheet("color: #ff4d4f; font-size: 16px; font-weight: bold;")
         
         layout.addWidget(radio_session)
-        layout.addSpacing(15)
         layout.addWidget(radio_all)
         layout.addStretch()
         
         # --- 底部确认/取消按钮 ---
         btn_layout = QHBoxLayout()
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setStyleSheet("background-color: #555; color: white; font-size: 16px; padding: 12px; border-radius: 5px;")
-        
-        btn_confirm = QPushButton("确认")
-        btn_confirm.setStyleSheet("background-color: #d50000; color: white; font-weight: bold; font-size: 16px; padding: 12px; border-radius: 5px;")
-        
         btn_layout.addStretch()
+        
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setFixedSize(120, 45)
+        btn_cancel.setFont(QFont("Arial", 14, QFont.Bold))
+        btn_cancel.setStyleSheet("background-color: transparent; border: 2px solid #777; color: #fff; border-radius: 5px;")
+        btn_cancel.clicked.connect(lambda: dialog.close_with_anim(EdgeAnimatedDialog.Rejected))
+        
+        btn_confirm = QPushButton("确认删除")
+        btn_confirm.setFixedSize(120, 45)
+        btn_confirm.setFont(QFont("Arial", 14, QFont.Bold))
+        btn_confirm.setStyleSheet("background-color: transparent; border: 2px solid #ff4d4f; color: #ff4d4f; border-radius: 5px;")
+        
         btn_layout.addWidget(btn_cancel)
+        btn_layout.addSpacing(20)
         btn_layout.addWidget(btn_confirm)
         layout.addLayout(btn_layout)
         
-        btn_cancel.clicked.connect(dialog.reject)
-        
         # --- 第二级危险确认逻辑 ---
         def execute_delete():
-            msg_box = QMessageBox(dialog)
-            msg_box.setWindowTitle("⚠️ 删除操作确认")
-            msg_box.setIcon(QMessageBox.Critical)
-            if radio_all.isChecked():
-                msg_box.setText("您即将【清空所有的历史数据记录】。\n此操作执行后数据将无法找回，确定继续吗？")
-            else:
-                msg_box.setText("您即将删除当前选中的任务数据。\n此操作执行后无法找回，确定继续吗？")
-                
-            yes_btn = msg_box.addButton("确认删除", QMessageBox.YesRole)
-            no_btn = msg_box.addButton("放弃删除", QMessageBox.NoRole)
-            msg_box.exec_()
-            
-            if msg_box.clickedButton() == yes_btn:
+            msg = "您即将【清空所有的历史数据记录】。\n此操作不可逆，确定继续吗？" if radio_all.isChecked() else "您即将删除当前选中的任务数据。\n此操作不可逆，确定继续吗？"
+            confirm_dialog = EdgeMessageBox(dialog, "⚠️ 最终删除确认", msg, is_warning=True)
+            if confirm_dialog.exec_() == EdgeMessageBox.Accepted:
                 db = DatabaseManager()
                 success = False
                 if radio_all.isChecked():
@@ -526,9 +480,8 @@ class MainController:
                 db.close()
                 
                 if success:
-                    # 删除成功后，彻底重载下拉框和表格
                     self.handle_db_refresh() 
-                dialog.accept()
+                dialog.close_with_anim(EdgeAnimatedDialog.Accepted)
                 
         btn_confirm.clicked.connect(execute_delete)
         dialog.exec_()
