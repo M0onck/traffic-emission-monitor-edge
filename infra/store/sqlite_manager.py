@@ -227,7 +227,7 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'insert_veh_raw' 未定义")
 
-    def insert_veh_sum(self, session_id: str, tid: int, record: dict, vehicle_type: str, energy_type: str, dominant_opmodes: list):
+    def insert_veh_sum(self, session_id: str, tid: int, record: dict, vehicle_type: str, energy_type: str, dominant_opmodes: list, settlement_status: str):
         """
         向前端看板专用表写入精简后的车辆统计数据
         """
@@ -235,7 +235,7 @@ class DatabaseManager:
         avg_speed = record.get('speed_sum', 0.0) / speed_count if speed_count > 0 else 0.0
         opmodes_json = json.dumps(dominant_opmodes)
 
-        # 构建与 queries.sql 对应的参数元组 (新增了 session_id)
+        # 构建与 queries.sql 对应的参数元组
         params = (
             session_id,
             int(tid),
@@ -244,7 +244,8 @@ class DatabaseManager:
             float(record.get('first_time', 0.0)),
             float(record.get('last_seen_time', 0.0)),
             float(avg_speed),
-            opmodes_json
+            opmodes_json,
+            str(settlement_status)
         )
         
         sql = self.queries.get('insert_veh_sum')
@@ -282,8 +283,9 @@ class DatabaseManager:
         """
         query = """
             SELECT tracker_id, vehicle_type, energy_type, 
-                   entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes
+                   entry_time, exit_time, ROUND(average_speed, 2), dominant_opmodes, settlement_status
             FROM Veh_Sum 
+            WHERE session_id = ?
             ORDER BY exit_time DESC 
             LIMIT ?
         """

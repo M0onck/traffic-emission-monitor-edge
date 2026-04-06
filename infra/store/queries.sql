@@ -22,8 +22,8 @@ INSERT INTO Veh_Raw (
 -- name: insert_veh_sum
 INSERT INTO Veh_Sum (
     session_id, tracker_id, vehicle_type, energy_type, 
-    entry_time, exit_time, average_speed, dominant_opmodes
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    entry_time, exit_time, average_speed, dominant_opmodes, settlement_status
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: insert_aligned_dataset
 INSERT INTO Aligned_Dataset (

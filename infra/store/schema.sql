@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS Veh_Sum (
     exit_time REAL,                       
     average_speed REAL,                   -- 平均车速 (m/s)
     dominant_opmodes TEXT,                -- 主导工况序列 (JSON 数组)
+    settlement_status TEXT,               -- 结算状态 (Settled / Unsettled)
     FOREIGN KEY(session_id) REFERENCES Session_Task(session_id)
 );
 

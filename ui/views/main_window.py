@@ -601,10 +601,10 @@ class MainWindow(QMainWindow):
 
         # 数据库表格控件
         self.db_table = QTableWidget()
-        self.db_table.setColumnCount(7)
+        self.db_table.setColumnCount(8)
         # 设置表头字段定义
         self.db_table.setHorizontalHeaderLabels([
-            "目标 ID", "车型(LDV/HDV)", "能源类型", "入场时间", "离场时间", "平均车速(m/s)", "主导工况"
+            "目标 ID", "车型(LDV/HDV)", "能源类型", "入场时间", "离场时间", "平均车速(m/s)", "主导工况", "结算状态"
         ])
 
         # 表格样式调整，适应深色主题

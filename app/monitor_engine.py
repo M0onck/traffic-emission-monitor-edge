@@ -471,9 +471,8 @@ class TrafficMonitorEngine:
             # 提取基础车型用于存入数据库 (比如 "LDV-Gasoline" -> "LDV")
             base_vehicle_type = final_type_str.split('-')[0] if final_type_str else "LDV"
 
-            # 如果是强制结算片段，追加 "-Forced" 标记
-            if is_continued:
-                base_vehicle_type = f"{base_vehicle_type}-Forced"
+            # 根据正常结算/临时结算状态写入状态判断
+            settlement_status = "Unsettled" if is_continued else "Settled"
 
             if getattr(self, 'current_session_id', None):
                 # 1. 宏观统计入库 (Veh_Sum - 供前端预览)
@@ -483,7 +482,8 @@ class TrafficMonitorEngine:
                     record=record, 
                     vehicle_type=base_vehicle_type, 
                     energy_type=energy_type, 
-                    dominant_opmodes=dominant_opmodes
+                    dominant_opmodes=dominant_opmodes,
+                    settlement_status=settlement_status
                 )
 
                 # 2. 微观轨迹入库 (Veh_Raw - 供后端分析)
