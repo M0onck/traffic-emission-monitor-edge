@@ -311,6 +311,9 @@ class MainWindow(QMainWindow):
         camera_layout.addWidget(self.lbl_camera_info)
         camera_layout.addStretch()
 
+        vs_layout.addLayout(camera_layout)
+        vs_layout.addStretch()
+
         self.settings_tabs.addTab(tab_video_source, "视频源配置")
 
         self.stack.addWidget(self.page_settings)
