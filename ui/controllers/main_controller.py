@@ -22,6 +22,15 @@ class MainController:
         self.is_collecting = False
         self.sampled_tid = None
         self.worker = None
+
+        # 定义显式的页面向导流
+        # 只要在这里修改顺序，整个向导流就会自动适应，不需要改其他逻辑
+        self.wizard_flow = [
+            self.view.page_calibration,       # 步骤 1: 视觉标定
+            self.view.page_size_settings,     # 步骤 2: 道路ROI尺寸设置
+            self.view.page_pos_settings,      # 步骤 3: 仪器与道路方位设置
+            self.view.page_monitor            # 运行: 监控面板
+        ]
         
         self.dash_timer = QTimer(self.view)
         self.dash_timer.timeout.connect(self.update_timer_tasks)
@@ -109,81 +118,121 @@ class MainController:
     def route_app1_click(self):
         """主界面按钮的智能跳转路由"""
         if self.is_collecting:
-            # 如果已经在采集中，直接跳过标定和设置，切入监控面板 (Index 3)
-            self.enter_app(3)
+            # 如果已经在采集中，直接跳过标定和设置，切入监控面板
+            self.enter_app(self.view.page_monitor)
         else:
-            # 如果尚未运行，按照正常流程进入第一步标定环节 (Index 1)
-            self.enter_app(1)
+            # 如果尚未运行，按照正常流程进入第一步标定环节
+            self.enter_app(self.view.page_weather_calib)
     
     def route_app2_click(self):
-        """跳转至气象站校准页面 (Index 4)"""
-        self.enter_app(4)
+        """跳转至气象站校准页面"""
+        self.enter_app(self.view.page_weather_calib)
         # TODO 进入时自动对齐时间
 
     def route_app3_click(self):
-        """跳转至历史数据浏览页面 (Index 5)"""
-        self.enter_app(5)
+        """跳转至历史数据浏览页面"""
+        self.enter_app(self.view.page_db_browser)
         self.handle_db_refresh() # 进入时自动拉取一次最新数据
 
-    def enter_app(self, target_idx):
+    def enter_app(self, target_widget):
         """进入具体功能的槽函数"""
-        self.view.stack.setCurrentIndex(target_idx)
+        self.view.stack.setCurrentIndex(target_widget)
         self.update_nav_buttons()
 
     def return_to_home(self):
         """返回主界面"""
-        self.view.stack.setCurrentIndex(0)
+        self.view.stack.setCurrentIndex(self.view.page_main_menu)
         self.update_nav_buttons()
         self.update_main_menu_btn_style()
 
     def prev_page(self):
         """上一页触发逻辑"""
-        idx = self.view.stack.currentIndex()
-        if idx > 1: # 防止用户通过“上一步”按钮退回到主菜单
-            self.view.stack.setCurrentIndex(idx - 1)
+        current_page = self.view.stack.currentWidget()
+        if current_page in self.wizard_flow:
+            idx = self.wizard_flow.index(current_page)
+            if idx > 0: # 只要不是第一步，就可以回退
+                self.view.stack.setCurrentWidget(self.wizard_flow[idx - 1])
         self.update_nav_buttons()
 
     def next_page(self):
         """下一页触发逻辑"""
-        idx = self.view.stack.currentIndex()
-        if idx == 2:
-            # 若还未启动则进入运行状态
-            if not self.is_collecting:
-                self.start_engine()
-                self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
-                self.is_collecting = True
-        if idx < self.view.stack.count() - 1:
-            self.view.stack.setCurrentIndex(idx + 1)
+        current_page = self.view.stack.currentWidget()
+        
+        # --- 离开当前页面的处理逻辑 ---
+        if current_page == self.view.page_pos_settings:
+            self.save_physics_settings() # 保存物理参数设置
+
+        # --- 状态机流转逻辑 ---
+        if current_page in self.wizard_flow:
+            idx = self.wizard_flow.index(current_page)
+            if idx < len(self.wizard_flow) - 1:
+                next_page = self.wizard_flow[idx + 1]
+                self.view.stack.setCurrentWidget(next_page)
+                
+                # --- 进入新页面的处理逻辑 ---
+                if next_page == self.view.page_monitor and not self.is_collecting:
+                    self.start_engine()
+                    self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
+                    self.is_collecting = True
+                    
         self.update_nav_buttons()
 
-    def update_nav_buttons(self):
-        idx = self.view.stack.currentIndex()
+    def save_physics_settings(self):
+        """将界面上的物理与环境参数同步到配置文件"""
+        is_left_side = self.view.combo_wx_side.currentIndex() == 0
+        dist_to_edge = self.view.wx_dist_to_edge
         
-        # 如果在 BIOS 界面 (0)，直接隐藏底部的所有控制按钮
-        self.view.nav_widget.setVisible(idx > 0)
-        if idx == 0:
+        # 结合上一步保存的 phys_w 计算绝对 x 坐标
+        if is_left_side:
+            final_wx_pos = 0.0 - dist_to_edge
+        else:
+            final_wx_pos = self.view.phys_w + dist_to_edge
+            
+        final_road_angle = float(self.view.slider_road_angle.value())
+        
+        # 更新到配置内存中 (AlignmentEngine 在 start_engine 时会去读取最新的 cfg)
+        cfg.WEATHER_STATION_X_POS = final_wx_pos
+        cfg.ROAD_DIRECTION_ANGLE = final_road_angle
+        print(f"[Controller] 环境先验已更新: X坐标={final_wx_pos}m, 道路角度={final_road_angle}°")
+
+    def update_nav_buttons(self):
+        current_page = self.view.stack.currentWidget()
+        
+        # 1. 只有主页面隐藏整个底部导航栏
+        is_home = (current_page == self.view.page_main_menu)
+        self.view.nav_widget.setVisible(not is_home)
+        if is_home:
             return
         
-        # 只有在运行面板（Index 3）且正在采集时，才显示“结束采集”按钮
-        self.view.btn_stop.setVisible(idx == 3 and self.is_collecting)
+        # 2. 控制特定功能按钮
+        self.view.btn_stop.setVisible(current_page == self.view.page_monitor and self.is_collecting)
+        self.view.btn_delete_db.setVisible(current_page == self.view.page_db_browser)
 
-        # 仅在数据库浏览界面显示批量删除按钮
-        self.view.btn_delete_db.setVisible(idx == 5)
-
-        # 现在的步骤页面索引是 1 -> 2 -> 3
-        self.view.btn_prev.setVisible(idx > 1 and idx < 3) 
-        
-        if idx == 1:
-            self.view.btn_next.setVisible(True)
-            self.view.btn_next.setText("下一步 ▶")
-            self.view.btn_next.setStyleSheet("")
-        elif idx == 2:
-            self.view.btn_next.setVisible(True)
-            self.view.btn_next.setText(" 开 始 ")
-            self.view.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
-        elif idx in [3, 4, 5]:
-            self.view.btn_next.setVisible(False) 
+        # 3. 控制“向导流”中的上一步/下一步
+        if current_page in self.wizard_flow:
+            idx = self.wizard_flow.index(current_page)
+            
+            # 第一页没有上一步
+            self.view.btn_prev.setVisible(idx > 0)
+            
+            # 最后一页 (运行面板) 隐藏导航箭头，只能点“结束采集”或“返回主页”
+            if current_page == self.view.page_monitor:
+                self.view.btn_prev.setVisible(False)
+                self.view.btn_next.setVisible(False)
+            else:
+                self.view.btn_next.setVisible(True)
+                
+                # 如果是正式启动前的最后一步
+                if current_page == self.view.page_physics_settings:
+                    self.view.btn_next.setText(" 开 始 ")
+                    self.view.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
+                else:
+                    self.view.btn_next.setText("下一步 ▶")
+                    self.view.btn_next.setStyleSheet("")
+        else:
+            # 独立页面 (校准页、历史数据库浏览页)，只有“返回主页”按钮，隐藏前后导航
             self.view.btn_prev.setVisible(False)
+            self.view.btn_next.setVisible(False)
     
     def update_main_menu_btn_style(self):
         """根据采集状态刷新主界面按钮颜色和文字"""
@@ -267,11 +316,11 @@ class MainController:
     # --- 界面渲染更新 ---
     def update_sys_board(self):
         """定期刷新左侧的系统状态看板"""
-        # --- 刷新气象站看板 (无视界面索引，后台统一刷新以备随时切换) ---
+        # --- 刷新气象站看板 ---
         self._update_weather_boards()
 
-        # 确保当前的界面是主菜单 (Index 0)，如果在其他界面就不白费性能去读了
-        if self.view.stack.currentIndex() != 0:
+        # 确保当前的界面是主菜单，如果在其他界面就不白费性能去读硬件状态了
+        if self.view.stack.currentWidget() != self.view.page_main_menu:
             return
             
         # 确保我们在 view 中维护了 status_labels 字典

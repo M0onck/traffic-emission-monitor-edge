@@ -217,8 +217,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.page_calibration)
     
     def init_page_size_settings(self):
-        self.page_settings = QWidget()
-        layout = QVBoxLayout(self.page_settings)
+        self.page_size_settings = QWidget()
+        layout = QVBoxLayout(self.page_size_settings)
         layout.setAlignment(Qt.AlignCenter)
         
         self.lbl_settings_title = QLabel("步骤 2/3: 设置真实物理尺寸")
@@ -282,12 +282,12 @@ class MainWindow(QMainWindow):
         layout.addSpacing(30)
         layout.addLayout(create_adjuster("纵向标定距 (Length): ", self.phys_h, set_h))
 
-        self.stack.addWidget(self.page_settings)
+        self.stack.addWidget(self.page_size_settings)
 
     def init_page_pos_settings(self):
         """物理先验参数与气象站位置设置"""
-        self.page_physics_settings = QWidget()
-        layout = QVBoxLayout(self.page_physics_settings)
+        self.page_pos_settings = QWidget()
+        layout = QVBoxLayout(self.page_pos_settings)
         layout.setContentsMargins(40, 20, 40, 20)
         
         title = QLabel("步骤 3/3: 物理与环境先验参数")
@@ -401,7 +401,7 @@ class MainWindow(QMainWindow):
         road_layout.addLayout(slider_layout)
         layout.addWidget(road_frame)
 
-        self.stack.addWidget(self.page_physics_settings)
+        self.stack.addWidget(self.page_pos_settings)
 
     def init_page_monitor(self):
         self.page_monitor = QWidget()
