@@ -9,12 +9,16 @@ from gi.repository import Gst, GLib
 def get_rpi_camera_pipeline(width=1440, height=1080, fps=30):
     """
     返回用于 cv2.VideoCapture 的纯画面拉流管道字符串（用于标定页面的实时预览）。
+    核心修复：
+    1. 紧跟 libcamerasrc 锁定 format=NV12，迎合树莓派底层 ISP 的要求，确保成功握手。
+    2. 采用 NV12 -> RGBA -> BGR 的两段式转换，解决 ARM 架构下的内存对齐问题。
     """
     return (
         f"libcamerasrc ! "
-        f"video/x-raw, width={width}, height={height}, framerate={fps}/1 ! "
+        f"video/x-raw, format=NV12, width={width}, height={height}, framerate={fps}/1 ! "
+        f"videoconvert ! video/x-raw, format=RGBA ! "
         f"videoconvert ! video/x-raw, format=BGR ! "
-        f"appsink"
+        f"appsink drop=true sync=false"
     )
 
 class GstPipelineManager:
@@ -44,7 +48,7 @@ class GstPipelineManager:
         if is_camera:
             # 物理摄像头源头：放弃前端带 appsink 的预览管道，重新构建原生的树莓派相机源头
             source_head = (
-                f"libcamerasrc ! video/x-raw, width=1280, height=720, framerate=30/1 ! "
+                f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1 ! "
                 f"videoconvert ! video/x-raw, format=NV12"
             )
         else:
