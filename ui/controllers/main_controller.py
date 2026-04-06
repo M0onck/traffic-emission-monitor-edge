@@ -153,14 +153,14 @@ class MainController:
         current_page = self.view.stack.currentWidget()
         if current_page in self.wizard_flow:
             idx = self.wizard_flow.index(current_page)
-            if idx > 0: # 只要不是第一步，就可以回退
+            if idx > 0:
                 prev_page_widget = self.wizard_flow[idx - 1]
-                # 如果回退到的是标定页，重新加载画面
+                
+                # 修复点：使用 enter_app 替代直接 setCurrentWidget
+                self.enter_app(prev_page_widget)
+                
                 if prev_page_widget == self.view.page_calibration:
                     self.view.canvas.load_frame(cfg.VIDEO_PATH)
-                self.view.stack.setCurrentWidget(self.wizard_flow[idx - 1])
-                
-        self.update_nav_buttons()
 
     def next_page(self):
         """下一页触发逻辑"""
@@ -168,26 +168,25 @@ class MainController:
         
         # --- 离开当前页面的处理逻辑 ---
         if current_page == self.view.page_pos_settings:
-            self.save_physics_settings() # 保存物理参数设置
+            self.save_physics_settings()
 
         # --- 状态机流转逻辑 ---
         if current_page in self.wizard_flow:
             idx = self.wizard_flow.index(current_page)
             if idx < len(self.wizard_flow) - 1:
-                next_page = self.wizard_flow[idx + 1]
+                next_page_widget = self.wizard_flow[idx + 1]
 
-                # --- 进入标定步骤时的处理 ---
-                if next_page == self.view.page_calibration:
-                    # 重新加载当前配置的源 (文件路径或 GST 管道)
-                    # CalibrationCanvas 内部使用 cv2.VideoCapture，它原生支持 GST 管道字符串
+                # 修复点：进入标定步骤时的处理，提前到路由跳转之前
+                if next_page_widget == self.view.page_calibration:
                     self.view.canvas.load_frame(cfg.VIDEO_PATH)
 
-                self.view.stack.setCurrentWidget(next_page)
+                # 修复点：使用 enter_app 统一接管路由，触发安全锁
+                self.enter_app(next_page_widget)
                 
                 # --- 进入新页面的处理逻辑 ---
-                if next_page == self.view.page_monitor and not self.is_collecting:
+                if next_page_widget == self.view.page_monitor and not self.is_collecting:
                     self.start_engine()
-                    self.dash_timer.start(100)  # 10Hz 轮询更新 Dashboard
+                    self.dash_timer.start(100) 
                     self.is_collecting = True
                     
         self.update_nav_buttons()
