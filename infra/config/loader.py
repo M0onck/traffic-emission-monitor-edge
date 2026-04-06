@@ -23,6 +23,7 @@ except Exception as e:
 # --- 1. 基础参数 ---
 _sys = _cfg["system"]
 VIDEO_PATH = _sys["video_path"]
+LOCAL_VIDEO_PATH = _sys.get("local_video_path", VIDEO_PATH)
 TARGET_VIDEO_PATH = _sys["target_video_path"]
 DB_PATH = _sys["db_path"]
 FPS = _sys["fps"]
@@ -105,6 +106,11 @@ def update_source_settings(new_path, use_camera=False):
     
     VIDEO_PATH = new_path
     USE_CAMERA = use_camera
+
+    # 只有在使用本地源时，才更新并保存 local_video_path
+    if not use_camera:
+        _cfg["system"]["local_video_path"] = new_path
+        LOCAL_VIDEO_PATH = new_path
     
     # 写入磁盘
     try:

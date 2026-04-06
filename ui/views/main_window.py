@@ -1,7 +1,8 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QStackedWidget, QTabWidget, 
                              QGridLayout, QFrame, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QComboBox, QSlider, QRadioButton)
+                             QHeaderView, QComboBox, QSlider, QRadioButton,
+                             QButtonGroup)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QPixmap
 
@@ -252,6 +253,9 @@ class MainWindow(QMainWindow):
         vs_layout.addWidget(lbl_desc)
         vs_layout.addSpacing(30)
 
+        # 创建互斥按钮组
+        self.source_btn_group = QButtonGroup(self.page_settings)
+
         # --- 选项 1: 本地视频 ---
         local_layout = QHBoxLayout()
         
@@ -267,7 +271,7 @@ class MainWindow(QMainWindow):
         self.btn_browse_local.setFixedHeight(40) # 控制一下高度不要太大
 
         # 路径显示标签 (初始加载 loader 中当前的配置路径)
-        self.lbl_local_path = QLabel(cfg.VIDEO_PATH) 
+        self.lbl_local_path = QLabel(cfg.LOCAL_VIDEO_PATH) 
         self.lbl_local_path.setFont(QFont("Arial", 12))
         self.lbl_local_path.setStyleSheet("color: #aaaaaa; border: none;")
 
@@ -313,6 +317,16 @@ class MainWindow(QMainWindow):
 
         vs_layout.addLayout(camera_layout)
         vs_layout.addStretch()
+
+        # 将两个单选框加入按钮组，强制互斥
+        self.source_btn_group.addButton(self.radio_source_local)
+        self.source_btn_group.addButton(self.radio_source_camera)
+
+        # 统一在这里根据配置进行且仅进行一次选中判定
+        if cfg.USE_CAMERA:
+            self.radio_source_camera.setChecked(True)
+        else:
+            self.radio_source_local.setChecked(True)
 
         self.settings_tabs.addTab(tab_video_source, "视频源配置")
 
