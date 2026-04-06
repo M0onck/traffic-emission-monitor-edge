@@ -225,10 +225,10 @@ class MainController:
                 # 如果是正式启动前的最后一步
                 if current_page == self.view.page_pos_settings:
                     self.view.btn_next.setText(" 开 始 ")
-                    self.view.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
+                    self.view.btn_next.setStyleSheet(self.view.style_hollow_green)
                 else:
                     self.view.btn_next.setText("下一步 ▶")
-                    self.view.btn_next.setStyleSheet("")
+                    self.view.btn_next.setStyleSheet(self.view.style_hollow_white)
         else:
             # 独立页面 (校准页、历史数据库浏览页)，只有“返回主页”按钮，隐藏前后导航
             self.view.btn_prev.setVisible(False)
@@ -237,25 +237,11 @@ class MainController:
     def update_main_menu_btn_style(self):
         """根据采集状态刷新主界面按钮颜色和文字"""
         if self.is_collecting:
-            style = """
-                QPushButton {
-                    background-color: #27ae60; color: white; border: none; border-radius: 8px;
-                    padding: 15px; text-align: left; padding-left: 20px;
-                }
-                QPushButton:hover { background-color: #2ecc71; }
-            """
-            self.view.btn_app1.setText("多源数据采集 (运行中...)")
+            self.view.btn_app1.setText("多源数据采集 [运行中...]")
+            self.view.btn_app1.setStyleSheet(self.view.style_hollow_green)
         else:
-            style = """
-                QPushButton {
-                    background-color: #2962ff; color: white; border: none; border-radius: 8px;
-                    padding: 15px; text-align: left; padding-left: 20px;
-                }
-                QPushButton:hover { background-color: #0039cb; }
-            """
             self.view.btn_app1.setText("多源数据采集")
-        
-        self.view.btn_app1.setStyleSheet(style)
+            self.view.btn_app1.setStyleSheet(self.view.style_hollow_white)
     
     # --- 任务启停控制 ---
     def start_engine(self):

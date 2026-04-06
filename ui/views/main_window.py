@@ -24,48 +24,65 @@ class MainWindow(QMainWindow):
         self.init_ui()
 
     def init_ui(self):
+        # === 全局纯黑底色与白字基调 ===
+        self.setStyleSheet("QMainWindow { background-color: #000000; } QWidget { color: #ffffff; }")
+
         self.central_widget = QWidget()
+        self.central_widget.setStyleSheet("background-color: #000000;") # 确保中间层也是黑的
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # QStackedWidget 用于页面切换
+        # === 统一定义镂空（Hollow）样式的 CSS ===
+        # 常规白色镂空
+        self.style_hollow_white = """
+            QPushButton { background-color: transparent; border: 2px solid #ffffff; color: #ffffff; border-radius: 6px; padding: 10px; }
+            QPushButton:hover { background-color: rgba(255, 255, 255, 0.1); }
+            QPushButton:pressed { background-color: rgba(255, 255, 255, 0.2); }
+        """
+        # 绿色运行/确认镂空
+        self.style_hollow_green = """
+            QPushButton { background-color: transparent; border: 2px solid #00e676; color: #00e676; border-radius: 6px; padding: 10px; }
+            QPushButton:hover { background-color: rgba(0, 230, 118, 0.1); }
+            QPushButton:pressed { background-color: rgba(0, 230, 118, 0.2); }
+        """
+        # 红色警告/停止镂空
+        self.style_hollow_red = """
+            QPushButton { background-color: transparent; border: 2px solid #ff4d4f; color: #ff4d4f; border-radius: 6px; padding: 10px; }
+            QPushButton:hover { background-color: rgba(255, 77, 79, 0.1); }
+            QPushButton:pressed { background-color: rgba(255, 77, 79, 0.2); }
+        """
+
         self.stack = QStackedWidget()
         self.main_layout.addWidget(self.stack)
 
-        # 底部导航栏：包裹在一个独立的 Widget 中，方便在主菜单时整体隐藏
         self.nav_widget = QWidget()
         self.nav_layout = QHBoxLayout(self.nav_widget)
         self.nav_layout.setContentsMargins(20, 10, 20, 10)
         
         font = QFont("Arial", 16, QFont.Bold)
 
-        # 返回主页按钮
+        # 应用镂空样式到底部导航栏
         self.btn_home = QPushButton("返回主页")
-        self.btn_home.setFont(font)
-        self.btn_home.setMinimumHeight(50)
-        self.btn_home.setStyleSheet("background-color: #f39c12; color: white;") 
+        self.btn_home.setFont(font); self.btn_home.setMinimumHeight(50)
+        self.btn_home.setStyleSheet(self.style_hollow_white) 
 
-        # 结束采集按钮 (默认隐藏)
         self.btn_stop = QPushButton("结束采集")
-        self.btn_stop.setFont(font)
-        self.btn_stop.setMinimumHeight(50)
-        self.btn_stop.setStyleSheet("background-color: #c0392b; color: white;") 
+        self.btn_stop.setFont(font); self.btn_stop.setMinimumHeight(50)
+        self.btn_stop.setStyleSheet(self.style_hollow_red) 
 
-        # 批量删除按钮 (红色预警，默认隐藏)
         self.btn_delete_db = QPushButton("批量删除")
-        self.btn_delete_db.setFont(font)
-        self.btn_delete_db.setMinimumHeight(50)
-        self.btn_delete_db.setStyleSheet("background-color: #d50000; color: white; border-radius: 5px;")
+        self.btn_delete_db.setFont(font); self.btn_delete_db.setMinimumHeight(50)
+        self.btn_delete_db.setStyleSheet(self.style_hollow_red)
         self.btn_delete_db.setVisible(False)
 
         self.btn_prev = QPushButton("◀ 上一步")
-        self.btn_prev.setFont(font)
-        self.btn_prev.setMinimumHeight(50)
+        self.btn_prev.setFont(font); self.btn_prev.setMinimumHeight(50)
+        self.btn_prev.setStyleSheet(self.style_hollow_white)
         
         self.btn_next = QPushButton("下一步 ▶")
-        self.btn_next.setFont(font)
-        self.btn_next.setMinimumHeight(50)
+        self.btn_next.setFont(font); self.btn_next.setMinimumHeight(50)
+        self.btn_next.setStyleSheet(self.style_hollow_white)
 
         self.nav_layout.addWidget(self.btn_home)
         self.nav_layout.addWidget(self.btn_stop)
@@ -161,33 +178,21 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(app_title)
         right_layout.addSpacing(30)
 
-        # 统一的按钮样式模板
-        btn_style = """
-            QPushButton {
-                background-color: #2962ff; color: white; border: none; border-radius: 8px;
-                padding: 15px; text-align: left; padding-left: 20px;
-            }
-            QPushButton:hover { background-color: #0039cb; }
-            QPushButton:pressed { background-color: #00227b; }
-        """
-        
         self.btn_app1 = QPushButton("多源数据采集")
         self.btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
-        self.btn_app1.setStyleSheet(btn_style)
+        self.btn_app1.setStyleSheet(self.style_hollow_white)
 
         self.btn_app2 = QPushButton("气象设备校准")
         self.btn_app2.setFont(QFont("Arial", 14, QFont.Bold))
-        self.btn_app2.setStyleSheet(btn_style)
+        self.btn_app2.setStyleSheet(self.style_hollow_white)
 
         self.btn_app3 = QPushButton("浏览历史数据")
         self.btn_app3.setFont(QFont("Arial", 14, QFont.Bold))
-        self.btn_app3.setStyleSheet(btn_style)
+        self.btn_app3.setStyleSheet(self.style_hollow_white)
 
         self.btn_exit = QPushButton("退出程序")
         self.btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
-        # 红色危险操作样式
-        btn_style3 = btn_style.replace("#2962ff", "#d50000").replace("#0039cb", "#9b0000").replace("#00227b", "#650000")
-        self.btn_exit.setStyleSheet(btn_style3)
+        self.btn_exit.setStyleSheet(self.style_hollow_red)
         self.btn_exit.clicked.connect(self.close)
 
         right_layout.addWidget(self.btn_app1)
@@ -233,9 +238,6 @@ class MainWindow(QMainWindow):
             lbl.setFont(QFont("Arial", 16))
             lbl.setMinimumWidth(220)
             
-            # 按钮样式
-            btn_style = "QPushButton { font-weight: bold; font-size: 16px; background-color: #333; color: white; border-radius: 5px; } QPushButton:pressed { background-color: #555; }"
-            
             btn_minus_coarse = QPushButton("- 1.0")
             btn_minus_fine = QPushButton("- 0.1")
             btn_plus_fine = QPushButton("+ 0.1")
@@ -243,7 +245,7 @@ class MainWindow(QMainWindow):
             
             for btn in [btn_minus_coarse, btn_minus_fine, btn_plus_fine, btn_plus_coarse]:
                 btn.setFixedSize(65, 50)
-                btn.setStyleSheet(btn_style)
+                btn.setStyleSheet(self.style_hollow_white)
             
             val_lbl = QLabel(f"{init_value:.1f} m")
             val_lbl.setFont(QFont("Arial", 22, QFont.Bold))
@@ -293,60 +295,59 @@ class MainWindow(QMainWindow):
         title = QLabel("步骤 3/3: 物理与环境先验参数")
         title.setFont(QFont("Arial", 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: white;")
         layout.addWidget(title)
         layout.addSpacing(20)
 
         # ==========================================
-        # 1. 气象站空间位置设置 (weather_station_x_pos)
+        # 1. 气象站空间位置设置
         # ==========================================
         wx_frame = QFrame()
-        wx_frame.setStyleSheet("background-color: #1a1d2d; border-radius: 10px; padding: 10px;")
+        wx_frame.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 10px; padding: 10px;")
         wx_layout = QVBoxLayout(wx_frame)
         
         lbl_wx_title = QLabel("气象站部署位置 (相对于道路ROI):")
         lbl_wx_title.setFont(QFont("Arial", 14, QFont.Bold))
-        lbl_wx_title.setStyleSheet("color: #8ab4f8;")
+        lbl_wx_title.setStyleSheet("color: #00e676; border: none;") # 用绿色提亮
         wx_layout.addWidget(lbl_wx_title)
 
-        # 左右侧选择
         side_layout = QHBoxLayout()
         lbl_side = QLabel("所处方位:")
         lbl_side.setFont(QFont("Arial", 14))
+        lbl_side.setStyleSheet("color: white; border: none;")
         self.combo_wx_side = QComboBox()
         self.combo_wx_side.addItems(["道路左侧 (x 坐标 ≤ 0)", "道路右侧 (x 坐标 ≥ 车道总宽)"])
         self.combo_wx_side.setFont(QFont("Arial", 14))
-        self.combo_wx_side.setStyleSheet("background-color: #0f111a; color: white; padding: 5px;")
+        self.combo_wx_side.setStyleSheet("background-color: #000; color: white; border: 1px solid #555; padding: 5px;")
         side_layout.addWidget(lbl_side)
         side_layout.addWidget(self.combo_wx_side)
         side_layout.addStretch()
         wx_layout.addLayout(side_layout)
 
-        # 距路缘距离 (复用粗微调组件，但允许 0.0)
         self.wx_dist_to_edge = 0.0
         
         def create_dist_adjuster(label_text, init_value):
             row = QHBoxLayout()
             lbl = QLabel(label_text)
             lbl.setFont(QFont("Arial", 14))
+            lbl.setStyleSheet("color: white; border: none;")
             lbl.setMinimumWidth(150)
             
-            btn_style = "QPushButton { font-weight: bold; font-size: 14px; background-color: #333; color: white; border-radius: 5px; } QPushButton:pressed { background-color: #555; }"
             btn_minus = QPushButton("- 0.5")
             btn_plus = QPushButton("+ 0.5")
             for btn in [btn_minus, btn_plus]:
-                btn.setFixedSize(60, 40)
-                btn.setStyleSheet(btn_style)
+                btn.setFixedSize(70, 40)
+                btn.setStyleSheet(self.style_hollow_white) # 用全局的白色镂空样式
             
             val_lbl = QLabel(f"{init_value:.1f} m")
             val_lbl.setFont(QFont("Arial", 18, QFont.Bold))
+            val_lbl.setStyleSheet("color: white; border: none;")
             val_lbl.setAlignment(Qt.AlignCenter)
             val_lbl.setMinimumWidth(80)
             
-            # 使用闭包保存状态
             state = {'val': init_value}
             def make_callback(delta):
                 def callback():
-                    # 距离路缘距离不能为负数
                     state['val'] = max(0.0, state['val'] + delta)
                     val_lbl.setText(f"{state['val']:.1f} m")
                     self.wx_dist_to_edge = state['val']
@@ -366,33 +367,52 @@ class MainWindow(QMainWindow):
         layout.addWidget(wx_frame)
 
         # ==========================================
-        # 2. 道路方向角设置 (road_direction_angle)
+        # 2. 道路方向角设置 (5度步进)
         # ==========================================
         road_frame = QFrame()
-        road_frame.setStyleSheet("background-color: #1a1d2d; border-radius: 10px; padding: 10px;")
+        road_frame.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 10px; padding: 10px;")
         road_layout = QVBoxLayout(road_frame)
         
         lbl_road_title = QLabel("道路走向方位角 (0° = 正南北走向):")
         lbl_road_title.setFont(QFont("Arial", 14, QFont.Bold))
-        lbl_road_title.setStyleSheet("color: #8ab4f8;")
+        lbl_road_title.setStyleSheet("color: #00e676; border: none;")
         road_layout.addWidget(lbl_road_title)
 
         slider_layout = QHBoxLayout()
         self.slider_road_angle = QSlider(Qt.Horizontal)
         self.slider_road_angle.setRange(-90, 90)
-        self.slider_road_angle.setValue(0)
-        self.slider_road_angle.setTickPosition(QSlider.TicksBelow)
+        self.slider_road_angle.setSingleStep(5)   # 键盘单步控制
+        self.slider_road_angle.setPageStep(15)    # 鼠标点击空白处步进
         self.slider_road_angle.setTickInterval(15)
+        self.slider_road_angle.setTickPosition(QSlider.TicksBelow)
+        
+        # 给滑动条加上赛博风的样式
+        self.slider_road_angle.setStyleSheet("""
+            QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #222; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #00e676; border: 2px solid #000; width: 16px; margin: -6px 0; border-radius: 8px; }
+        """)
         
         self.lbl_angle_val = QLabel("0°")
         self.lbl_angle_val.setFont(QFont("Arial", 20, QFont.Bold))
+        self.lbl_angle_val.setStyleSheet("color: white; border: none;")
         self.lbl_angle_val.setAlignment(Qt.AlignCenter)
         self.lbl_angle_val.setMinimumWidth(80)
         
-        # 滑动时动态更新数值
-        self.slider_road_angle.valueChanged.connect(
-            lambda v: self.lbl_angle_val.setText(f"{v}°")
-        )
+        # === 拦截信号实现 5 度强制吸附 (Snapping) ===
+        def snap_to_5_degrees(v):
+            # 将滑块当前值按四舍五入到最近的 5 的倍数
+            snapped_val = round(v / 5.0) * 5
+            
+            # 如果拖动导致值不是 5 的倍数，静默改回 5 的倍数
+            if self.slider_road_angle.value() != snapped_val:
+                self.slider_road_angle.blockSignals(True) # 阻断信号防止死循环
+                self.slider_road_angle.setValue(snapped_val)
+                self.slider_road_angle.blockSignals(False)
+                
+            self.lbl_angle_val.setText(f"{snapped_val}°")
+
+        self.slider_road_angle.valueChanged.connect(snap_to_5_degrees)
+        snap_to_5_degrees(0) # 初始化显示
         
         slider_layout.addWidget(self.slider_road_angle)
         slider_layout.addSpacing(20)
@@ -663,20 +683,15 @@ class MainWindow(QMainWindow):
         right_layout.setAlignment(Qt.AlignVCenter)
         right_layout.setSpacing(30)
         
-        btn_style = """
-            QPushButton { background-color: #2962ff; color: white; border: none; border-radius: 8px; padding: 20px; }
-            QPushButton:hover { background-color: #0039cb; }
-            QPushButton:pressed { background-color: #00227b; }
-        """
         btn_font = QFont("Arial", 16, QFont.Bold)
         
         self.btn_sync_clock = QPushButton("时钟同步校准")
         self.btn_sync_clock.setFont(btn_font)
-        self.btn_sync_clock.setStyleSheet(btn_style)
+        self.btn_sync_clock.setStyleSheet(self.style_hollow_white)
         
         self.btn_zero_wind = QPushButton("风速调零校准")
         self.btn_zero_wind.setFont(btn_font)
-        self.btn_zero_wind.setStyleSheet(btn_style)
+        self.btn_zero_wind.setStyleSheet(self.style_hollow_white)
         
         right_layout.addWidget(self.btn_sync_clock)
         right_layout.addWidget(self.btn_zero_wind)
