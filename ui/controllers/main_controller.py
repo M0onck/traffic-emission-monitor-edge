@@ -136,12 +136,12 @@ class MainController:
 
     def enter_app(self, target_widget):
         """进入具体功能的槽函数"""
-        self.view.stack.setCurrentIndex(target_widget)
+        self.view.stack.setCurrentWidget(target_widget)
         self.update_nav_buttons()
 
     def return_to_home(self):
         """返回主界面"""
-        self.view.stack.setCurrentIndex(self.view.page_main_menu)
+        self.view.stack.setCurrentWidget(self.view.page_main_menu)
         self.update_nav_buttons()
         self.update_main_menu_btn_style()
 
