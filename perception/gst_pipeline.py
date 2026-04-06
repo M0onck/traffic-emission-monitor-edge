@@ -44,34 +44,28 @@ class GstPipelineManager:
         is_camera = self.use_camera or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
         if is_camera:
-            # 物理摄像头源头：放弃前端带 appsink 的预览管道，重新构建原生的树莓派相机源头
-            source_head = (
-                f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1 ! "
-                f"videoconvert ! video/x-raw, format=NV12"
-            )
+            # 简化源头：不需要立刻转换，交给分支去处理
+            source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1"
         else:
-            # 本地文件源头：需要经过 decodebin 解码
             abs_path = os.path.abspath(self.video_path)
-            source_head = (
-                f"filesrc location={abs_path} ! decodebin ! video/x-raw ! "
-                f"videoconvert ! video/x-raw, format=NV12"
-            )
+            source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
 
-        # 拼接管道：将源头送入 tee 节点进行画面分支与 AI 推理分支的拆分
         pipeline = (
             f"{source_head} ! tee name=t "
             
             # --- 分支1: 视频画面分支 (送往 UI 渲染) ---
             f"t. ! queue max-size-buffers=5 leaky=downstream ! "
+            f"videoconvert ! video/x-raw, format=RGBA ! "
             f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! "
-            f"videoconvert ! video/x-raw, format=RGBA ! videoconvert ! video/x-raw, format=BGR ! "
+            f"videoconvert ! video/x-raw, format=BGR ! "
             f"appsink name=sink_video emit-signals=false max-buffers=2 drop=true sync=false "
             
             # --- 分支2: 硬件推理分支 (送往 Hailo-8 NPU) ---
             f"t. ! queue max-size-buffers=5 leaky=downstream ! "
+            f"videoconvert ! video/x-raw, format=RGBA ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
-            f"videoconvert ! video/x-raw, format=RGBA ! videoconvert ! video/x-raw, format=RGB ! "
-            f"hailonet hef-path={self.hef_path} vdevice-group-id=1 ! "
+            f"videoconvert ! video/x-raw, format=RGB ! "
+            f"hailonet hef-path={self.hef_path} ! "  # <-- 修复点1：移除 vdevice-group-id=1
             f"hailofilter so-path={self.post_so_path} qos=false ! "
             f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=true sync=false "
         )
@@ -105,6 +99,9 @@ class GstPipelineManager:
         if not sample_video or not sample_meta: 
             return None, None
 
+        # 持有 sample_meta 的引用，防止 C 底层野指针段错误
+        self._last_sample_meta = sample_meta 
+
         buffer_video = sample_video.get_buffer()
         buffer_meta = sample_meta.get_buffer()
         
@@ -112,7 +109,6 @@ class GstPipelineManager:
             success, map_info = buffer_video.map(Gst.MapFlags.READ)
             if not success: return None, None
             
-            # 动态获取视频的真实宽高
             caps = sample_video.get_caps()
             struct = caps.get_structure(0)
             actual_w = struct.get_value("width")
