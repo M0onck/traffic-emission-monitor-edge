@@ -8,9 +8,10 @@ class EdgeAnimatedDialog(QDialog):
     def __init__(self, parent=None, target_height=220, is_warning=False):
         super().__init__(parent)
         
+        # 针对 Wayland 适配：更改窗口类型为 Tool 工具层
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.showFullScreen()
+        self.setWindowState(Qt.WindowFullScreen)
         
         self.target_height = target_height
         self.v_center = 230 
@@ -25,7 +26,7 @@ class EdgeAnimatedDialog(QDialog):
         border_color = "#ff4d4f" if is_warning else "#555555" 
         self.panel.setStyleSheet(f"background-color: #0a0a0a; border-top: 2px solid {border_color}; border-bottom: 2px solid {border_color};")
         
-        # 3. 动画引擎
+        # 3. 动画引擎 (此时实例化它，后续 showEvent 调用就安全了)
         self.anim = QPropertyAnimation(self.panel, b"geometry")
         self.anim.setDuration(250)
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -40,7 +41,7 @@ class EdgeAnimatedDialog(QDialog):
         
     def close_with_anim(self, result_code):
         self.anim.setStartValue(self.panel.geometry())
-        self.anim.setEndValue(QRect(0, self.v_center, 800, 0)) 
+        self.anim.setEndValue(QRect(0, self.v_center, 800, 0))
         self.anim.finished.connect(lambda: self.done(result_code))
         self.anim.start()
 
