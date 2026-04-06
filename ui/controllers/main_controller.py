@@ -105,6 +105,8 @@ class MainController:
             # 如果已经在采集中，直接跳过标定和设置，切入监控面板
             self.enter_app(self.view.page_monitor)
         else:
+            # 进入第一步前，先确保加载最新的配置源
+            self.view.canvas.load_frame(cfg.VIDEO_PATH)
             # 如果尚未运行，按照正常流程进入第一步预设
             self.enter_app(self.wizard_flow[0])
     
@@ -146,7 +148,12 @@ class MainController:
         if current_page in self.wizard_flow:
             idx = self.wizard_flow.index(current_page)
             if idx > 0: # 只要不是第一步，就可以回退
+                prev_page_widget = self.wizard_flow[idx - 1]
+                # 如果回退到的是标定页，重新加载画面
+                if prev_page_widget == self.view.page_calibration:
+                    self.view.canvas.load_frame(cfg.VIDEO_PATH)
                 self.view.stack.setCurrentWidget(self.wizard_flow[idx - 1])
+                
         self.update_nav_buttons()
 
     def next_page(self):
@@ -600,6 +607,8 @@ class MainController:
             
             self.view.lbl_camera_info.setText("检测到 IMX296 硬件加速流")
             cfg.update_source_settings(pipeline, use_camera=True)
+            # 立即更新标定画布的源
+            self.view.canvas.load_frame(cfg.VIDEO_PATH)
             print(f"控制器：已切换至物理摄像头流: {pipeline}")
         else:
             self.view.lbl_camera_info.setText("未发现摄像头设备 (/dev/video0)")
