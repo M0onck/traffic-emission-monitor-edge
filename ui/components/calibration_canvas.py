@@ -1,96 +1,139 @@
-import cv2
-import os
 import time
+import cv2
 import numpy as np
 from PyQt5.QtWidgets import QLabel
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
-# --- UI 组件：可拖拽且支持触控微调的标定画布 ---
+# 引入原生 GStreamer 库
+import gi
+gi.require_version('Gst', '1.0')
+from gi.repository import Gst
+
 class CalibrationCanvas(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.orig_frame = None
         self.real_points = []
         self.drag_idx = -1
-        self.selected_idx = -1  # 当前被选中（用于细调）的角点
-        self.dpad_rects = {}    # 存放十字方向键的点击热区
+        self.selected_idx = -1  
+        self.dpad_rects = {}    
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(800, 380)
-
-        # 预览循环控制
+        
         self.cap = None
+        self.gst_pipeline = None # 原生 GStreamer 管道对象
+        self.gst_appsink = None  # 画面接收器对象
+        
         self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self._read_next_frame)
+        
+        # 初始化 GStreamer 环境
+        if not Gst.is_initialized():
+            Gst.init(None)
 
     def load_frame(self, video_path):
-        """加载视频源并开启实时预览"""
-        if getattr(self, 'current_video_path', None) == video_path and self.cap and self.cap.isOpened():
+        if getattr(self, 'current_video_path', None) == video_path and (self.cap or self.gst_pipeline):
             return
             
         self.stop_preview()
-        time.sleep(0.3) # 稍微延长一点等待驱动释放的时间
-        
+        time.sleep(0.3) 
         self.current_video_path = video_path
-        
-        api_preference = cv2.CAP_ANY
-        if "libcamerasrc" in video_path:
-            api_preference = cv2.CAP_GSTREAMER
-            # ====== 【核心调试探针】 ======
-            # 开启 GStreamer 的底层 Warning 和 Error 日志输出 (Level 3)
-            os.environ["GST_DEBUG"] = "3"
-            print("\n" + "="*50)
-            print(f">>> [DEBUG] 正在通过 GStreamer 尝试打开物理摄像头...")
-            print(f">>> [DEBUG] 完整管道字符串:\n{video_path}")
-            print("="*50 + "\n")
-            
-        self.cap = cv2.VideoCapture(video_path, api_preference)
-        
-        if not self.cap.isOpened():
-            print(f">>> 致命错误：OpenCV 拒绝打开视频流！")
-            print(f">>> 请检查终端上方是否有 'GST_DEBUG' 开头的红色/黄色报错信息。\n")
-            
-            self.orig_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.putText(self.orig_frame, "Camera Stream Offline", (400, 360), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-            self.update_display()
-            return
 
+        # === 引擎 1：原生 GStreamer (用于真实摄像头) ===
         if "libcamerasrc" in video_path:
-            print(">>> [DEBUG] 摄像头打开成功！正在预热 ISP 等待曝光...")
-            for _ in range(20):
-                self.cap.grab()
+            print(">>> [DEBUG] 使用原生 GStreamer 引擎拉取摄像头画面...")
+            try:
+                self.gst_pipeline = Gst.parse_launch(video_path)
+                self.gst_appsink = self.gst_pipeline.get_by_name("preview_sink")
+                self.gst_pipeline.set_state(Gst.State.PLAYING)
                 
-        ret, frame = self.cap.read()
-        if ret:
-            self.orig_frame = frame
-            if not self.real_points: 
-                self.init_points()
-            self.update_display()
-            self.preview_timer.start(33)
+                # 预热 ISP
+                time.sleep(0.5) 
+                
+                ret, frame = self._read_gst_frame()
+                if ret:
+                    self._start_preview(frame)
+                else:
+                    self._show_error_screen("Stream Error")
+            except Exception as e:
+                print(f">>> GStreamer 启动失败: {e}")
+                self._show_error_screen("Pipeline Fatal")
+
+        # === 引擎 2：OpenCV cv2 (用于本地 MP4 文件) ===
         else:
-            print(">>> 错误：视频流已打开，但 cap.read() 无法拉取到画面帧。")
+            self.cap = cv2.VideoCapture(video_path)
+            if not self.cap.isOpened():
+                self._show_error_screen("File Error")
+                return
+            ret, frame = self.cap.read()
+            if ret:
+                self._start_preview(frame)
+
+    def _start_preview(self, first_frame):
+        """成功读取第一帧后的初始化工作"""
+        self.orig_frame = first_frame
+        if not self.real_points: 
+            self.init_points()
+        self.update_display()
+        self.preview_timer.start(33)
+
+    def _show_error_screen(self, msg="Camera Offline"):
+        """绘制错误画面"""
+        self.orig_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        cv2.putText(self.orig_frame, msg, (500, 360), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+        self.update_display()
+
+    def _read_gst_frame(self):
+        """核心：通过原生 GStreamer 提取内存数据转换为 OpenCV 图像"""
+        if not self.gst_appsink: return False, None
+        
+        # 尝试拉取样本 (带 100ms 超时防假死)
+        sample = self.gst_appsink.emit("try-pull-sample", 100000000)
+        if not sample: return False, None
+        
+        buffer = sample.get_buffer()
+        success, map_info = buffer.map(Gst.MapFlags.READ)
+        if success:
+            caps = sample.get_caps()
+            w = caps.get_structure(0).get_value("width")
+            h = caps.get_structure(0).get_value("height")
+            
+            # 直接通过内存地址构建 Numpy 数组
+            frame = np.ndarray((h, w, 3), buffer=map_info.data, dtype=np.uint8).copy()
+            buffer.unmap(map_info)
+            return True, frame
+            
+        return False, None
 
     def _read_next_frame(self):
         """定时器回调：读取下一帧并渲染"""
-        if not self.cap or not self.cap.isOpened():
-            return
-            
-        ret, frame = self.cap.read()
-        if not ret:
-            # 如果是本地视频播放完毕，自动重置到开头循环播放
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        if self.gst_pipeline:
+            ret, frame = self._read_gst_frame()
+            if ret:
+                self.orig_frame = frame
+                self.update_display()
+                
+        elif self.cap and self.cap.isOpened():
             ret, frame = self.cap.read()
-            
-        if ret:
-            self.orig_frame = frame
-            self.update_display() # 利用原有的渲染逻辑，不仅更新画面，还会把标定点浮在视频上面
+            if not ret:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.cap.read()
+            if ret:
+                self.orig_frame = frame
+                self.update_display()
 
     def stop_preview(self):
-        """停止预览并释放硬件设备"""
+        """停止预览并释放硬件资源"""
         self.preview_timer.stop()
         if self.cap is not None:
             self.cap.release()
             self.cap = None
+            
+        if self.gst_pipeline is not None:
+            self.gst_pipeline.set_state(Gst.State.NULL)
+            self.gst_pipeline = None
+            self.gst_appsink = None
 
     def init_points(self):
         h, w = self.orig_frame.shape[:2]
