@@ -112,7 +112,7 @@ class MainWindow(QMainWindow):
         # --- 左侧：硬件与状态信息看板 (BIOS 仪表盘风格) ---
         left_panel = QFrame()
         # 替换为灰黑底色和暗色边框
-        left_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
+        left_panel.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 12px;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(25, 25, 25, 25)
 
@@ -293,7 +293,7 @@ class MainWindow(QMainWindow):
         # 1. 气象站空间位置设置
         # ==========================================
         wx_frame = QFrame()
-        wx_frame.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 10px; padding: 10px;")
+        wx_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 10px;")
         wx_layout = QVBoxLayout(wx_frame)
         
         lbl_wx_title = QLabel("气象站部署位置 (相对于道路ROI):")
@@ -360,7 +360,7 @@ class MainWindow(QMainWindow):
         # 2. 道路方向角设置 (5度步进)
         # ==========================================
         road_frame = QFrame()
-        road_frame.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 10px; padding: 10px;")
+        road_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 10px;")
         road_layout = QVBoxLayout(road_frame)
         
         lbl_road_title = QLabel("道路走向方位角 (0° = 正南北走向):")
@@ -518,7 +518,7 @@ class MainWindow(QMainWindow):
         
         # === 左侧：气象数据看板 (3行2列) ===
         weather_left_panel = QFrame()
-        weather_left_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
+        weather_left_panel.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 12px;")
         w_grid_layout = QGridLayout(weather_left_panel)
         w_grid_layout.setContentsMargins(25, 25, 25, 25)
         w_grid_layout.setSpacing(20)
@@ -556,7 +556,7 @@ class MainWindow(QMainWindow):
         
         # === 右侧：气象站插画展示区 ===
         weather_right_panel = QFrame()
-        weather_right_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
+        weather_right_panel.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 12px;")
         w_right_layout = QVBoxLayout(weather_right_panel)
         w_right_layout.setContentsMargins(10, 10, 10, 10)
         
@@ -606,7 +606,7 @@ class MainWindow(QMainWindow):
         
         # === 左侧：气象数据看板 + 时间戳 ===
         left_panel = QFrame()
-        left_panel.setStyleSheet("background-color: #111111; border: 1px solid #333; border-radius: 12px;")
+        left_panel.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 12px;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(25, 25, 25, 25)
         

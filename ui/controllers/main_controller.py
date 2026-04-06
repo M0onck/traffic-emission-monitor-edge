@@ -280,8 +280,8 @@ class MainController:
         # 动态获取并填入数据
         if "系统时间" in labels:
             labels["系统时间"].setText(SysMonitor.get_system_time())
-        if "边缘存储" in labels:
-            labels["边缘存储"].setText(SysMonitor.get_edge_storage())
+        if "存储空间" in labels:
+            labels["存储空间"].setText(SysMonitor.get_edge_storage())
         if "网络连接" in labels:
             labels["网络连接"].setText(SysMonitor.get_network_status())
         if "气象网关" in labels:

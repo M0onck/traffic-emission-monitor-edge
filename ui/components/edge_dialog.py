@@ -10,6 +10,10 @@ class EdgeAnimatedDialog(QDialog):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(800, 480) # 精确匹配屏幕
+
+        # 解决自动居中导致的顶部缝隙问题
+        if parent:
+            self.move(0, 0)
         
         self.target_height = target_height
         
