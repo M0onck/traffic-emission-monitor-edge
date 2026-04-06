@@ -80,3 +80,16 @@ HEF_PATH = _edge.get("hef_path", "resources/yolov8m.hef")
 POST_SO_PATH = _edge.get("post_so_path", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
 Y5FU_PATH = _edge.get("y5fu_path", "perception/plate_classifier/models/y5fu_320x_sim.onnx")
 LITEMODEL_PATH = _edge.get("litemodel_path", "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx")
+
+# --- 4. 延迟对齐与时间窗参数 (time_windows) ---
+_tw = _cfg.get("time_windows", {})
+ALIGNMENT_DELAY_SEC = _tw.get("alignment_delay_sec", 60.0)
+INTEGRATION_WINDOW_SEC = _tw.get("integration_window_sec", 30.0)
+BASELINE_WINDOW_MINUTE = _tw.get("baseline_window_minute", 10.0)
+DB_ALIGN_FREQUENCY_HZ = _tw.get("db_align_frequency_hz", 1.0)
+
+# --- 5. 物理与环境先验参数 (physics_priors) ---
+_pp = _cfg.get("physics_priors", {})
+WEATHER_STATION_X_POS = _pp.get("weather_station_x_pos", 0.0)
+ROAD_DIRECTION_ANGLE = _pp.get("road_direction_angle", 0.0)
+NEV_MASS_PENALTY_RATIO = _pp.get("nev_mass_penalty_ratio", 1.2)

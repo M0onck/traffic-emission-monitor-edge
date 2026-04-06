@@ -17,7 +17,7 @@ class VehicleRegistry:
         # 生命周期配置
         self.min_survival_sec = min_survival_sec  # 最小存活秒数 (过滤误检)
         self.exit_timeout_sec = exit_timeout_sec  # 消失多少秒后认定为离场
-        self.force_delay_sec = cfg.get("time_windows", {}).get("alignment_delay_sec", 60.0) # 延迟对齐时间，作为切片结算的基准
+        self.force_delay_sec = cfg.ALIGNMENT_DELAY_SEC # 延迟对齐时间，作为切片结算的基准
         
         # 数据质量配置
         self.min_valid_trajectory_points = min_valid_pts # 最小有效轨迹点数

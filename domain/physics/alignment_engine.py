@@ -4,6 +4,7 @@ import math
 import sqlite3
 import numpy as np
 from infra.store.sqlite_manager import DatabaseManager
+import infra.config.loader as cfg
 
 class DelayedAlignmentEngine:
     """
@@ -15,16 +16,14 @@ class DelayedAlignmentEngine:
         self.db_path = db_path
         
         # 1. 解析时间窗口参数
-        tw = config.get("time_windows", {})
-        self.delay_sec = tw.get("alignment_delay_sec", 60.0)
-        self.int_win_sec = tw.get("integration_window_sec", 30.0)
-        self.base_win_min = tw.get("baseline_window_minute", 10.0)
+        self.delay_sec = cfg.ALIGNMENT_DELAY_SEC
+        self.int_win_sec = cfg.INTEGRATION_WINDOW_SEC
+        self.base_win_min = cfg.BASELINE_WINDOW_MINUTE
 
         # 2. 解析物理先验参数
-        pp = config.get("physics_priors", {})
-        self.wx_pos = pp.get("weather_station_x_pos", 0.0)
-        self.road_dir = pp.get("road_direction_angle", 0.0)
-        self.nev_penalty = pp.get("nev_mass_penalty_ratio", 1.2)
+        self.wx_pos = cfg.WEATHER_STATION_X_POS
+        self.road_dir = cfg.ROAD_DIRECTION_ANGLE
+        self.nev_penalty = cfg.NEV_MASS_PENALTY_RATIO
 
         # 基础质量先验 (吨) - 用于从运动学参数重构绝对动能
         self.mass_priors = {"LDV": 1.5, "HDV": 15.0} 
