@@ -44,6 +44,16 @@ class EdgeAnimatedDialog(QDialog):
         self.anim.setEndValue(QRect(0, self.v_center, 800, 0))
         self.anim.finished.connect(lambda: self.done(result_code))
         self.anim.start()
+    
+    def mousePressEvent(self, event):
+        """处理鼠标/触摸点击事件"""
+        # 获取点击坐标，并判断是否在中央面板的矩形区域外
+        if not self.panel.geometry().contains(event.pos()):
+            # 如果在面板外（即点击了上下黑色的半透明遮罩），直接触发带有动画的取消操作
+            self.close_with_anim(QDialog.Rejected)
+        else:
+            # 如果点在面板内部，则正常传递事件给子控件（如按钮）
+            super().mousePressEvent(event)
 
 class EdgeMessageBox(EdgeAnimatedDialog):
     """即插即用的通用消息确认弹窗"""
