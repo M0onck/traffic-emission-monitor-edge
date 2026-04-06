@@ -99,13 +99,10 @@ class GstPipelineManager:
         # 2. 尝试获取 AI 结果 (仅等待1ms)
         sample_meta = self.sink_meta.emit("try-pull-sample", 1000000)
 
-        # 精准内存保活策略
-        # 把当前帧的 sample 存入实例变量，保证它在 vision.process() 期间绝对安全。
-        # 无论这次拿到的是正常帧还是 None，都会无情覆盖上一帧，完美释放硬件 CMA 内存池！
-        self._kept_sample = sample_meta 
-
         if sample_meta:
             buffer_meta = sample_meta.get_buffer()
+            # 拿到 buffer_meta 后，sample_meta 局部变量会在函数结束时被 Python 垃圾回收
+            # 底层 C++ 内存会立刻被无缝释放回 GStreamer 内存池，管道永远畅通！
         else:
             # 防丢帧欺骗策略
             # 如果 AI 没赶上，造一个空的假 Buffer 骗过 monitor_engine.py
