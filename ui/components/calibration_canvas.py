@@ -1,4 +1,5 @@
 import cv2
+import time
 import numpy as np
 from PyQt5.QtWidgets import QLabel
 from PyQt5.QtCore import Qt, QTimer
@@ -23,25 +24,42 @@ class CalibrationCanvas(QLabel):
 
     def load_frame(self, video_path):
         """加载视频源并开启实时预览"""
-        self.stop_preview() # 启动前先确保清理可能存在的旧实例
+        # 1. 【状态锁】：如果当前正在播放同一个源，直接跳过，防止频繁点击造成的硬件死锁
+        if getattr(self, 'current_video_path', None) == video_path and self.cap and self.cap.isOpened():
+            return
+            
+        self.stop_preview()
+        
+        # 给底层硬件驱动（如 V4L2）一点回收节点描述符的时间
+        time.sleep(0.2) 
+        
+        self.current_video_path = video_path # 记录当前路径
         
         api_preference = cv2.CAP_GSTREAMER if "libcamerasrc" in video_path else cv2.CAP_ANY
         self.cap = cv2.VideoCapture(video_path, api_preference)
         
         if not self.cap.isOpened():
-            print(">>> 错误：无法打开视频流")
+            print(f">>> 错误：无法打开视频流 {video_path}")
+            # 如果失败，强制绘制一个黑色错误面板，清空残留的旧视频画面
+            self.orig_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.putText(self.orig_frame, "Camera Stream Offline", (400, 360), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+            self.update_display()
             return
-            
-        # 预读取第一帧以初始化画布
+
+        # 3. 预热摄像头 ISP 并等待曝光算法收敛
+        if "libcamerasrc" in video_path:
+            print("正在预热摄像头 ISP 并等待曝光...")
+            for _ in range(20):
+                self.cap.grab()
+                
         ret, frame = self.cap.read()
         if ret:
             self.orig_frame = frame
-            # 仅在首次加载时初始化标定点，防止切出再切回时点位被重置
             if not self.real_points: 
                 self.init_points()
             self.update_display()
             
-            # 启动定时器，约 30 FPS 刷新率 (33ms)
+            # 启动定时器，约 30 FPS 刷新率
             self.preview_timer.start(33)
 
     def _read_next_frame(self):

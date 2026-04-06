@@ -6,7 +6,7 @@ import os
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 
-def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
+def get_rpi_camera_pipeline(width=1440, height=1080, fps=30):
     """
     返回用于 cv2.VideoCapture 的纯画面拉流管道字符串（用于标定页面的实时预览）。
     """
@@ -14,7 +14,7 @@ def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
         f"libcamerasrc ! "
         f"video/x-raw, width={width}, height={height}, framerate={fps}/1 ! "
         f"videoconvert ! video/x-raw, format=BGR ! "
-        f"appsink drop=true sync=false"
+        f"appsink"
     )
 
 class GstPipelineManager:
