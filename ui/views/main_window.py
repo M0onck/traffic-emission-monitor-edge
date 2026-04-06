@@ -596,7 +596,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.page_monitor)
     
     def init_page_weather_calib(self):
-        """气象站独立校准面板 (Index 4)"""
+        """气象站独立校准面板"""
         self.page_weather_calib = QWidget()
         self.page_weather_calib.setStyleSheet("background-color: #0f111a;")
         layout = QHBoxLayout(self.page_weather_calib)
@@ -682,9 +682,10 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.page_weather_calib)
 
     def init_page_db_browser(self):
-        """历史数据浏览面板 (Index 5)"""
+        """历史数据浏览面板"""
         self.page_db_browser = QWidget()
-        self.page_db_browser.setStyleSheet("background-color: #0f111a;")
+        # 统一为纯黑背景
+        self.page_db_browser.setStyleSheet("background-color: #000000;")
         layout = QVBoxLayout(self.page_db_browser)
         layout.setContentsMargins(30, 30, 30, 30)
 
@@ -694,19 +695,20 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("Arial", 16, QFont.Bold))
         title.setStyleSheet("color: #ffffff; border: none;")
 
-        # 采集任务列表的下拉菜单
+        # 采集任务列表的下拉菜单 (去色，改为灰黑风格)
         self.session_combo = QComboBox()
         self.session_combo.setFont(QFont("Arial", 12))
         self.session_combo.setMinimumWidth(280)
         self.session_combo.setStyleSheet("""
-            QComboBox { background-color: #1a1d2d; color: white; border: 1px solid #2d324f; border-radius: 5px; padding: 5px; }
+            QComboBox { background-color: #111111; color: white; border: 1px solid #444; border-radius: 5px; padding: 5px; }
             QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView { background-color: #1a1d2d; color: white; selection-background-color: #2962ff; }
+            QComboBox QAbstractItemView { background-color: #111111; color: white; selection-background-color: #333333; }
         """)
 
+        # 应用绿色镂空样式
         self.btn_refresh_db = QPushButton(" 刷新数据 ")
         self.btn_refresh_db.setFont(QFont("Arial", 14, QFont.Bold))
-        self.btn_refresh_db.setStyleSheet("background-color: #f39c12; color: white; border-radius: 5px; padding: 10px;")
+        self.btn_refresh_db.setStyleSheet(self.style_hollow_green)
 
         top_layout.addWidget(title)
         top_layout.addSpacing(20)
@@ -724,10 +726,29 @@ class MainWindow(QMainWindow):
             "目标 ID", "车型", "能源类型", "入场时间", "离场时间", "均速(m/s)", "主导工况", "结算状态"
         ])
 
-        # 表格样式调整，适应深色主题
+        # 表格样式调整：彻底去色，表头变暗，选中行变灰
         self.db_table.setStyleSheet("""
-            QTableWidget { background-color: #1a1d2d; color: #ffffff; gridline-color: #2d324f; border: 1px solid #2d324f; }
-            QHeaderView::section { background-color: #2962ff; color: white; font-weight: bold; padding: 5px; border: 1px solid #2d324f; }
+            QTableWidget { 
+                background-color: #111111; 
+                color: #ffffff; 
+                gridline-color: #333333; 
+                border: 1px solid #444444; 
+            }
+            QTableWidget::item:selected {
+                background-color: #333333; 
+                color: #ffffff;
+            }
+            QHeaderView::section { 
+                background-color: #181818; 
+                color: #aaaaaa; 
+                font-weight: bold; 
+                padding: 5px; 
+                border: 1px solid #333333; 
+            }
+            QTableCornerButton::section {
+                background-color: #181818;
+                border: 1px solid #333333;
+            }
         """)
         self.db_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.db_table.setEditTriggers(QTableWidget.NoEditTriggers) # 禁止双击编辑
