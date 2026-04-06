@@ -6,13 +6,24 @@ import os
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 
+def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
+    """
+    返回用于 cv2.VideoCapture 的纯画面拉流管道字符串（用于标定页面的实时预览）。
+    """
+    return (
+        f"libcamerasrc ! "
+        f"video/x-raw, width={width}, height={height}, framerate={fps}/1 ! "
+        f"videoconvert ! video/x-raw, format=BGR ! "
+        f"appsink drop=true sync=false"
+    )
+
 class GstPipelineManager:
     def __init__(self, config: dict):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
         Gst.init(None)
 
         self.video_path = config.get("video_path", "resources/test_traffic.mp4")
-        self.hef_path = config.get("hef_path", "resources/yolov8m.hef")
+        self.hef_path = config.get("hef_path", "resources/yolov8s.hef")
         self.post_so_path = config.get("post_so_path", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
 
         self.out_w = config.get("FRAME_WIDTH", 1280) 
@@ -27,18 +38,34 @@ class GstPipelineManager:
         self.is_running = False
 
     def _build_pipeline(self) -> str:
-        abs_path = os.path.abspath(self.video_path)
+        # === 智能判断：当前视频源是本地文件，还是物理摄像头的管道流 ===
+        is_camera = self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
+        
+        if is_camera:
+            # 物理摄像头源头：放弃前端带 appsink 的预览管道，重新构建原生的树莓派相机源头
+            source_head = (
+                f"libcamerasrc ! video/x-raw, width=1280, height=720, framerate=30/1 ! "
+                f"videoconvert ! video/x-raw, format=NV12"
+            )
+        else:
+            # 本地文件源头：需要经过 decodebin 解码
+            abs_path = os.path.abspath(self.video_path)
+            source_head = (
+                f"filesrc location={abs_path} ! decodebin ! video/x-raw ! "
+                f"videoconvert ! video/x-raw, format=NV12"
+            )
+
+        # 拼接管道：将源头送入 tee 节点进行画面分支与 AI 推理分支的拆分
         pipeline = (
-            f"filesrc location={abs_path} ! decodebin ! video/x-raw ! "
-            f"videoconvert ! video/x-raw, format=NV12 ! tee name=t "
+            f"{source_head} ! tee name=t "
             
-            # --- 视频画面分支 ---
+            # --- 分支1: 视频画面分支 (送往 UI 渲染) ---
             f"t. ! queue max-size-buffers=30 ! "
             f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
             f"appsink name=sink_video emit-signals=false max-buffers=2 drop=false sync=false "
             
-            # --- 硬件推理分支 ---
+            # --- 分支2: 硬件推理分支 (送往 Hailo-8 NPU) ---
             f"t. ! queue max-size-buffers=30 ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
@@ -49,7 +76,7 @@ class GstPipelineManager:
         return pipeline
 
     def start(self):
-        print(f"正在启动 GStreamer 管道: 读取 {self.video_path}")
+        print(f"正在启动 GStreamer 推理管道...")
         self.pipeline.set_state(Gst.State.PLAYING)
         self.is_running = True
 
@@ -65,7 +92,7 @@ class GstPipelineManager:
         if msg:
             if msg.type == Gst.MessageType.ERROR:
                 err, debug = msg.parse_error()
-                print(f"\n[GStreamer 致命崩溃] {err}\n🔍 详情: {debug}\n")
+                print(f"\n[GStreamer 致命崩溃] {err}\n详情: {debug}\n")
             elif msg.type == Gst.MessageType.EOS:
                 print(f"\n[GStreamer] 视频流已播放完毕 (EOS)\n")
             return None, None 
@@ -89,13 +116,11 @@ class GstPipelineManager:
             actual_w = struct.get_value("width")
             actual_h = struct.get_value("height")
             
-            # 使用动态获取的宽高计算预期大小
             expected_size = actual_w * actual_h * 3
             if map_info.size < expected_size:
                 buffer_video.unmap(map_info)
                 return None, None
 
-            # 使用动态宽高重塑 numpy 数组
             frame = np.ndarray((actual_h, actual_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
             buffer_video.unmap(map_info)
 
