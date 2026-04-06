@@ -8,10 +8,10 @@ class EdgeAnimatedDialog(QDialog):
     def __init__(self, parent=None, target_height=220, is_warning=False):
         super().__init__(parent)
         
-        # 去掉会引发崩溃的 Qt.Tool，恢复为标准 Qt.Dialog
-        # 配合 FramelessWindowHint 抹除系统边框
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        # Wayland 显示适配
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowState(Qt.WindowFullScreen)
         
         self.target_height = target_height
         self.v_center = 230 
@@ -32,12 +32,6 @@ class EdgeAnimatedDialog(QDialog):
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
         
         self.panel.setGeometry(0, self.v_center, 800, 0)
-
-    # 在 Controller 调用 exec_() 阻塞程序前，先向底层申请全屏
-    # 这样既符合 Wayland 对 Dialog 的安全规定，又能完美挤掉系统预留的顶部缝隙
-    def exec_(self):
-        self.showFullScreen()
-        return super().exec_()
         
     def showEvent(self, event):
         super().showEvent(event)
