@@ -7,19 +7,18 @@ class EdgeAnimatedDialog(QDialog):
     """基础动画弹窗，提供中心上下展开的弹窗动画效果"""
     def __init__(self, parent=None, target_height=220, is_warning=False):
         super().__init__(parent)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
+        # 增加 Qt.WindowStaysOnTopHint，防止弹窗被系统任务栏强行往下挤压
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(800, 480) # 精确匹配屏幕
-
-        # 解决自动居中导致的顶部缝隙问题
-        if parent:
-            self.move(0, 0)
         
+        # 中心点微调至 230，以抵消底部导航栏的视觉权重
+        self.v_center = 230 
         self.target_height = target_height
         
-        # 1. 全屏半透明暗黑遮罩
+        # 1. 全屏半透明暗黑遮罩 
         self.bg = QFrame(self)
-        self.bg.setFixedSize(800, 480)
+        # 显式锁定相对坐标 0,0 和尺寸，杜绝悬空
+        self.bg.setGeometry(0, 0, 800, 480) 
         self.bg.setStyleSheet("background-color: rgba(0, 0, 0, 190);")
         
         # 2. 动画承载面板 (贯穿全宽，高度变化)
@@ -33,18 +32,23 @@ class EdgeAnimatedDialog(QDialog):
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
         
         # 初始状态为屏幕中心的一条线
-        self.panel.setGeometry(0, 240, 800, 0)
+        self.panel.setGeometry(0, self.v_center, 800, 0)
         
     def showEvent(self, event):
+        # 拦截 Qt 的 exec_() 自动居中机制
+        # 强制将弹窗的绝对位置和尺寸吸附到父窗口上
+        if self.parentWidget():
+            self.setGeometry(self.parentWidget().geometry())
+            
         super().showEvent(event)
-        self.anim.setStartValue(QRect(0, 240, 800, 0))
+        self.anim.setStartValue(QRect(0, self.v_center, 800, 0))
         # 目标状态为展开
-        self.anim.setEndValue(QRect(0, 240 - self.target_height // 2, 800, self.target_height))
+        self.anim.setEndValue(QRect(0, self.v_center - self.target_height // 2, 800, self.target_height))
         self.anim.start()
         
     def close_with_anim(self, result_code):
         self.anim.setStartValue(self.panel.geometry())
-        self.anim.setEndValue(QRect(0, 240, 800, 0)) # 缩回成一条线
+        self.anim.setEndValue(QRect(0, self.v_center, 800, 0)) # 缩回成一条线
         self.anim.finished.connect(lambda: self.done(result_code))
         self.anim.start()
 
