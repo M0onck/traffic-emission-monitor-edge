@@ -1,4 +1,5 @@
 import cv2
+import os
 import time
 import numpy as np
 from PyQt5.QtWidgets import QLabel
@@ -24,31 +25,38 @@ class CalibrationCanvas(QLabel):
 
     def load_frame(self, video_path):
         """加载视频源并开启实时预览"""
-        # 1. 【状态锁】：如果当前正在播放同一个源，直接跳过，防止频繁点击造成的硬件死锁
         if getattr(self, 'current_video_path', None) == video_path and self.cap and self.cap.isOpened():
             return
             
         self.stop_preview()
+        time.sleep(0.3) # 稍微延长一点等待驱动释放的时间
         
-        # 给底层硬件驱动（如 V4L2）一点回收节点描述符的时间
-        time.sleep(0.2) 
+        self.current_video_path = video_path
         
-        self.current_video_path = video_path # 记录当前路径
-        
-        api_preference = cv2.CAP_GSTREAMER if "libcamerasrc" in video_path else cv2.CAP_ANY
+        api_preference = cv2.CAP_ANY
+        if "libcamerasrc" in video_path:
+            api_preference = cv2.CAP_GSTREAMER
+            # ====== 【核心调试探针】 ======
+            # 开启 GStreamer 的底层 Warning 和 Error 日志输出 (Level 3)
+            os.environ["GST_DEBUG"] = "3"
+            print("\n" + "="*50)
+            print(f">>> [DEBUG] 正在通过 GStreamer 尝试打开物理摄像头...")
+            print(f">>> [DEBUG] 完整管道字符串:\n{video_path}")
+            print("="*50 + "\n")
+            
         self.cap = cv2.VideoCapture(video_path, api_preference)
         
         if not self.cap.isOpened():
-            print(f">>> 错误：无法打开视频流 {video_path}")
-            # 如果失败，强制绘制一个黑色错误面板，清空残留的旧视频画面
+            print(f">>> 致命错误：OpenCV 拒绝打开视频流！")
+            print(f">>> 请检查终端上方是否有 'GST_DEBUG' 开头的红色/黄色报错信息。\n")
+            
             self.orig_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
             cv2.putText(self.orig_frame, "Camera Stream Offline", (400, 360), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
             self.update_display()
             return
 
-        # 3. 预热摄像头 ISP 并等待曝光算法收敛
         if "libcamerasrc" in video_path:
-            print("正在预热摄像头 ISP 并等待曝光...")
+            print(">>> [DEBUG] 摄像头打开成功！正在预热 ISP 等待曝光...")
             for _ in range(20):
                 self.cap.grab()
                 
@@ -58,9 +66,9 @@ class CalibrationCanvas(QLabel):
             if not self.real_points: 
                 self.init_points()
             self.update_display()
-            
-            # 启动定时器，约 30 FPS 刷新率
             self.preview_timer.start(33)
+        else:
+            print(">>> 错误：视频流已打开，但 cap.read() 无法拉取到画面帧。")
 
     def _read_next_frame(self):
         """定时器回调：读取下一帧并渲染"""
