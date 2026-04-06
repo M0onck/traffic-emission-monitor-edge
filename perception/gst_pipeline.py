@@ -40,11 +40,9 @@ class GstPipelineManager:
         self.is_running = False
 
     def _build_pipeline(self) -> str:
-        # === 智能判断：当前视频源是本地文件，还是物理摄像头的管道流 ===
-        is_camera = self.use_camera or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
+        is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
         if is_camera:
-            # 简化源头：不需要立刻转换，交给分支去处理
             source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1"
         else:
             abs_path = os.path.abspath(self.video_path)
@@ -53,21 +51,19 @@ class GstPipelineManager:
         pipeline = (
             f"{source_head} ! tee name=t "
             
-            # --- 分支1: 视频画面分支 (送往 UI 渲染) ---
-            f"t. ! queue max-size-buffers=5 leaky=downstream ! "
-            f"videoconvert ! video/x-raw, format=RGBA ! "
-            f"videoscale ! video/x-raw, width={self.out_w}, height={self.out_h} ! "
+            # --- 分支1: 视频画面分支 ---
+            # 队列限制为 2，并且开启 leaky=downstream（满了就丢弃旧帧）
+            f"t. ! queue max-size-buffers=2 leaky=downstream ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=2 drop=true sync=false "
+            f"appsink name=sink_video emit-signals=false max-buffers=1 drop=true sync=false "
             
-            # --- 分支2: 硬件推理分支 (送往 Hailo-8 NPU) ---
-            f"t. ! queue max-size-buffers=5 leaky=downstream ! "
-            f"videoconvert ! video/x-raw, format=RGBA ! "
+            # --- 分支2: AI 推理分支 ---
+            f"t. ! queue max-size-buffers=2 leaky=downstream ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
-            f"hailonet hef-path={self.hef_path} ! "  # <-- 修复点1：移除 vdevice-group-id=1
+            f"hailonet hef-path={self.hef_path} ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=2 drop=true sync=false "
+            f"appsink name=sink_meta emit-signals=false max-buffers=1 drop=true sync=false "
         )
         return pipeline
 
@@ -93,18 +89,20 @@ class GstPipelineManager:
                 print(f"\n[GStreamer] 视频流已播放完毕 (EOS)\n")
             return None, None 
 
+        # 1. 优先拉取视频画面 (允许等待 500ms)
+        # 必须耐心等待画面，因为摄像头的曝光预热、首帧输出可能需要一点时间
         sample_video = self.sink_video.emit("try-pull-sample", 500000000)
-        sample_meta = self.sink_meta.emit("try-pull-sample", 500000000)
-        
-        if not sample_video or not sample_meta: 
+        if not sample_video:
             return None, None
 
-        # 持有 sample_meta 的引用，防止 C 底层野指针段错误
-        self._last_sample_meta = sample_meta 
+        # 2. 尝试拉取 AI 结果 (仅等待 1ms，非阻塞)
+        # 不管 AI 算没算完，我们绝不能在这里死等，否则就会拖慢画面导致卡顿
+        sample_meta = self.sink_meta.emit("try-pull-sample", 1000000)
+        if sample_meta:
+            # 如果有新的 AI 结果，更新缓存（防止 C 底层野指针被垃圾回收）
+            self._last_sample_meta = sample_meta
 
         buffer_video = sample_video.get_buffer()
-        buffer_meta = sample_meta.get_buffer()
-        
         try:
             success, map_info = buffer_video.map(Gst.MapFlags.READ)
             if not success: return None, None
@@ -114,15 +112,14 @@ class GstPipelineManager:
             actual_w = struct.get_value("width")
             actual_h = struct.get_value("height")
             
-            expected_size = actual_w * actual_h * 3
-            if map_info.size < expected_size:
-                buffer_video.unmap(map_info)
-                return None, None
-
             frame = np.ndarray((actual_h, actual_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
             buffer_video.unmap(map_info)
 
-            return frame, buffer_meta
+            # 3. 提取缓存中【最新可用】的 AI 元数据。
+            # 即使 AI 这帧没赶上，我们依然会把没有任何框的、干净的视频帧返回给前端显示，彻底告别黑屏！
+            meta_buffer = self._last_sample_meta.get_buffer() if hasattr(self, '_last_sample_meta') and self._last_sample_meta else None
+
+            return frame, meta_buffer
             
         except Exception as e:
             print(f">>> [GStreamer] 内存解析异常: {e}")
