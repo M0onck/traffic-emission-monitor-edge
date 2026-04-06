@@ -76,19 +76,19 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.nav_widget)
 
         # 初始化页面：按顺序压入栈中
-        self.init_page_0_main_menu()     # 索引 0：主界面
-        self.init_page_1_calibration()   # 索引 1：标定步骤
-        self.init_page_2_settings()      # 索引 2：设置步骤
-        self.init_page_2_5_physics_settings()
-        self.init_page_3_monitor()       # 索引 3：运行面板
-        self.init_page_4_weather_calib() # 索引 4：气象站校准页面
-        self.init_page_5_db_browser()    # 索引 5：数据库浏览页面
+        self.init_page_main_menu()     # 主界面
+        self.init_page_calibration()   # 透视标定步骤
+        self.init_page_size_settings() # 尺度设置步骤
+        self.init_page_pos_settings()  # 方位设置步骤
+        self.init_page_monitor()       # 运行面板
+        self.init_page_weather_calib() # 气象站校准页面
+        self.init_page_db_browser()    # 数据库浏览页面
 
-    def init_page_0_main_menu(self):
+    def init_page_main_menu(self):
         """主调度界面"""
-        page = QWidget()
-        page.setStyleSheet("background-color: #0f111a;") # 深邃的边缘计算科技蓝/黑底色
-        layout = QHBoxLayout(page)
+        self.page_main_menu = QWidget()
+        self.page_main_menu.setStyleSheet("background-color: #0f111a;") # 深邃的边缘计算科技蓝/黑底色
+        layout = QHBoxLayout(self.page_main_menu)
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(30)
 
@@ -200,11 +200,11 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(right_panel, 4) # 右侧占比 4
 
-        self.stack.addWidget(page)
+        self.stack.addWidget(self.page_main_menu)
 
-    def init_page_1_calibration(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+    def init_page_calibration(self):
+        self.page_calibration = QWidget()
+        layout = QVBoxLayout(self.page_calibration)
         
         self.lbl_calib_title = QLabel("步骤 1/3: 拖拽 4 个角点进行标定")
         self.lbl_calib_title.setFont(QFont("Arial", 14, QFont.Bold))
@@ -214,11 +214,11 @@ class MainWindow(QMainWindow):
         self.canvas.load_frame(cfg.VIDEO_PATH) # 加载第一帧
         layout.addWidget(self.canvas)
         
-        self.stack.addWidget(page)
+        self.stack.addWidget(self.page_calibration)
     
-    def init_page_2_settings(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+    def init_page_size_settings(self):
+        self.page_settings = QWidget()
+        layout = QVBoxLayout(self.page_settings)
         layout.setAlignment(Qt.AlignCenter)
         
         self.lbl_settings_title = QLabel("步骤 2/3: 设置真实物理尺寸")
@@ -282,12 +282,12 @@ class MainWindow(QMainWindow):
         layout.addSpacing(30)
         layout.addLayout(create_adjuster("纵向标定距 (Length): ", self.phys_h, set_h))
 
-        self.stack.addWidget(page)
+        self.stack.addWidget(self.page_settings)
 
-    def init_page_2_5_physics_settings(self):
+    def init_page_pos_settings(self):
         """物理先验参数与气象站位置设置"""
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        self.page_physics_settings = QWidget()
+        layout = QVBoxLayout(self.page_physics_settings)
         layout.setContentsMargins(40, 20, 40, 20)
         
         title = QLabel("步骤 3/3: 物理与环境先验参数")
@@ -401,11 +401,11 @@ class MainWindow(QMainWindow):
         road_layout.addLayout(slider_layout)
         layout.addWidget(road_frame)
 
-        self.stack.addWidget(page)
+        self.stack.addWidget(self.page_physics_settings)
 
-    def init_page_3_monitor(self):
-        self.page3 = QWidget()
-        layout = QVBoxLayout(self.page3)
+    def init_page_monitor(self):
+        self.page_monitor = QWidget()
+        layout = QVBoxLayout(self.page_monitor)
         layout.setContentsMargins(0,0,0,0)
         
         # 创建底部 Tab 栏
@@ -591,13 +591,13 @@ class MainWindow(QMainWindow):
         w_layout.addWidget(weather_right_panel, 3) # 保持右侧占比 3
         self.tabs.addTab(tab_weather, "气象数据监测")
         
-        self.stack.addWidget(self.page3)
+        self.stack.addWidget(self.page_monitor)
     
-    def init_page_4_weather_calib(self):
+    def init_page_weather_calib(self):
         """气象站独立校准面板 (Index 4)"""
-        page = QWidget()
-        page.setStyleSheet("background-color: #0f111a;")
-        layout = QHBoxLayout(page)
+        self.page_weather_calib = QWidget()
+        self.page_weather_calib.setStyleSheet("background-color: #0f111a;")
+        layout = QHBoxLayout(self.page_weather_calib)
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(30)
         
@@ -682,13 +682,13 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.btn_zero_wind)
         
         layout.addWidget(right_panel, 4)
-        self.stack.addWidget(page)
+        self.stack.addWidget(self.page_weather_calib)
 
-    def init_page_5_db_browser(self):
+    def init_page_db_browser(self):
         """历史数据浏览面板 (Index 5)"""
-        page = QWidget()
-        page.setStyleSheet("background-color: #0f111a;")
-        layout = QVBoxLayout(page)
+        self.page_db_browser = QWidget()
+        self.page_db_browser.setStyleSheet("background-color: #0f111a;")
+        layout = QVBoxLayout(self.page_db_browser)
         layout.setContentsMargins(30, 30, 30, 30)
 
         # 顶部控制栏
@@ -737,11 +737,10 @@ class MainWindow(QMainWindow):
         self.db_table.setSelectionBehavior(QTableWidget.SelectRows) # 整行选中
 
         layout.addWidget(self.db_table)
-        self.stack.addWidget(page)
+        self.stack.addWidget(self.page_db_browser)
 
     def closeEvent(self, event):
         """窗口关闭时，转交 Controller 处理清理工作"""
         if hasattr(self, 'close_callback') and self.close_callback:
             self.close_callback()
         event.accept()
-    
