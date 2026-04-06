@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QStackedWidget, QTabWidget, 
                              QGridLayout, QFrame, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QComboBox)
+                             QHeaderView, QComboBox, QSlider)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QPixmap
 
@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         self.init_page_0_main_menu()     # 索引 0：主界面
         self.init_page_1_calibration()   # 索引 1：标定步骤
         self.init_page_2_settings()      # 索引 2：设置步骤
+        self.init_page_2_5_physics_settings()
         self.init_page_3_monitor()       # 索引 3：运行面板
         self.init_page_4_weather_calib() # 索引 4：气象站校准页面
         self.init_page_5_db_browser()    # 索引 5：数据库浏览页面
@@ -205,7 +206,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         
-        self.lbl_calib_title = QLabel("步骤 1/2: 拖拽 4 个角点进行标定")
+        self.lbl_calib_title = QLabel("步骤 1/3: 拖拽 4 个角点进行标定")
         self.lbl_calib_title.setFont(QFont("Arial", 14, QFont.Bold))
         layout.addWidget(self.lbl_calib_title)
         
@@ -220,7 +221,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
         
-        self.lbl_settings_title = QLabel("步骤 2/2: 设置真实物理尺寸")
+        self.lbl_settings_title = QLabel("步骤 2/3: 设置真实物理尺寸")
         self.lbl_settings_title.setFont(QFont("Arial", 18, QFont.Bold))
         self.lbl_settings_title.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_settings_title)
@@ -280,6 +281,125 @@ class MainWindow(QMainWindow):
         layout.addLayout(create_adjuster("车道总宽度 (Width): ", self.phys_w, set_w))
         layout.addSpacing(30)
         layout.addLayout(create_adjuster("纵向标定距 (Length): ", self.phys_h, set_h))
+
+        self.stack.addWidget(page)
+
+    def init_page_2_5_physics_settings(self):
+        """物理先验参数与气象站位置设置"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 20, 40, 20)
+        
+        title = QLabel("步骤 3/3: 物理与环境先验参数")
+        title.setFont(QFont("Arial", 18, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        layout.addSpacing(20)
+
+        # ==========================================
+        # 1. 气象站空间位置设置 (weather_station_x_pos)
+        # ==========================================
+        wx_frame = QFrame()
+        wx_frame.setStyleSheet("background-color: #1a1d2d; border-radius: 10px; padding: 10px;")
+        wx_layout = QVBoxLayout(wx_frame)
+        
+        lbl_wx_title = QLabel("气象站部署位置 (相对于道路ROI):")
+        lbl_wx_title.setFont(QFont("Arial", 14, QFont.Bold))
+        lbl_wx_title.setStyleSheet("color: #8ab4f8;")
+        wx_layout.addWidget(lbl_wx_title)
+
+        # 左右侧选择
+        side_layout = QHBoxLayout()
+        lbl_side = QLabel("所处方位:")
+        lbl_side.setFont(QFont("Arial", 14))
+        self.combo_wx_side = QComboBox()
+        self.combo_wx_side.addItems(["道路左侧 (x 坐标 ≤ 0)", "道路右侧 (x 坐标 ≥ 车道总宽)"])
+        self.combo_wx_side.setFont(QFont("Arial", 14))
+        self.combo_wx_side.setStyleSheet("background-color: #0f111a; color: white; padding: 5px;")
+        side_layout.addWidget(lbl_side)
+        side_layout.addWidget(self.combo_wx_side)
+        side_layout.addStretch()
+        wx_layout.addLayout(side_layout)
+
+        # 距路缘距离 (复用粗微调组件，但允许 0.0)
+        self.wx_dist_to_edge = 0.0
+        
+        def create_dist_adjuster(label_text, init_value):
+            row = QHBoxLayout()
+            lbl = QLabel(label_text)
+            lbl.setFont(QFont("Arial", 14))
+            lbl.setMinimumWidth(150)
+            
+            btn_style = "QPushButton { font-weight: bold; font-size: 14px; background-color: #333; color: white; border-radius: 5px; } QPushButton:pressed { background-color: #555; }"
+            btn_minus = QPushButton("- 0.5")
+            btn_plus = QPushButton("+ 0.5")
+            for btn in [btn_minus, btn_plus]:
+                btn.setFixedSize(60, 40)
+                btn.setStyleSheet(btn_style)
+            
+            val_lbl = QLabel(f"{init_value:.1f} m")
+            val_lbl.setFont(QFont("Arial", 18, QFont.Bold))
+            val_lbl.setAlignment(Qt.AlignCenter)
+            val_lbl.setMinimumWidth(80)
+            
+            # 使用闭包保存状态
+            state = {'val': init_value}
+            def make_callback(delta):
+                def callback():
+                    # 距离路缘距离不能为负数
+                    state['val'] = max(0.0, state['val'] + delta)
+                    val_lbl.setText(f"{state['val']:.1f} m")
+                    self.wx_dist_to_edge = state['val']
+                return callback
+
+            btn_minus.clicked.connect(make_callback(-0.5))
+            btn_plus.clicked.connect(make_callback(0.5))
+            
+            row.addWidget(lbl)
+            row.addWidget(btn_minus)
+            row.addWidget(val_lbl)
+            row.addWidget(btn_plus)
+            row.addStretch()
+            return row
+
+        wx_layout.addLayout(create_dist_adjuster("距路缘距离:", self.wx_dist_to_edge))
+        layout.addWidget(wx_frame)
+
+        # ==========================================
+        # 2. 道路方向角设置 (road_direction_angle)
+        # ==========================================
+        road_frame = QFrame()
+        road_frame.setStyleSheet("background-color: #1a1d2d; border-radius: 10px; padding: 10px;")
+        road_layout = QVBoxLayout(road_frame)
+        
+        lbl_road_title = QLabel("道路走向方位角 (0° = 正南北走向):")
+        lbl_road_title.setFont(QFont("Arial", 14, QFont.Bold))
+        lbl_road_title.setStyleSheet("color: #8ab4f8;")
+        road_layout.addWidget(lbl_road_title)
+
+        slider_layout = QHBoxLayout()
+        self.slider_road_angle = QSlider(Qt.Horizontal)
+        self.slider_road_angle.setRange(-90, 90)
+        self.slider_road_angle.setValue(0)
+        self.slider_road_angle.setTickPosition(QSlider.TicksBelow)
+        self.slider_road_angle.setTickInterval(15)
+        
+        self.lbl_angle_val = QLabel("0°")
+        self.lbl_angle_val.setFont(QFont("Arial", 20, QFont.Bold))
+        self.lbl_angle_val.setAlignment(Qt.AlignCenter)
+        self.lbl_angle_val.setMinimumWidth(80)
+        
+        # 滑动时动态更新数值
+        self.slider_road_angle.valueChanged.connect(
+            lambda v: self.lbl_angle_val.setText(f"{v}°")
+        )
+        
+        slider_layout.addWidget(self.slider_road_angle)
+        slider_layout.addSpacing(20)
+        slider_layout.addWidget(self.lbl_angle_val)
+        
+        road_layout.addLayout(slider_layout)
+        layout.addWidget(road_frame)
 
         self.stack.addWidget(page)
 
