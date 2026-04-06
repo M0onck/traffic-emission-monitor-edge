@@ -73,6 +73,9 @@ class MainController:
         self.view.btn_delete_db.clicked.connect(self.show_batch_delete_dialog)
         self.view.session_combo.currentIndexChanged.connect(self.update_db_table)
 
+        # 设置按钮的绑定
+        self.view.btn_settings.clicked.connect(self.route_settings_click)
+
         # 退出程序按钮的绑定
         self.view.btn_exit.clicked.connect(self.handle_exit_request)
     
@@ -108,6 +111,17 @@ class MainController:
         """跳转至历史数据浏览页面"""
         self.enter_app(self.view.page_db_browser)
         self.handle_db_refresh() # 进入时自动拉取一次最新数据
+    
+    def route_settings_click(self):
+        """跳转至系统设置页面"""
+        # 如果当前正在采集中，禁止进入设置
+        if self.is_collecting:
+            from ui.components.edge_dialog import EdgeMessageBox
+            dialog = EdgeMessageBox(self.view, "提示", "任务运行中无法修改设置，请先结束采集。")
+            dialog.exec_()
+            return
+            
+        self.enter_app(self.view.page_settings)
 
     def enter_app(self, target_widget):
         """进入具体功能的槽函数"""

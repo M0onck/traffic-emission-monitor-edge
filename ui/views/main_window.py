@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QStackedWidget, QTabWidget, 
                              QGridLayout, QFrame, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QComboBox, QSlider)
+                             QHeaderView, QComboBox, QSlider, QRadioButton)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QPixmap
 
@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
         self.init_page_monitor()       # 运行面板
         self.init_page_weather_calib() # 气象站校准页面
         self.init_page_db_browser()    # 数据库浏览页面
+        self.init_page_settings()      # 总设置界面
 
     def init_page_main_menu(self):
         """主调度界面"""
@@ -190,11 +191,86 @@ class MainWindow(QMainWindow):
         right_layout.addSpacing(15)
         right_layout.addWidget(self.btn_app3)
         right_layout.addStretch()
-        right_layout.addWidget(self.btn_exit)
+        
+        # 创建底部水平布局
+        bottom_btn_layout = QHBoxLayout()
+        bottom_btn_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 新增“设置”按钮
+        self.btn_settings = QPushButton("设置")
+        self.btn_settings.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_settings.setStyleSheet(self.style_hollow_white) # 使用统一的白色镂空样式
+        
+        self.btn_exit = QPushButton("退出")
+        self.btn_exit.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_exit.setStyleSheet(self.style_hollow_red)
+
+        # 两个按钮等宽并排，中间加一点间距
+        bottom_btn_layout.addWidget(self.btn_settings)
+        bottom_btn_layout.addSpacing(15)
+        bottom_btn_layout.addWidget(self.btn_exit)
+
+        # 将水平布局加入右侧主布局
+        right_layout.addLayout(bottom_btn_layout)
 
         layout.addWidget(right_panel, 4) # 右侧占比 4
 
         self.stack.addWidget(self.page_main_menu)
+
+    def init_page_settings(self):
+        """系统设置面板"""
+        self.page_settings = QWidget()
+        self.page_settings.setStyleSheet("background-color: #0f111a;")
+        layout = QVBoxLayout(self.page_settings)
+        layout.setContentsMargins(30, 30, 30, 30)
+
+        title = QLabel("系统设置与参数配置")
+        title.setFont(QFont("Arial", 18, QFont.Bold))
+        title.setStyleSheet("color: #ffffff; border: none;")
+        layout.addWidget(title)
+        layout.addSpacing(15)
+
+        # 创建多页签容器
+        self.settings_tabs = QTabWidget()
+        self.settings_tabs.setFont(QFont("Arial", 14))
+        # 适配深色科技风的 Tab 样式
+        self.settings_tabs.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #444; background: #181818; border-radius: 5px; }
+            QTabBar::tab { background: #222; color: #aaaaaa; padding: 10px 25px; border-top-left-radius: 5px; border-top-right-radius: 5px; margin-right: 2px; }
+            QTabBar::tab:selected { background: #181818; color: #ffffff; font-weight: bold; border: 1px solid #444; border-bottom: none; }
+        """)
+        layout.addWidget(self.settings_tabs)
+
+        # --- 页签 1: 视频源设置 ---
+        tab_video_source = QWidget()
+        vs_layout = QVBoxLayout(tab_video_source)
+        vs_layout.setContentsMargins(40, 40, 40, 40)
+
+        lbl_desc = QLabel("选择输入视频流：")
+        lbl_desc.setFont(QFont("Arial", 14))
+        lbl_desc.setStyleSheet("color: #cccccc; border: none;")
+        vs_layout.addWidget(lbl_desc)
+        vs_layout.addSpacing(30)
+
+        # 选项：本地视频
+        self.radio_source_local = QRadioButton("本地视频文件")
+        self.radio_source_local.setFont(QFont("Arial", 16))
+        self.radio_source_local.setStyleSheet("color: white;")
+        self.radio_source_local.setChecked(True) # 默认选中本地
+
+        # 选项：真实摄像头
+        self.radio_source_camera = QRadioButton("IMX296摄像头")
+        self.radio_source_camera.setFont(QFont("Arial", 16))
+        self.radio_source_camera.setStyleSheet("color: white;")
+
+        vs_layout.addWidget(self.radio_source_local)
+        vs_layout.addSpacing(20)
+        vs_layout.addWidget(self.radio_source_camera)
+        vs_layout.addStretch()
+
+        self.settings_tabs.addTab(tab_video_source, "视频源配置")
+
+        self.stack.addWidget(self.page_settings)
 
     def init_page_calibration(self):
         self.page_calibration = QWidget()
