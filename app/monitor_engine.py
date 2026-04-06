@@ -423,9 +423,13 @@ class TrafficMonitorEngine:
 
     def _handle_exits(self, frame_id, current_timestamp):
         """
-        处理离场车辆：执行最终结算、生成报表并入库。
+        处理离场车辆或赖场车辆：执行最终/临时结算、生成报表并入库。
         """
         for tid, record in self.registry.check_exits(frame_id, current_timestamp):
+            
+            # 判断是否为拥堵强制结算的“切片”数据
+            is_continued = record.get('exit_type') == 'continued'
+
             # Step 1. 解析最终属性 (车牌、细分车型)
             final_plate, final_type_str = self.classifier.resolve_type(
                 record['class_id'], record.get('plate_history', [])
@@ -466,6 +470,10 @@ class TrafficMonitorEngine:
             
             # 提取基础车型用于存入数据库 (比如 "LDV-Gasoline" -> "LDV")
             base_vehicle_type = final_type_str.split('-')[0] if final_type_str else "LDV"
+
+            # 如果是强制结算片段，追加 "-Forced" 标记
+            if is_continued:
+                base_vehicle_type = f"{base_vehicle_type}-Forced"
 
             if getattr(self, 'current_session_id', None):
                 # 1. 宏观统计入库 (Veh_Sum - 供前端预览)
@@ -552,16 +560,20 @@ class TrafficMonitorEngine:
         
         # 构建干净的物理时空轨迹数据结构，隔离底层的CV像素与帧率参数
         trajectory_for_db = []
+        # 获取当前切片真实的起点时间
+        first_time = float(record.get('first_time', 0.0))
         for i in valid_indices:
             p = trajectory[i]
-            trajectory_for_db.append({
-                'timestamp': float(p['timestamp']),
-                'x': float(p['raw_x']),   # 映射为纯粹的物理横向坐标 (米)
-                'y': float(p['raw_y']),   # 映射为纯粹的物理纵向坐标 (米)
-                'v': float(p['speed']),   # 平滑后的物理速度 (m/s)
-                'a': float(p['accel']),   # 平滑后的物理加速度 (m/s^2)
-                'vsp': float(p.get('vsp', 0.0)) # 单点比功率
-            })
+            # 利用 first_time 严格剔除为了平滑算法而保留的历史重叠点
+            if float(p['timestamp']) >= first_time:
+                trajectory_for_db.append({
+                    'timestamp': float(p['timestamp']),
+                    'x': float(p['raw_x']),   # 映射为纯粹的物理横向坐标 (米)
+                    'y': float(p['raw_y']),   # 映射为纯粹的物理纵向坐标 (米)
+                    'v': float(p['speed']),   # 平滑后的物理速度 (m/s)
+                    'a': float(p['accel']),   # 平滑后的物理加速度 (m/s^2)
+                    'vsp': float(p.get('vsp', 0.0)) # 单点比功率
+                })
 
         # 将打包好的纯净轨迹挂载到 record，供 _handle_exits 写入 Veh_Raw
         record['trajectory_blob_data'] = trajectory_for_db

@@ -1,6 +1,7 @@
 import numpy as np
 import math
 from collections import defaultdict
+import infra.config.loader as cfg
 
 class VehicleRegistry:
     """
@@ -16,6 +17,7 @@ class VehicleRegistry:
         # 生命周期配置
         self.min_survival_sec = min_survival_sec  # 最小存活秒数 (过滤误检)
         self.exit_timeout_sec = exit_timeout_sec  # 消失多少秒后认定为离场
+        self.force_delay_sec = cfg.get("time_windows", {}).get("alignment_delay_sec", 60.0) # 延迟对齐时间，作为切片结算的基准
         
         # 数据质量配置
         self.min_valid_trajectory_points = min_valid_pts # 最小有效轨迹点数
@@ -188,41 +190,70 @@ class VehicleRegistry:
 
     def check_exits(self, frame_id, current_timestamp):
         """
-        检查哪些车辆已经离开画面（超时未更新）。
+        检查哪些车辆已经离开画面（超时未更新），或者在画面中滞留过久触发强制临时结算。
         :return: list of (tid, record)
         """
-        timed_out_ids = []
-        for tid, record in self.records.items():
-            # 使用时间戳差值判定超时 (例如：超过 1.0 秒未见)
-            if current_timestamp - record['last_seen_time'] > self.exit_timeout_sec:
-                timed_out_ids.append(tid)
+        exits = []
+        # 使用 list 包装 items() 以防在迭代中删除元素
+        for tid, record in list(self.records.items()):
+            # 1. 正常离场判定
+            time_since_last_seen = current_timestamp - record['last_seen_time']
+            is_timeout = time_since_last_seen > self.exit_timeout_sec
+            
+            # 2. 长时间赖场强制结算判定 (兜底策略)
+            last_settled = record.get('last_settled_time', record['first_time'])
+            time_since_settle = current_timestamp - last_settled
+            is_forced = (not is_timeout) and (time_since_settle >= self.force_delay_sec)
+            
+            if is_timeout or is_forced:
+                # 检查存活期、质量和移动距离
+                life_span = record['last_seen_time'] - record['first_time']
+                has_survival = life_span >= self.min_survival_sec
+                
+                min_valid_pts = getattr(self, 'min_valid_trajectory_points', 15)
+                valid_samples = record.get('valid_samples_count', 0)
+                has_quality = valid_samples >= min_valid_pts
+                
+                min_dist = getattr(self, 'min_moving_distance_m', 2.0)
+                total_dist = record.get('total_distance_m', 0.0)
+                has_movement = total_dist >= min_dist
+                
+                # 只要满足条件，无论是真离场还是被强制临时结算，都将其输出
+                if has_survival and has_quality and has_movement:
+                    # 构造浅拷贝对象，避免后续的重置操作污染准备落盘的数据
+                    exit_record = dict(record)
+                    exit_record['trajectory'] = list(record['trajectory'])
+                    exit_record['op_mode_stats'] = dict(record['op_mode_stats'])
+                    exit_record['exit_type'] = 'continued' if is_forced else 'exited'
+                    exits.append((tid, exit_record))
 
-        valid_exits = []
-        for tid in timed_out_ids:
-            record = self.records[tid]
-            
-            # 1. 存活时间过滤
-            life_span = record['last_seen_time'] - record['first_time']
-            has_survival = life_span >= self.min_survival_sec
-            
-            # 2. 有效点数过滤
-            min_valid_pts = getattr(self, 'min_valid_trajectory_points', 15)
-            valid_samples = record.get('valid_samples_count', 0)
-            has_quality = valid_samples >= min_valid_pts
-            
-            # 3. 移动距离过滤 (防止静止误检)
-            min_dist = getattr(self, 'min_moving_distance_m', 2.0)
-            total_dist = record.get('total_distance_m', 0.0)
-            has_movement = total_dist >= min_dist
-            
-            # 必须同时满足3个条件才算有效离场并落盘
-            if has_survival and has_quality and has_movement:
-                valid_exits.append((tid, record))
-
-            # 无论是否有效，都从内存中移除
-            del self.records[tid]
-            
-        return valid_exits
+                if is_timeout:
+                    # 真正离场，彻底清除内存
+                    del self.records[tid]
+                elif is_forced:
+                    # --- 强制临时结算，开始处理下一个切片 ---
+                    # 1. 保留少量历史点，防止运动学 S-G 滤波器在切片衔接处产生跳变断层
+                    keep_pts = 15  
+                    self.records[tid]['trajectory'] = self.records[tid]['trajectory'][-keep_pts:]
+                    self.records[tid]['valid_samples_count'] = len(self.records[tid]['trajectory'])
+                    
+                    # 2. 更新下一段切片的起始时间点（无缝衔接）
+                    self.records[tid]['first_time'] = record['last_seen_time']
+                    self.records[tid]['first_frame'] = record['last_seen_frame']
+                    self.records[tid]['last_settled_time'] = current_timestamp
+                    
+                    # 3. 清空宏观累加器，防止下一切片的 Veh_Sum 产生重复统计
+                    self.records[tid]['total_distance_m'] = 0.0
+                    self.records[tid]['speed_sum'] = 0.0
+                    self.records[tid]['speed_count'] = 0
+                    self.records[tid]['max_speed'] = 0.0
+                    self.records[tid]['brake_emission_mg'] = 0.0
+                    self.records[tid]['tire_emission_mg'] = 0.0
+                    self.records[tid]['op_mode_stats'].clear()
+                    
+                    # 不清除 class_votes(车型投票) 和 plate_history(车牌)，保持其身份属性稳定！
+                    
+        return exits
 
     def get_history(self, tid):
         return self.records.get(tid, {}).get('plate_history', [])
