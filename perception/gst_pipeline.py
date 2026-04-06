@@ -38,6 +38,7 @@ class GstPipelineManager:
         self.sink_meta = self.pipeline.get_by_name("sink_meta")
         self.bus = self.pipeline.get_bus() 
         self.is_running = False
+        self._kept_sample = None
 
     def _build_pipeline(self) -> str:
         is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
@@ -77,6 +78,7 @@ class GstPipelineManager:
             self.pipeline.set_state(Gst.State.NULL)
             self.is_running = False
 
+    # 替换整个 read 方法：
     def read(self):
         if not self.is_running: return None, None
 
@@ -89,17 +91,26 @@ class GstPipelineManager:
                 print(f"\n[GStreamer] 视频流已播放完毕 (EOS)\n")
             return None, None 
 
-        # 1. 优先拉取视频画面 (允许等待 500ms)
-        # 必须耐心等待画面，因为摄像头的曝光预热、首帧输出可能需要一点时间
-        sample_video = self.sink_video.emit("try-pull-sample", 500000000)
-        if not sample_video:
-            return None, None
+        # 1. 获取视频帧 (允许5ms超时)
+        sample_video = self.sink_video.emit("try-pull-sample", 5000000)
+        if not sample_video: 
+            return None, None 
 
-        # 2. 尝试拉取 AI 结果 (仅等待 1ms，非阻塞)
-        # 不管 AI 算没算完，我们绝不能在这里死等，否则就会拖慢画面导致卡顿
+        # 2. 尝试获取 AI 结果 (仅等待1ms)
         sample_meta = self.sink_meta.emit("try-pull-sample", 1000000)
-        
-        buffer_meta = sample_meta.get_buffer() if sample_meta else None
+
+        # 精准内存保活策略
+        # 把当前帧的 sample 存入实例变量，保证它在 vision.process() 期间绝对安全。
+        # 无论这次拿到的是正常帧还是 None，都会无情覆盖上一帧，完美释放硬件 CMA 内存池！
+        self._kept_sample = sample_meta 
+
+        if sample_meta:
+            buffer_meta = sample_meta.get_buffer()
+        else:
+            # 防丢帧欺骗策略
+            # 如果 AI 没赶上，造一个空的假 Buffer 骗过 monitor_engine.py
+            # 这样引擎就不会触发 "if buffer is None: continue" 把视频帧丢掉了，黑屏彻底解决！
+            buffer_meta = Gst.Buffer.new()
 
         buffer_video = sample_video.get_buffer()
         try:
@@ -111,15 +122,10 @@ class GstPipelineManager:
             actual_w = struct.get_value("width")
             actual_h = struct.get_value("height")
             
-            # 这里使用了 .copy()，数据被安全转移到 Python 堆内存，安全释放硬件内存
             frame = np.ndarray((actual_h, actual_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
             buffer_video.unmap(map_info)
 
-            # 3. 提取缓存中【最新可用】的 AI 元数据。
-            # 即使 AI 这帧没赶上，我们依然会把没有任何框的、干净的视频帧返回给前端显示，彻底告别黑屏！
-            meta_buffer = self._last_sample_meta.get_buffer() if hasattr(self, '_last_sample_meta') and self._last_sample_meta else None
-
-            return frame, meta_buffer
+            return frame, buffer_meta
             
         except Exception as e:
             print(f">>> [GStreamer] 内存解析异常: {e}")
