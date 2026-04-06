@@ -4,7 +4,8 @@
     "target_video_path": "video/output_video.MP4",
     "db_path": "data/traffic_data.db",
     "fps": 30,
-    "debug_mode": true
+    "debug_mode": true,
+    "use_camera": false
   },
   "display": {
     "frame_width": 1280,

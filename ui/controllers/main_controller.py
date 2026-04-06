@@ -1,4 +1,4 @@
-import time
+import os
 import json
 import cv2
 import numpy as np
@@ -15,6 +15,7 @@ from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
 from perception.sensor.weather_station import WeatherGateway
+import perception.gst_pipeline as gst
 from domain.physics.alignment_engine import DelayedAlignmentEngine
 
 class MainController:
@@ -77,6 +78,9 @@ class MainController:
         # 设置界面相关按钮的绑定
         self.view.btn_settings.clicked.connect(self.route_settings_click)
         self.view.btn_browse_local.clicked.connect(self.handle_browse_local_video)
+        self.view.btn_detect_camera.clicked.connect(self.handle_detect_camera)
+        self.view.radio_source_local.toggled.connect(self.handle_source_type_changed)
+        self.view.radio_source_camera.toggled.connect(self.handle_source_type_changed)
 
         # 退出程序按钮的绑定
         self.view.btn_exit.clicked.connect(self.handle_exit_request)
@@ -158,6 +162,13 @@ class MainController:
             idx = self.wizard_flow.index(current_page)
             if idx < len(self.wizard_flow) - 1:
                 next_page = self.wizard_flow[idx + 1]
+
+                # --- 进入标定步骤时的处理 ---
+                if next_page == self.view.page_calibration:
+                    # 重新加载当前配置的源 (文件路径或 GST 管道)
+                    # CalibrationCanvas 内部使用 cv2.VideoCapture，它原生支持 GST 管道字符串
+                    self.view.canvas.load_frame(cfg.VIDEO_PATH)
+
                 self.view.stack.setCurrentWidget(next_page)
                 
                 # --- 进入新页面的处理逻辑 ---
@@ -570,13 +581,39 @@ class MainController:
             # 1. 更新 UI 显示
             self.view.lbl_local_path.setText(file_path)
             
-            # 2. 调用 config/loader.py 中的新方法更新并落盘
-            cfg.update_video_path(file_path)
+            # 2. 调用 config/loader.py 中的方法更新并落盘
+            cfg.update_source_settings(file_path, use_camera=False)
             
             # 如果此时在标定页，可能需要重新加载第一帧
             self.view.canvas.load_frame(cfg.VIDEO_PATH) 
             
             print(f"前端控制器：已更新视频输入路径为 {file_path}，并保存至配置文件")
+
+    def handle_detect_camera(self):
+        """搜索物理设备并生成 GStreamer 管道"""
+        self.view.radio_source_camera.setChecked(True)
+        
+        # 针对树莓派 5，通常检查 /dev/video0 或利用 libcamera-hello
+        if os.path.exists("/dev/video0"):
+            # 获取针对 RPi 硬件加速优化的管道字符串
+            pipeline = gst.get_rpi_camera_pipeline(cfg.FRAME_WIDTH, cfg.FRAME_HEIGHT, cfg.FPS)
+            
+            self.view.lbl_camera_info.setText("检测到 IMX296 硬件加速流")
+            cfg.update_source_settings(pipeline, use_camera=True)
+            print(f"控制器：已切换至物理摄像头流: {pipeline}")
+        else:
+            self.view.lbl_camera_info.setText("未发现摄像头设备 (/dev/video0)")
+
+    def handle_source_type_changed(self):
+        """当用户手动切换单选框时更新配置"""
+        if self.view.radio_source_local.isChecked():
+            # 切回本地文件路径
+            current_path = self.view.lbl_local_path.text()
+            cfg.update_source_settings(current_path, use_camera=False)
+        elif self.view.radio_source_camera.isChecked() and "检测到" in self.view.lbl_camera_info.text():
+            # 切回摄像头管道
+            pipeline = gst.get_rpi_camera_pipeline(cfg.FRAME_WIDTH, cfg.FRAME_HEIGHT, cfg.FPS)
+            cfg.update_source_settings(pipeline, use_camera=True)
 
     def _update_thermal_view(self):
         """处理热力图渲染与数据提取"""

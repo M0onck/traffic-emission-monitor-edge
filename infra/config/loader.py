@@ -27,6 +27,7 @@ TARGET_VIDEO_PATH = _sys["target_video_path"]
 DB_PATH = _sys["db_path"]
 FPS = _sys["fps"]
 DEBUG_MODE = _sys["debug_mode"]
+USE_CAMERA = _sys.get("use_camera", False)
 
 _d = _cfg["display"]
 FRAME_WIDTH = _d.get("frame_width", 1280)
@@ -94,17 +95,18 @@ WEATHER_STATION_X_POS = _pp.get("weather_station_x_pos", 0.0)
 ROAD_DIRECTION_ANGLE = _pp.get("road_direction_angle", 0.0)
 NEV_MASS_PENALTY_RATIO = _pp.get("nev_mass_penalty_ratio", 1.2)
 
-def update_video_path(new_path):
-    """更新视频源路径，并持久化到 config.json 文件中"""
-    global VIDEO_PATH
+def update_source_settings(new_path, use_camera=False):
+    """更新视频源或摄像头配置，并持久化到 config.json"""
+    global VIDEO_PATH, USE_CAMERA
     
-    # 1. 更新内存中的字典
+    # 更新内存
     _cfg["system"]["video_path"] = new_path
+    _cfg["system"]["use_camera"] = use_camera
     
-    # 2. 更新运行时的全局变量
     VIDEO_PATH = new_path
+    USE_CAMERA = use_camera
     
-    # 3. 将更改写回 config.json 磁盘文件
+    # 写入磁盘
     try:
         with open(CONFIG_FILE, "w", encoding='utf-8') as f:
             json.dump(_cfg, f, indent=2, ensure_ascii=False)

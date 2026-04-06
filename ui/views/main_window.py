@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
         vs_layout.addWidget(lbl_desc)
         vs_layout.addSpacing(30)
 
-        # 选项：本地视频
+        # --- 选项 1: 本地视频 ---
         local_layout = QHBoxLayout()
         
         self.radio_source_local = QRadioButton("本地视频文件")
@@ -280,15 +280,36 @@ class MainWindow(QMainWindow):
         local_layout.addStretch() # 靠左对齐，剩余空间留白
 
         vs_layout.addLayout(local_layout) # 加入主布局
+
         vs_layout.addSpacing(20)
 
-        # 选项：真实摄像头
-        self.radio_source_camera = QRadioButton("IMX296摄像头")
+        # --- 选项 2: 接入的摄像头 ---
+        camera_layout = QHBoxLayout()
+        
+        self.radio_source_camera = QRadioButton("接入的摄像头")
         self.radio_source_camera.setFont(QFont("Arial", 16))
         self.radio_source_camera.setStyleSheet("color: white;")
+        # 根据配置文件初始化选中状态
+        if cfg.USE_CAMERA: self.radio_source_camera.setChecked(True)
 
-        vs_layout.addWidget(self.radio_source_camera)
-        vs_layout.addStretch()
+        # 自动检测按钮
+        self.btn_detect_camera = QPushButton(" 自动检测 ")
+        self.btn_detect_camera.setFont(QFont("Arial", 14))
+        self.btn_detect_camera.setStyleSheet(self.style_hollow_white)
+        self.btn_detect_camera.setFixedHeight(40)
+
+        # 设备信息显示
+        self.lbl_camera_info = QLabel("未检测到设备")
+        if cfg.USE_CAMERA: self.lbl_camera_info.setText("已接入默认摄像头")
+        self.lbl_camera_info.setFont(QFont("Arial", 12))
+        self.lbl_camera_info.setStyleSheet("color: #aaaaaa; border: none;")
+
+        camera_layout.addWidget(self.radio_source_camera)
+        camera_layout.addSpacing(15)
+        camera_layout.addWidget(self.btn_detect_camera)
+        camera_layout.addSpacing(15)
+        camera_layout.addWidget(self.lbl_camera_info)
+        camera_layout.addStretch()
 
         self.settings_tabs.addTab(tab_video_source, "视频源配置")
 
