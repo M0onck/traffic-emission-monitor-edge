@@ -63,7 +63,6 @@ class MainController:
         self.view.btn_app1.clicked.connect(self.route_app1_click)
         self.view.btn_app2.clicked.connect(self.route_app2_click)
         self.view.btn_app3.clicked.connect(self.route_app3_click)
-        self.view.btn_exit.clicked.connect(self.view.close)
 
         # 绑定气象站的校准按钮事件
         self.view.btn_sync_clock.clicked.connect(self.handle_sync_clock)
@@ -438,13 +437,13 @@ class MainController:
         """弹出基于 Session 的删除数据对话框"""
 
         # 空数据库拦截
-        if self.view.session_combo.count() == 0:
+        if self.view.session_combo.currentData() is None:
             # 默认 is_warning=False，会弹出一个带有白色/绿色确认按钮的常规提示框
             dialog = EdgeMessageBox(
                 self.view, 
                 "无历史数据", 
                 "当前边缘节点数据库为空。", 
-                info_text="没有任何可被清理的任务数据。"
+                info_text="没有任何可清理的任务数据。"
             )
             dialog.exec_()
             return
