@@ -30,6 +30,7 @@ class GstPipelineManager:
         self.out_w = config.get("FRAME_WIDTH", 1280) 
         self.out_h = config.get("FRAME_HEIGHT", 720)
         
+        self.use_camera = cfg.USE_CAMERA
         self.pipeline_string = self._build_pipeline()
         self.pipeline = Gst.parse_launch(self.pipeline_string)
         
@@ -37,7 +38,6 @@ class GstPipelineManager:
         self.sink_meta = self.pipeline.get_by_name("sink_meta")
         self.bus = self.pipeline.get_bus() 
         self.is_running = False
-        self.use_camera = cfg.USE_CAMERA
 
     def _build_pipeline(self) -> str:
         # === 智能判断：当前视频源是本地文件，还是物理摄像头的管道流 ===
