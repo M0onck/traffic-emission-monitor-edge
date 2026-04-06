@@ -121,8 +121,8 @@ class MainController:
             # 如果已经在采集中，直接跳过标定和设置，切入监控面板
             self.enter_app(self.view.page_monitor)
         else:
-            # 如果尚未运行，按照正常流程进入第一步标定环节
-            self.enter_app(self.view.page_weather_calib)
+            # 如果尚未运行，按照正常流程进入第一步预设
+            self.enter_app(self.wizard_flow[0])
     
     def route_app2_click(self):
         """跳转至气象站校准页面"""
@@ -223,7 +223,7 @@ class MainController:
                 self.view.btn_next.setVisible(True)
                 
                 # 如果是正式启动前的最后一步
-                if current_page == self.view.page_physics_settings:
+                if current_page == self.view.page_pos_settings:
                     self.view.btn_next.setText(" 开 始 ")
                     self.view.btn_next.setStyleSheet("background-color: #4CAF50; color: white;")
                 else:
