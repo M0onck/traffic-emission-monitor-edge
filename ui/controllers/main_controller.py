@@ -560,7 +560,7 @@ class MainController:
         
         # 呼出系统文件选择对话框
         file_path, _ = QFileDialog.getOpenFileName(
-            self.view,
+            None,
             "选择本地测试视频文件",
             "", # 默认路径（为空则基于上次记忆）
             "视频文件 (*.mp4 *.avi *.mkv *.mov);;所有文件 (*.*)"
