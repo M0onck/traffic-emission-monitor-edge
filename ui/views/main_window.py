@@ -557,6 +557,31 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.South) # 页签放在底部
         self.tabs.setFont(QFont("Arial", 14, QFont.Bold))
+        
+        # 应用自适应底部 Tab 的深色科技风样式
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane { 
+                border: 1px solid #444; 
+                background: #181818; 
+                border-radius: 5px; 
+            }
+            QTabBar::tab { 
+                background: #222; 
+                color: #aaaaaa; 
+                padding: 10px 25px; 
+                border-bottom-left-radius: 5px; 
+                border-bottom-right-radius: 5px; 
+                margin-right: 2px; 
+            }
+            QTabBar::tab:selected { 
+                background: #181818; 
+                color: #ffffff; 
+                font-weight: bold; 
+                border: 1px solid #444; 
+                border-top: none; 
+            }
+        """)
+
         layout.addWidget(self.tabs)
         
         # --- Tab 1: 实时视频监控 ---
