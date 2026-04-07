@@ -11,4 +11,4 @@ source venv/bin/activate
 export DISPLAY=:0
 
 # 4. 启动主程序
-python3 app_gui.py
+python app_gui.py
