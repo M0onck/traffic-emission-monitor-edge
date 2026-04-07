@@ -80,13 +80,23 @@ class CalibrationCanvas(QLabel):
 
     def _start_preview(self, first_frame):
         """成功读取第一帧后的初始化工作"""
+        # 记录当前已存在的画面分辨率
+        old_shape = self.orig_frame.shape[:2] if self.orig_frame is not None else None
+        
         self.orig_frame = first_frame
-        if not self.real_points: 
+        new_shape = self.orig_frame.shape[:2]
+        
+        # 触发条件：如果是首次加载，或者视频源分辨率发生了变动，则重新初始化标定框
+        if not self.real_points or old_shape != new_shape: 
             self.init_points()
+            # 如果发生了重置，清除可能存在的选中状态，防止放大镜热区越界
+            self.selected_idx = -1
+            self.drag_idx = -1
+            
         self.update_display()
         self.preview_timer.start(33)
 
-    def _show_error_screen(self, msg="Camera Offline"):
+    def _show_error_screen(self, msg="摄像头离线..."):
         """绘制错误画面"""
         self.orig_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         cv2.putText(self.orig_frame, msg, (500, 360), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
