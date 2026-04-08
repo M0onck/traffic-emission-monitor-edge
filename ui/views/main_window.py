@@ -415,152 +415,162 @@ class MainWindow(QMainWindow):
         """物理先验参数与气象站位置设置"""
         self.page_pos_settings = QWidget()
         layout = QVBoxLayout(self.page_pos_settings)
-        layout.setContentsMargins(40, 20, 40, 20)
+        layout.setContentsMargins(30, 20, 30, 20)
         
         title = QLabel("步骤 3/3: 物理与环境先验参数")
         title.setFont(QFont("Arial", 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: white;")
+        title.setStyleSheet("color: white; padding: 5px;")
         layout.addWidget(title)
-        layout.addSpacing(20)
+        layout.addSpacing(15)
+
+        # 改为水平布局：左侧气象站，右侧方位角旋钮
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(20)
 
         # ==========================================
-        # 1. 气象站空间位置设置
+        # 1. (左侧) 气象站空间位置设置
         # ==========================================
         wx_frame = QFrame()
         wx_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 10px;")
         wx_layout = QVBoxLayout(wx_frame)
+        wx_layout.setSpacing(15)
         
-        lbl_wx_title = QLabel("气象站部署位置 (相对于道路ROI):")
+        lbl_wx_title = QLabel("气象站部署位置 (相较于道路):")
         lbl_wx_title.setFont(QFont("Arial", 14, QFont.Bold))
-        lbl_wx_title.setStyleSheet("color: #00e676; border: none;") # 用绿色提亮
+        lbl_wx_title.setStyleSheet("color: #00e676; border: none; padding: 2px;")
         wx_layout.addWidget(lbl_wx_title)
 
-        side_layout = QHBoxLayout()
         lbl_side = QLabel("所处方位:")
         lbl_side.setFont(QFont("Arial", 14))
-        lbl_side.setStyleSheet("color: white; border: none;")
+        lbl_side.setStyleSheet("color: white; border: none; padding: 2px;")
+        wx_layout.addWidget(lbl_side)
+        
         self.combo_wx_side = QComboBox()
         self.combo_wx_side.addItems(["道路左侧 (x 坐标 ≤ 0)", "道路右侧 (x 坐标 ≥ 车道总宽)"])
-        self.combo_wx_side.setFont(QFont("Arial", 14))
-        self.combo_wx_side.setStyleSheet("background-color: #000; color: white; border: 1px solid #555; padding: 5px;")
-        side_layout.addWidget(lbl_side)
-        side_layout.addWidget(self.combo_wx_side)
-        side_layout.addStretch()
-        wx_layout.addLayout(side_layout)
+        self.combo_wx_side.setFont(QFont("Arial", 13))
+        # 增加 min-height 和 padding 解决下拉框文字边缘被裁切的问题
+        self.combo_wx_side.setStyleSheet("background-color: #000; color: white; border: 1px solid #555; padding: 8px; min-height: 25px;")
+        wx_layout.addWidget(self.combo_wx_side)
+        
+        wx_layout.addSpacing(10)
+
+        lbl_dist = QLabel("距路缘距离 (m):")
+        lbl_dist.setFont(QFont("Arial", 14))
+        lbl_dist.setStyleSheet("color: white; border: none; padding: 2px;")
+        wx_layout.addWidget(lbl_dist)
 
         self.wx_dist_to_edge = 0.0
         
-        def create_dist_adjuster(label_text, init_value):
-            row = QHBoxLayout()
-            lbl = QLabel(label_text)
-            lbl.setFont(QFont("Arial", 14))
-            lbl.setStyleSheet("color: white; border: none;")
-            lbl.setMinimumWidth(150)
-            
-            btn_minus = QPushButton("- 0.5")
-            btn_plus = QPushButton("+ 0.5")
-            for btn in [btn_minus, btn_plus]:
-                btn.setFixedSize(70, 40)
-                btn.setStyleSheet(self.style_hollow_white) # 用全局的白色镂空样式
-            
-            val_lbl = QLabel(f"{init_value:.1f} m")
-            val_lbl.setFont(QFont("Arial", 18, QFont.Bold))
-            val_lbl.setStyleSheet("color: white; border: none;")
-            val_lbl.setAlignment(Qt.AlignCenter)
-            val_lbl.setMinimumWidth(80)
-            
-            state = {'val': init_value}
-            def make_callback(delta):
-                def callback():
-                    state['val'] = max(0.0, state['val'] + delta)
-                    val_lbl.setText(f"{state['val']:.1f} m")
-                    self.wx_dist_to_edge = state['val']
-                return callback
+        dist_layout = QHBoxLayout()
+        btn_minus = QPushButton("- 0.1")
+        btn_plus = QPushButton("+ 0.1")
+        for btn in [btn_minus, btn_plus]:
+            # 增加高度到 45，防止大字体按钮文字上下被一刀切
+            btn.setFixedSize(80, 45)
+            btn.setStyleSheet(self.style_hollow_white)
+        
+        val_lbl = QLabel(f"{self.wx_dist_to_edge:.1f} m")
+        val_lbl.setFont(QFont("Arial", 20, QFont.Bold))
+        val_lbl.setStyleSheet("color: white; border: none; padding: 2px;")
+        val_lbl.setAlignment(Qt.AlignCenter)
+        val_lbl.setMinimumWidth(80)
+        
+        state = {'val': self.wx_dist_to_edge}
+        def make_callback(delta):
+            def callback():
+                # 必须用 round 包裹，修复 Python 浮点数相加引发的无限长小数尾巴乱码
+                state['val'] = round(max(0.0, state['val'] + delta), 1)
+                val_lbl.setText(f"{state['val']:.1f} m")
+                self.wx_dist_to_edge = state['val']
+            return callback
 
-            btn_minus.clicked.connect(make_callback(-0.5))
-            btn_plus.clicked.connect(make_callback(0.5))
-            
-            row.addWidget(lbl)
-            row.addWidget(btn_minus)
-            row.addWidget(val_lbl)
-            row.addWidget(btn_plus)
-            row.addStretch()
-            return row
-
-        wx_layout.addLayout(create_dist_adjuster("距路缘距离:", self.wx_dist_to_edge))
-        layout.addWidget(wx_frame)
+        btn_minus.clicked.connect(make_callback(-0.1))
+        btn_plus.clicked.connect(make_callback(0.1))
+        
+        dist_layout.addStretch()
+        dist_layout.addWidget(btn_minus)
+        dist_layout.addSpacing(10)
+        dist_layout.addWidget(val_lbl)
+        dist_layout.addSpacing(10)
+        dist_layout.addWidget(btn_plus)
+        dist_layout.addStretch()
+        
+        wx_layout.addLayout(dist_layout)
+        wx_layout.addStretch() # 把组件向上顶，让排版更紧凑
+        content_layout.addWidget(wx_frame)
 
         # ==========================================
-        # 2. 道路方向角设置 (5度步进)
+        # 2. (右侧) 道路方向角设置 (圆盘旋钮)
         # ==========================================
         road_frame = QFrame()
         road_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 10px;")
         road_layout = QVBoxLayout(road_frame)
+        road_layout.setSpacing(10)
         
-        # 修改主标题提示
-        lbl_road_title = QLabel("道路走向方位角 (0°~359°，正北为0°):")
+        lbl_road_title = QLabel("道路走向方位角 (正北为0°):")
         lbl_road_title.setFont(QFont("Arial", 14, QFont.Bold))
-        lbl_road_title.setStyleSheet("color: #00e676; border: none;")
+        lbl_road_title.setStyleSheet("color: #00e676; border: none; padding: 2px;")
         road_layout.addWidget(lbl_road_title)
 
-        # 插入带高亮底色的物理规则说明面板
         lbl_info = QLabel(
-            " 请顺着设定的道路矢量方向看，确保【气象站始终位于该矢量的右侧】。\n"
-            " 示例：若设备部署在路东侧，监测南北向道路，则矢量应定为由南向北（0°）。"
+            "顺着设定的道路矢量方向看，\n"
+            "须确保【气象站位于道路右侧】。\n"
+            "示例：设备在路东，监测南北向道路，\n"
+            "则矢量应定为由南向北（0°）。"
         )
         lbl_info.setFont(QFont("Arial", 11))
-        # 使用警示橙色，轻微的半透明背景提升层级感
-        lbl_info.setStyleSheet("color: #ff9800; border: none; padding: 10px; background-color: rgba(255,152,0, 0.1); border-radius: 5px;")
+        lbl_info.setWordWrap(True) # 允许长句子自动换行
+        lbl_info.setStyleSheet("color: #ff9800; border: none; padding: 12px; background-color: rgba(255,152,0, 0.1); border-radius: 5px;")
         road_layout.addWidget(lbl_info)
         road_layout.addSpacing(10)
 
-        slider_layout = QHBoxLayout()
-        self.slider_road_angle = QSlider(Qt.Horizontal)
+        dial_layout = QHBoxLayout()
         
-        # 将滑动条范围修正为 0 到 359
+        # 引入 PyQt5 原生的 QDial 圆盘组件替代滑动条
+        from PyQt5.QtWidgets import QDial
+        self.slider_road_angle = QDial() # 仍叫 slider_road_angle，免去修改 Controller 的麻烦
         self.slider_road_angle.setRange(0, 359)
-        self.slider_road_angle.setSingleStep(5)   # 键盘单步控制
-        self.slider_road_angle.setPageStep(15)    # 鼠标点击空白处步进
-        self.slider_road_angle.setTickInterval(15)
-        self.slider_road_angle.setTickPosition(QSlider.TicksBelow)
+        self.slider_road_angle.setSingleStep(5)
+        self.slider_road_angle.setPageStep(15)
+        self.slider_road_angle.setWrapping(True) # 开启循环（355 往上滑直接变 0）
+        self.slider_road_angle.setNotchesVisible(True) # 显示刻度线
+        self.slider_road_angle.setFixedSize(130, 130)
         
-        # 给滑动条加上赛博风的样式
+        # 赋予 QDial 赛博朋克的深黑底色
         self.slider_road_angle.setStyleSheet("""
-            QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #222; border-radius: 3px; }
-            QSlider::handle:horizontal { background: #00e676; border: 2px solid #000; width: 16px; margin: -6px 0; border-radius: 8px; }
+            QDial { background-color: #111; }
         """)
         
         self.lbl_angle_val = QLabel("0°")
-        self.lbl_angle_val.setFont(QFont("Arial", 20, QFont.Bold))
-        self.lbl_angle_val.setStyleSheet("color: white; border: none;")
+        self.lbl_angle_val.setFont(QFont("Arial", 26, QFont.Bold))
+        self.lbl_angle_val.setStyleSheet("color: white; border: none; padding: 5px;")
         self.lbl_angle_val.setAlignment(Qt.AlignCenter)
-        self.lbl_angle_val.setMinimumWidth(80)
+        self.lbl_angle_val.setMinimumWidth(90)
         
         # === 拦截信号实现 5 度强制吸附 (Snapping) ===
         def snap_to_5_degrees(v):
-            # 加入 % 360 的模运算
-            # 如果极端情况下滑块超过了357.5，round后变成360，%360会让它归零，契合罗盘逻辑
             snapped_val = int(round(v / 5.0) * 5) % 360
-            
-            # 如果拖动导致值不是 5 的倍数，静默改回 5 的倍数
             if self.slider_road_angle.value() != snapped_val:
-                self.slider_road_angle.blockSignals(True) # 阻断信号防止死循环
+                self.slider_road_angle.blockSignals(True)
                 self.slider_road_angle.setValue(snapped_val)
                 self.slider_road_angle.blockSignals(False)
-                
             self.lbl_angle_val.setText(f"{snapped_val}°")
 
         self.slider_road_angle.valueChanged.connect(snap_to_5_degrees)
         snap_to_5_degrees(0) # 初始化显示
         
-        slider_layout.addWidget(self.slider_road_angle)
-        slider_layout.addSpacing(20)
-        slider_layout.addWidget(self.lbl_angle_val)
+        dial_layout.addStretch()
+        dial_layout.addWidget(self.slider_road_angle)
+        dial_layout.addSpacing(25)
+        dial_layout.addWidget(self.lbl_angle_val)
+        dial_layout.addStretch()
         
-        road_layout.addLayout(slider_layout)
-        layout.addWidget(road_frame)
+        road_layout.addLayout(dial_layout)
+        road_layout.addStretch()
+        content_layout.addWidget(road_frame)
 
+        layout.addLayout(content_layout)
         self.stack.addWidget(self.page_pos_settings)
 
     def init_page_monitor(self):
