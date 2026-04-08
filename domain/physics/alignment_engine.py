@@ -10,7 +10,7 @@ class DelayedAlignmentEngine:
     """
     [业务层] 延迟对齐与特征重构引擎
     职责: 基于滞后时间基准 (T_align)，定期扫描数据库，计算宏观时间窗内的扬尘累积通量、
-          交通做功能量积分以及微气象特征，并将深度对齐后的结果持久化到 Aligned_Dataset 表。
+          交通绝对做功能量积分以及微气象调节特征，并将深度对齐后的结果持久化到 Aligned_Dataset 表。
     """
     def __init__(self, config: dict, db_path: str):
         self.db_path = db_path
@@ -46,7 +46,7 @@ class DelayedAlignmentEngine:
         db = DatabaseManager(self.db_path)
         try:
             # =======================================================
-            # 1. 获取目标变量与本底 (对应论文公式 1 和公式 2)
+            # 1. 获取目标响应变量与本底 (对应论文公式)
             # =======================================================
             # 1.1 计算动态本底 (过去 baseline_window_minute 内的粗颗粒物极小值)
             db.cursor.execute(
@@ -80,7 +80,7 @@ class DelayedAlignmentEngine:
                 delta_c_flux += max(1.0, pmc_i - pmc_baseline) * dt
 
             # =======================================================
-            # 2. 核心干预变量重构 (交通做功) (对应论文公式 4 和公式 5)
+            # 2. 排放驱动特征重构 (交通绝对动力学做功) 
             # =======================================================
             db.cursor.execute(
                 "SELECT vehicle_type, energy_type, trajectory_blob "
@@ -90,7 +90,7 @@ class DelayedAlignmentEngine:
             veh_rows = db.cursor.fetchall()
 
             e_traffic = 0.0
-            sum_d_times_e = 0.0 # 用于计算加权距离的分子
+            sum_e_div_d = 0.0 # 用于计算调和等效距离的分母项
 
             for v_type, e_type, blob in veh_rows:
                 # 质量分配与新能源修正
@@ -118,7 +118,8 @@ class DelayedAlignmentEngine:
                         dt = t_p - p_prev.get('timestamp', 0.0)
                         if 0 < dt < 0.5: # 剔除由于追踪中断造成的异常大跨步时间
                             vsp = p.get('vsp', 0.0)
-                            e_point = vsp * m_i * dt
+                            # 对 VSP 取绝对值，量化路面的绝对机械扰动剥离潜力
+                            e_point = abs(vsp) * m_i * dt
                             e_i_vehicle += e_point
                             x_sum += p.get('x', 0.0)
                             pt_count += 1
@@ -126,20 +127,22 @@ class DelayedAlignmentEngine:
                 if e_i_vehicle > 0 and pt_count > 0:
                     e_traffic += e_i_vehicle
                     avg_x = x_sum / pt_count
-                    d_i = abs(avg_x - self.wx_pos) # 单车与气象站的物理距离
-                    sum_d_times_e += (d_i * e_i_vehicle)
+                    # 引入 0.1m 的极小值保护，防止距离过近导致除数为零
+                    d_i = max(abs(avg_x - self.wx_pos), 0.1) 
+                    sum_e_div_d += (e_i_vehicle / d_i)
 
-            # 等效传输距离加权 (D_trans)
-            d_trans = (sum_d_times_e / e_traffic) if e_traffic > 0 else 0.0
+            # 基于物理距离衰减效应，重构调和等效传输距离 (D_trans)
+            d_trans = (e_traffic / sum_e_div_d) if sum_e_div_d > 0 else 0.0
 
             # =======================================================
-            # 3. 空间与环境协变量构建 (对应论文公式 6 和公式 7)
+            # 3. 空间与气象调节特征构建 
             # =======================================================
             w_spd, w_dir = latest_env[3], latest_env[4]
             t_air, rh, t_road = latest_env[5], latest_env[6], latest_env[7]
 
             # 3.1 有效横风扰动
-            w_cross = w_spd * math.sin(math.radians(w_dir - self.road_dir))
+            # 注意气象方位角逻辑。此时正值代表吹向传感器，负值代表背离
+            w_cross = -w_spd * math.sin(math.radians(w_dir - self.road_dir))
 
             # 3.2 热力学虚温差 (带比湿推导)
             e_s = 6.112 * math.exp(17.67 * t_air / (t_air + 243.5)) # 饱和水汽压
@@ -161,7 +164,6 @@ class DelayedAlignmentEngine:
                 w_cross=w_cross,
                 delta_tv=delta_tv
             )
-            # print(f"[Alignment Engine] T_align {t_align:.1f} 数据簇提取对齐完毕.")
 
         except Exception as e:
             print(f"[AlignmentEngine Error] 对齐过程发生异常: {e}")

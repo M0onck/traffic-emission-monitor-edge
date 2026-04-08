@@ -64,25 +64,25 @@ CREATE TABLE IF NOT EXISTS Veh_Sum (
 
 -- ==============================================================================
 -- 5. 多源数据对齐表 (Aligned Dataset)
--- 用途: 由延迟对齐引擎生成，严格对齐论文中 "机会性感知" 与 "气象归一化" 的模型输入特征
+-- 用途: 由延迟对齐引擎生成，严格对齐论文中 "基于机器学习的气象归一化" 的模型输入特征
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS Aligned_Dataset (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT,
     aligned_timestamp REAL,               -- 对齐后的绝对时间戳 (T_now - x s)
     
-    -- 目标变量 (Y)：道路扬尘累积通量
+    -- 目标响应变量 (Target Variable)：道路扬尘累积通量
     pmc_raw REAL,                         -- 原始粗颗粒物浓度 (PM10 - PM2.5)
     pmc_baseline REAL,                    -- 动态本底 (过去n分钟 pmc_raw 的滑动极小值)
     delta_c_flux REAL,                    -- 扬尘累积通量 (\Delta C_flux,t)，时间窗内有效粗颗粒物积分
     
-    -- 核心干预变量 (T)：交通动力学做功能量
-    e_traffic REAL,                       -- 交通总做功能量 (E_traffic,t)，包含质量惩罚修正的VSP时间积分
+    -- 排放驱动特征 (Emission Driver)：交通绝对动力学做功能量
+    e_traffic REAL,                       -- 交通总做功能量 (E_traffic,t)，包含质量惩罚修正的绝对VSP积分
     
-    -- 空间传输与微气象混杂因子 (协变量 X)
-    d_trans REAL,                         -- 交通扰动加权等效传输距离 (D_trans,t)，刻画扩散距离的衰减效应
-    w_cross REAL,                         -- 有效横风扰动分量 (W_cross)
-    delta_tv REAL,                        -- 路气虚温差 (\Delta Tv)，表征热力对流强度
+    -- 空间与气象调节特征 (Dispersion Modulators)
+    d_trans REAL,                         -- 交通扰动加权调和等效传输距离 (D_trans,t)，精确刻画非线性距离衰减效应
+    w_cross REAL,                         -- 有效横风扰动分量 (W_cross)，正负号表征对扬尘的定向携带方向
+    delta_tv REAL,                        -- 路气虚温差 (\Delta Tv)，表征大气稳定度与垂直湍流混合对流强度
     
     FOREIGN KEY(session_id) REFERENCES Session_Task(session_id)
 );
