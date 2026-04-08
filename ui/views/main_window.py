@@ -523,6 +523,7 @@ class MainWindow(QMainWindow):
         )
         lbl_info.setFont(QFont("Arial", 11))
         lbl_info.setWordWrap(True) # 允许长句子自动换行
+        lbl_info.setMinimumHeight(110)
         lbl_info.setStyleSheet("color: #ff9800; border: none; padding: 12px; background-color: rgba(255,152,0, 0.1); border-radius: 5px;")
         road_layout.addWidget(lbl_info)
         road_layout.addSpacing(10)
