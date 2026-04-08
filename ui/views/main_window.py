@@ -432,7 +432,8 @@ class MainWindow(QMainWindow):
         # 1. (左侧) 气象站空间位置设置
         # ==========================================
         wx_frame = QFrame()
-        wx_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 10px;")
+        wx_frame.setMinimumHeight(320)
+        wx_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 15px 15px 25px 15px;")
         wx_layout = QVBoxLayout(wx_frame)
         wx_layout.setSpacing(15)
         
@@ -504,7 +505,8 @@ class MainWindow(QMainWindow):
         # 2. (右侧) 道路方向角设置 (圆盘旋钮)
         # ==========================================
         road_frame = QFrame()
-        road_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 10px;")
+        road_frame.setMinimumHeight(320)
+        road_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 15px 15px 25px 15px;")
         road_layout = QVBoxLayout(road_frame)
         road_layout.setSpacing(10)
         
@@ -567,6 +569,7 @@ class MainWindow(QMainWindow):
         dial_layout.addStretch()
         
         road_layout.addLayout(dial_layout)
+        road_layout.addSpacing(20)
         road_layout.addStretch()
         content_layout.addWidget(road_frame)
 
