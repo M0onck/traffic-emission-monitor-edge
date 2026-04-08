@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         wx_layout = QVBoxLayout(wx_frame)
         wx_layout.setSpacing(15)
         
-        lbl_wx_title = QLabel("气象站部署位置 (相较于道路):")
+        lbl_wx_title = QLabel("气象站部署位置 (基于画面中道路):")
         lbl_wx_title.setFont(QFont("Arial", 14, QFont.Bold))
         lbl_wx_title.setStyleSheet("color: #00e676; border: none; padding: 2px;")
         wx_layout.addWidget(lbl_wx_title)
