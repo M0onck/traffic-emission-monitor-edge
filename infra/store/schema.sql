@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS Aligned_Dataset (
     e_traffic REAL,                       -- 交通总做功能量 (E_traffic,t)，包含质量惩罚修正的绝对VSP积分
     
     -- 空间与气象调节特征 (Dispersion Modulators)
-    d_trans REAL,                         -- 交通扰动加权调和等效传输距离 (D_trans,t)，精确刻画非线性距离衰减效应
+    d_trans REAL,                         -- 质量加权调和等效传输距离 (D_trans,t)，精确刻画非线性距离衰减效应
     w_cross REAL,                         -- 有效横风扰动分量 (W_cross)，正负号表征对扬尘的定向携带方向
     delta_tv REAL,                        -- 路气虚温差 (\Delta Tv)，表征大气稳定度与垂直湍流混合对流强度
     

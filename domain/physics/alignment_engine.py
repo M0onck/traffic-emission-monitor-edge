@@ -81,7 +81,7 @@ class DelayedAlignmentEngine:
                 delta_c_flux += max(1.0, pmc_i - pmc_baseline) * dt
 
             # =======================================================
-            # 2. 排放驱动特征重构 (交通绝对动力学做功) 
+            # 2. 排放驱动特征与空间分布重构 
             # =======================================================
             db.cursor.execute(
                 "SELECT vehicle_type, energy_type, trajectory_blob "
@@ -91,7 +91,8 @@ class DelayedAlignmentEngine:
             veh_rows = db.cursor.fetchall()
 
             e_traffic = 0.0
-            sum_e_div_d = 0.0 # 用于计算调和等效距离的分母项
+            sum_m = 0.0           # 窗口内所有车辆的静态总质量 (分子)
+            sum_m_div_d = 0.0     # 质量加权空间临近度 (分母)
 
             for v_type, e_type, blob in veh_rows:
                 # 质量分配与新能源修正
@@ -126,14 +127,20 @@ class DelayedAlignmentEngine:
                             pt_count += 1
                             
                 if e_i_vehicle > 0 and pt_count > 0:
+                    # 1. 累加交通总做功 (干预变量)
                     e_traffic += e_i_vehicle
+                    
+                    # 2. 计算本车的平均物理坐标并施加安全极小值保护
                     avg_x = x_sum / pt_count
-                    # 引入 0.1m 的极小值保护，防止距离过近导致除数为零
                     d_i = max(abs(avg_x - self.wx_pos), 0.1) 
-                    sum_e_div_d += (e_i_vehicle / d_i)
+                    
+                    # 3. 仅使用物理静质量和空间距离构建空间特征
+                    sum_m += m_i
+                    sum_m_div_d += (m_i / d_i)
 
-            # 基于物理距离衰减效应，重构调和等效传输距离 (D_trans)
-            d_trans = (e_traffic / sum_e_div_d) if sum_e_div_d > 0 else 0.0
+            # 基于纯物理静质量重构“质量加权等效调和传输距离” (D_trans)
+            # 规避目标泄露，且精准捕获近场重卡对等效污染源质心的牵引效应
+            d_trans = (sum_m / sum_m_div_d) if sum_m_div_d > 0 else 0.0
 
             # =======================================================
             # 3. 空间与气象调节特征构建 
