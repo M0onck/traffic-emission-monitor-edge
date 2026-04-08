@@ -498,14 +498,28 @@ class MainWindow(QMainWindow):
         road_frame.setStyleSheet("background-color: #181818; border: 1px solid #444; border-radius: 10px; padding: 10px;")
         road_layout = QVBoxLayout(road_frame)
         
-        lbl_road_title = QLabel("道路走向方位角 (0° = 正南北走向):")
+        # 修改主标题提示
+        lbl_road_title = QLabel("道路走向方位角 (0°~359°，正北为0°):")
         lbl_road_title.setFont(QFont("Arial", 14, QFont.Bold))
         lbl_road_title.setStyleSheet("color: #00e676; border: none;")
         road_layout.addWidget(lbl_road_title)
 
+        # 插入带高亮底色的物理规则说明面板
+        lbl_info = QLabel(
+            " 请顺着设定的道路矢量方向看，确保【气象站始终位于该矢量的右侧】。\n"
+            " 示例：若设备部署在路东侧，监测南北向道路，则矢量应定为由南向北（0°）。"
+        )
+        lbl_info.setFont(QFont("Arial", 11))
+        # 使用警示橙色，轻微的半透明背景提升层级感
+        lbl_info.setStyleSheet("color: #ff9800; border: none; padding: 10px; background-color: rgba(255,152,0, 0.1); border-radius: 5px;")
+        road_layout.addWidget(lbl_info)
+        road_layout.addSpacing(10)
+
         slider_layout = QHBoxLayout()
         self.slider_road_angle = QSlider(Qt.Horizontal)
-        self.slider_road_angle.setRange(-90, 90)
+        
+        # 将滑动条范围修正为 0 到 359
+        self.slider_road_angle.setRange(0, 359)
         self.slider_road_angle.setSingleStep(5)   # 键盘单步控制
         self.slider_road_angle.setPageStep(15)    # 鼠标点击空白处步进
         self.slider_road_angle.setTickInterval(15)
@@ -525,8 +539,9 @@ class MainWindow(QMainWindow):
         
         # === 拦截信号实现 5 度强制吸附 (Snapping) ===
         def snap_to_5_degrees(v):
-            # 将滑块当前值按四舍五入到最近的 5 的倍数
-            snapped_val = round(v / 5.0) * 5
+            # 加入 % 360 的模运算
+            # 如果极端情况下滑块超过了357.5，round后变成360，%360会让它归零，契合罗盘逻辑
+            snapped_val = int(round(v / 5.0) * 5) % 360
             
             # 如果拖动导致值不是 5 的倍数，静默改回 5 的倍数
             if self.slider_road_angle.value() != snapped_val:
