@@ -19,6 +19,7 @@ class DelayedAlignmentEngine:
         self.delay_sec = cfg.ALIGNMENT_DELAY_SEC
         self.int_win_sec = cfg.INTEGRATION_WINDOW_SEC
         self.base_win_min = cfg.BASELINE_WINDOW_MINUTE
+        self.align_interval = cfg.DB_ALIGN_INTERVAL_SEC
 
         # 2. 解析物理先验参数
         self.wx_pos = cfg.WEATHER_STATION_X_POS
@@ -33,8 +34,8 @@ class DelayedAlignmentEngine:
         """执行单步延迟对齐作业"""
         t_align = current_timestamp - self.delay_sec
 
-        # 避免在同一秒内高频重复触发 (降频保护)
-        if t_align - self.last_align_time < 0.9:
+        # 根据配置的滑动步长 (interval) 进行拦截，预留 1.0 秒容错防止浮点精度丢失漏执行
+        if t_align - self.last_align_time < (self.align_interval - 1.0):
             return
         self.last_align_time = t_align
 
