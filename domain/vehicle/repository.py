@@ -10,14 +10,14 @@ class VehicleRegistry:
     并不直接处理图像，而是处理由 MonitorEngine 传入的数据对象。
     """
     def __init__(self, target_fps: int = 30, min_survival_sec: float = 1.0, exit_timeout_sec: float = 3.0,
-                 min_valid_pts: int = 15, min_moving_dist: float = 2.0):
+                 min_valid_pts: int = 15, min_moving_dist: float = 2.0, force_delay_sec: float = 60.0):
         self.records = {}
         self.target_fps = target_fps
         
         # 生命周期配置
         self.min_survival_sec = min_survival_sec  # 最小存活秒数 (过滤误检)
         self.exit_timeout_sec = exit_timeout_sec  # 消失多少秒后认定为离场
-        self.force_delay_sec = cfg.ALIGNMENT_DELAY_SEC # 延迟对齐时间，作为切片结算的基准
+        self.force_delay_sec = force_delay_sec # 延迟对齐时间，作为切片结算的基准
         
         # 数据质量配置
         self.min_valid_trajectory_points = min_valid_pts # 最小有效轨迹点数

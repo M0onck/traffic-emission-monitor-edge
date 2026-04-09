@@ -11,7 +11,6 @@ from domain.physics.kinematics_smoother import KinematicsSmoother
 from domain.vehicle.physical_filter import PhysicalVehicleFilter
 from domain.physics.vsp_calculator import VSPCalculator
 from domain.physics.opmode_mapper import OpModeMapper
-from domain.physics.alignment_engine import DelayedAlignmentEngine
 from perception.vision_pipeline import VisionPipeline
 
 class TrafficMonitorEngine:
@@ -72,9 +71,6 @@ class TrafficMonitorEngine:
         # 初始化 VSP 和 工况计算器
         self.vsp_calc = VSPCalculator(getattr(config, 'physics_params', {}))
         self.opmode_mapper = OpModeMapper(duration_threshold=1.0)
-
-        # 初始化延迟对齐引擎
-        self.align_engine = DelayedAlignmentEngine(config, config.DB_PATH)
 
         # 当前采集任务的会话 ID
         self.current_session_id = None
@@ -189,9 +185,6 @@ class TrafficMonitorEngine:
                             timestamp=frame_timestamp, # 使用 NTP 同步的绝对物理时间
                             env_data=env_data
                         )
-
-                        # 4. 触发延迟对齐引擎 (内部会根据 DB_ALIGN_INTERVAL_SEC 自动控制滑动步长)
-                        self.align_engine.align_step(self.current_session_id, frame_timestamp)
                     # ====================================================
                 
                 # 延迟初始化 VideoSink (因为需要确切知道输出的分辨率)

@@ -19,13 +19,17 @@ class AppBootstrap:
         # 1. 基础设施层：数据库 (补充缺失的 fps 参数)
         db = DatabaseManager(db_path=config.DB_PATH, fps=config.FPS)
 
+        # 如果是批处理模式，将强制切片时间设为无限大 (inf)，使得车辆只在真正离开画面时才结算
+        force_delay = config.ALIGNMENT_DELAY_SEC if config.RUN_MODE == 'stream' else float('inf')
+
         # 2. 领域层：注册表 (注入配置文件中的核心业务阈值)
         registry = VehicleRegistry(
             target_fps=config.FPS,  # 默认固定帧率，仅作为参考或备用回退使用
             min_survival_sec=config.MIN_SURVIVAL_SEC,
             exit_timeout_sec=config.EXIT_TIMEOUT_SEC,
             min_valid_pts=config.MIN_VALID_POINTS,
-            min_moving_dist=config.MIN_MOVING_DIST
+            min_moving_dist=config.MIN_MOVING_DIST,
+            force_delay_sec=force_delay
         )
         
         # 组装分类器所需的 yolo_classes 字典
