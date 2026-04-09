@@ -348,9 +348,9 @@ class MainWindow(QMainWindow):
 
         # 推理模式
         inf_layout = QHBoxLayout()
-        self.radio_mode_inference = QRadioButton("推理模式 (Inference)")
+        self.radio_mode_inference = QRadioButton("推理模式")
         self.radio_mode_inference.setFont(QFont("Arial", 16, QFont.Bold))
-        self.radio_mode_inference.setStyleSheet("color: #00e676;")
+        self.radio_mode_inference.setStyleSheet("color: #ffffff;")
         lbl_inf_desc = QLabel("启动边缘对齐引擎，生成实时对齐数据集，支持后续实时推理。")
         lbl_inf_desc.setStyleSheet("color: #aaaaaa; border: none;")
         inf_layout.addWidget(self.radio_mode_inference)
@@ -359,9 +359,9 @@ class MainWindow(QMainWindow):
 
         # 采集模式
         col_layout = QHBoxLayout()
-        self.radio_mode_collection = QRadioButton("采集模式 (Collection)")
+        self.radio_mode_collection = QRadioButton("采集模式")
         self.radio_mode_collection.setFont(QFont("Arial", 16, QFont.Bold))
-        self.radio_mode_collection.setStyleSheet("color: #2196f3;")
+        self.radio_mode_collection.setStyleSheet("color: #ffffff;")
         lbl_col_desc = QLabel("仅收集原始数据，不进行切片与对齐，适合科研原始记录。")
         lbl_col_desc.setStyleSheet("color: #aaaaaa; border: none;")
         col_layout.addWidget(self.radio_mode_collection)
