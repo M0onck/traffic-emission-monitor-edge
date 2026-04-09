@@ -45,31 +45,31 @@ class GstPipelineManager:
         
         if is_camera:
             source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1"
+            # 实时流：必须开启丢帧策略，保证永远获取最新画面，实现零延迟
+            queue_prop = "leaky=downstream"
+            sink_prop = "drop=true sync=false"
         else:
             abs_path = os.path.abspath(self.video_path)
             source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
-
-        # 动态适配同步策略
-        # 如果是真实摄像头：False，追求绝对低延迟，跟不上就丢帧。
-        # 如果是本地视频模拟：True，强制底层解码器服从视频原生时间戳，严丝合缝播放。
-        sync_mode = "false" if is_camera else "true"
+            # 离线文件：关闭所有丢帧属性。利用 Python 端循环速度反向阻塞 (Backpressure) GStreamer 解码流速
+            queue_prop = "" 
+            sink_prop = "drop=false sync=false"
 
         pipeline = (
             f"{source_head} ! tee name=t "
             
             # --- 分支1: 视频画面分支 ---
-            # 队列限制为 2，并且开启 leaky=downstream（满了就丢弃旧帧）
-            f"t. ! queue max-size-buffers=2 leaky=downstream ! "
+            f"t. ! queue max-size-buffers=2 {queue_prop} ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=1 drop=true sync={sync_mode} "
+            f"appsink name=sink_video emit-signals=false max-buffers=1 {sink_prop} "
             
             # --- 分支2: AI 推理分支 ---
-            f"t. ! queue max-size-buffers=2 leaky=downstream ! "
+            f"t. ! queue max-size-buffers=2 {queue_prop} ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
             f"hailonet hef-path={self.hef_path} ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=1 drop=true sync={sync_mode} "
+            f"appsink name=sink_meta emit-signals=false max-buffers=1 {sink_prop} "
         )
         return pipeline
 
