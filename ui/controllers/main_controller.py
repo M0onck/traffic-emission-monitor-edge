@@ -81,6 +81,8 @@ class MainController:
         self.view.btn_detect_camera.clicked.connect(self.handle_detect_camera)
         self.view.radio_source_local.toggled.connect(self.handle_source_type_changed)
         self.view.radio_source_camera.toggled.connect(self.handle_source_type_changed)
+        self.view.radio_mode_inference.toggled.connect(self.handle_run_mode_changed)
+        self.view.radio_mode_collection.toggled.connect(self.handle_run_mode_changed)
 
         # 退出程序按钮的绑定
         self.view.btn_exit.clicked.connect(self.handle_exit_request)
@@ -205,9 +207,9 @@ class MainController:
         dialog = EdgeMessageBox(
             self.view, 
             "⚙️ 调试模式已开启", 
-            "检测到视频输入源为本地文件。算力波动可能导致视频画面的处理无法贴合原始帧率。", 
+            "检测到视频输入源为本地文件。算力波动可能导致视频画面处理无法贴合原始帧率。", 
             info_text="注意：此模式仅供系统连通性测试，运动学特征将产生失真，不能用于科学数据收集。",
-            is_warning=False  # 使用常规样式，无需变红
+            is_warning=False
         )
         dialog.exec_()
 
@@ -645,15 +647,29 @@ class MainController:
             self.view.lbl_camera_info.setText(f"未发现摄像头设备 ({camera_path})")
 
     def handle_source_type_changed(self):
-        """当用户手动切换单选框时更新配置"""
+        """当用户手动切换视频源单选框时更新配置"""
         if self.view.radio_source_local.isChecked():
-            # 切回本地文件路径
+            # 切换到本地模式
             current_path = self.view.lbl_local_path.text()
             cfg.update_source_settings(current_path, use_camera=False)
-        elif self.view.radio_source_camera.isChecked() and "检测到" in self.view.lbl_camera_info.text():
-            # 切回摄像头管道
-            pipeline = gst.get_rpi_camera_pipeline(cfg.FRAME_WIDTH, cfg.FRAME_HEIGHT, cfg.FPS)
-            cfg.update_source_settings(pipeline, use_camera=True)
+        
+        elif self.view.radio_source_camera.isChecked():
+            # 只要当前提示标签显示为“已接入”，就自动切换配置
+            # 这样用户在已经看到“已接入...”的情况下，点选单选框即可生效，无需再按“检测”
+            info_text = self.view.lbl_camera_info.text()
+            if "已接入" in info_text:
+                pipeline = gst.get_rpi_camera_pipeline(cfg.FRAME_WIDTH, cfg.FRAME_HEIGHT, cfg.FPS)
+                cfg.update_source_settings(pipeline, use_camera=True)
+                # 立即尝试加载第一帧预览
+                self.view.canvas.load_frame(cfg.VIDEO_PATH)
+                print(f"控制器：已根据现有状态自动切换至摄像头: {pipeline}")
+
+    def handle_run_mode_changed(self):
+        """处理工作模式切换"""
+        if self.view.radio_mode_inference.isChecked():
+            cfg.update_run_mode('inference')
+        else:
+            cfg.update_run_mode('collection')
 
     def _update_thermal_view(self):
         """处理热力图渲染与数据提取"""

@@ -125,3 +125,17 @@ def update_source_settings(new_path, use_camera=False):
             json.dump(_cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"配置文件写入失败: {e}")
+
+def update_run_mode(new_mode):
+    """更新系统运行模式 (inference/collection) 并持久化"""
+    global RUN_MODE
+    new_mode = new_mode.lower()
+    if new_mode in ['inference', 'collection']:
+        _cfg["system"]["run_mode"] = new_mode
+        RUN_MODE = new_mode
+        try:
+            with open(CONFIG_FILE, "w", encoding='utf-8') as f:
+                json.dump(_cfg, f, indent=2, ensure_ascii=False)
+            print(f"[Config] 运行模式已切换为: {new_mode}")
+        except Exception as e:
+            print(f"配置文件写入失败: {e}")

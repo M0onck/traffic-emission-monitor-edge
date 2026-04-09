@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
         # 创建互斥按钮组
         self.source_btn_group = QButtonGroup(self.page_settings)
 
-        # --- 选项 1: 本地视频 ---
+        # 选项 1: 本地视频
         local_layout = QHBoxLayout()
         
         self.radio_source_local = QRadioButton("本地视频文件")
@@ -288,7 +288,7 @@ class MainWindow(QMainWindow):
 
         vs_layout.addSpacing(20)
 
-        # --- 选项 2: 接入的摄像头 ---
+        # 选项 2: 接入的摄像头
         camera_layout = QHBoxLayout()
         
         self.radio_source_camera = QRadioButton("接入的摄像头")
@@ -336,8 +336,52 @@ class MainWindow(QMainWindow):
         else:
             self.radio_source_local.setChecked(True)
 
-        self.settings_tabs.addTab(tab_video_source, "视频源配置")
+        self.settings_tabs.addTab(tab_video_source, "视频源")
 
+        # --- 页签 2: 工作模式设置 ---
+        tab_run_mode = QWidget()
+        rm_layout = QVBoxLayout(tab_run_mode)
+        rm_layout.setContentsMargins(40, 40, 40, 40)
+        rm_layout.setSpacing(20)
+
+        self.run_mode_group = QButtonGroup(self.page_settings)
+
+        # 推理模式
+        inf_layout = QHBoxLayout()
+        self.radio_mode_inference = QRadioButton("推理模式 (Inference)")
+        self.radio_mode_inference.setFont(QFont("Arial", 16, QFont.Bold))
+        self.radio_mode_inference.setStyleSheet("color: #00e676;")
+        lbl_inf_desc = QLabel("启动边缘对齐引擎，生成实时对齐数据集，支持后续实时推理。")
+        lbl_inf_desc.setStyleSheet("color: #aaaaaa; border: none;")
+        inf_layout.addWidget(self.radio_mode_inference)
+        inf_layout.addWidget(lbl_inf_desc)
+        inf_layout.addStretch()
+
+        # 采集模式
+        col_layout = QHBoxLayout()
+        self.radio_mode_collection = QRadioButton("采集模式 (Collection)")
+        self.radio_mode_collection.setFont(QFont("Arial", 16, QFont.Bold))
+        self.radio_mode_collection.setStyleSheet("color: #2196f3;")
+        lbl_col_desc = QLabel("仅收集原始数据，不进行切片与对齐，适合科研原始记录。")
+        lbl_col_desc.setStyleSheet("color: #aaaaaa; border: none;")
+        col_layout.addWidget(self.radio_mode_collection)
+        col_layout.addWidget(lbl_col_desc)
+        col_layout.addStretch()
+
+        rm_layout.addLayout(inf_layout)
+        rm_layout.addLayout(col_layout)
+        rm_layout.addStretch()
+
+        self.run_mode_group.addButton(self.radio_mode_inference)
+        self.run_mode_group.addButton(self.radio_mode_collection)
+
+        # 初始化选中状态
+        if cfg.RUN_MODE == 'inference':
+            self.radio_mode_inference.setChecked(True)
+        else:
+            self.radio_mode_collection.setChecked(True)
+
+        self.settings_tabs.addTab(tab_run_mode, "工作模式")
         self.stack.addWidget(self.page_settings)
 
     def init_page_calibration(self):
