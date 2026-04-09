@@ -95,13 +95,25 @@ class TrafficMonitorEngine:
         print(f">>> [Engine] 等待视频流接入...")
         
         try:
+            # 若使用本地视频文件，需要获取视频源原生 FPS
+            self.native_fps = self.cfg.FPS  # 默认使用配置文件的值进行兜底
+            
+            # 只有当处理本地视频文件时，才去主动读取真实的 FPS
+            if not self.cfg.USE_CAMERA and not self.cfg.VIDEO_PATH.startswith(('rtsp://', '/dev/')):
+                probe_cap = cv2.VideoCapture(self.cfg.VIDEO_PATH)
+                if probe_cap.isOpened():
+                    actual_fps = probe_cap.get(cv2.CAP_PROP_FPS)
+                    if actual_fps > 0:
+                        self.native_fps = actual_fps
+                        print(f">>> [Engine] 成功检测到本地视频原生帧率: {self.native_fps} FPS")
+                probe_cap.release()
+            else:
+                print(f">>> [Engine] 实时流模式，基准帧率锁定为: {self.native_fps} FPS")
+
             # 初始化 FPS 计算变量
             prev_time = time.time()
             frame_count = 0
             current_fps = 0.0
-
-            # 软件级限速计算器（配置 FPS 的功能似乎有些混乱，未来需要厘清）
-            target_delay = 1.0 / self.cfg.FPS
 
             # 生成全局唯一的 Session ID (前缀+时间戳)
             start_timestamp = time.time()
@@ -122,8 +134,18 @@ class TrafficMonitorEngine:
                 # 阻塞拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
 
-                # 拿到帧的同时打上时间戳
-                frame_timestamp = self.time_sync.get_precise_timestamp()
+                # 拿到帧的同时打上时间戳，需要区分实时设备和离线文件
+                # 如果接入的是实时设备（摄像头或实时 RTSP 流）
+                if self.cfg.USE_CAMERA or self.cfg.VIDEO_PATH.startswith(('rtsp://', '/dev/video')):
+                    # 实时设备：使用现实世界的时钟
+                    frame_timestamp = self.time_sync.get_precise_timestamp()
+                    
+                # 如果处理的是本地离线视频文件
+                else:
+                    # 根据帧号和视频原生的 FPS 重构视频内部的绝对物理时间
+                    # 离线视频：根据帧号与探测到的 FPS 重构物理时间
+                    virtual_elapsed_sec = frame_id * (1.0 / self.native_fps)
+                    frame_timestamp = start_timestamp + virtual_elapsed_sec
                 
                 if frame is None or buffer is None:
                     # 如果流未就绪，稍微休眠防止 CPU 空转
@@ -239,11 +261,6 @@ class TrafficMonitorEngine:
                 
                 if not getattr(self, '_is_running', True):
                     break
-
-                # 软件限速：如果处理得比 30FPS 快，就等一会儿，防止画面快进！
-                elapsed = time.time() - loop_start
-                if elapsed < target_delay:
-                    time.sleep(target_delay - elapsed)
                     
         except KeyboardInterrupt:
             print("\n>>> [Engine] 接收到退出信号...")
@@ -302,7 +319,7 @@ class TrafficMonitorEngine:
                     if trajectory:
                         last_phys_y = trajectory[-1].get('raw_y', curr_phys[1])
                         # 根据预期的 FPS 动态分配备用时间跨度
-                        fallback_dt = 1.0 / self.cfg.FPS
+                        fallback_dt = 1.0 / self.native_fps
                         last_time = trajectory[-1].get('timestamp', frame_timestamp - fallback_dt)
                         
                         if abs(curr_phys[1] - last_phys_y) < max(0.2, dynamic_tolerance):
