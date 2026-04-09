@@ -137,12 +137,17 @@ class TrafficMonitorEngine:
                 # 拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
 
+                # 异步握手与终止判定
+                if not getattr(self.camera, 'is_running', True):
+                    print(">>> [Engine] 检测到 GStreamer 管道已终止，引擎退出主循环。")
+                    break
+
                 # 无论视频还是摄像头，统一打上当前的真实物理时间
                 frame_timestamp = self.time_sync.get_precise_timestamp()
                 
                 if frame is None or buffer is None:
                     # 如果流未就绪，稍微休眠防止 CPU 空转
-                    time.sleep(0.01)
+                    time.sleep(0.005)
                     continue
                 
                 # 执行 1Hz 频率的轮询，用于实时计算 fps 和采集环境数据
@@ -230,6 +235,7 @@ class TrafficMonitorEngine:
                 # --- 核心处理流水线 ---
                 try:
                     annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
+                    frame_id += 1
                 except Exception as e:
                     print(f">>> [Engine 致命错误] 引擎在处理第 {frame_id} 帧时崩溃: {e}")
                     traceback.print_exc()
@@ -248,14 +254,16 @@ class TrafficMonitorEngine:
                 if not getattr(self, '_is_running', True):
                     break
 
-                # 视频播放限速器
-                # 作用：充当硬件在环仿真的节流阀。
-                # 无论树莓派算力多快，强制限制每帧处理不能快于原生帧间隔，
-                # 从而使得基于时间戳计算的速度、加速度以及 1Hz 传感器轮询全部严丝合缝。
-                target_delay = 1.0 / getattr(self, 'native_fps', self.cfg.FPS)
-                elapsed = time.time() - loop_start
-                if elapsed < target_delay:
-                    time.sleep(target_delay - elapsed)
+                # 视频播放速度约束
+                # 只有离线视频（非真实摄像头/非网络流）才使用 sleep 反向限速。
+                # 真实摄像头的帧率由硬件晶振严格把控，绝不能用 sleep 干扰，否则会导致 DMA 队列溢出 Fatal
+                is_live_stream = self.cfg.USE_CAMERA or self.cfg.VIDEO_PATH.startswith(('rtsp://', '/dev/'))
+                
+                if not is_live_stream:
+                    target_delay = 1.0 / getattr(self, 'native_fps', self.cfg.FPS)
+                    elapsed = time.time() - loop_start
+                    if elapsed < target_delay:
+                        time.sleep(target_delay - elapsed)
                     
         except KeyboardInterrupt:
             print("\n>>> [Engine] 接收到退出信号...")
