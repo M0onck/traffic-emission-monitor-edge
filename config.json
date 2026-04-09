@@ -27,7 +27,6 @@
     "border_margin": 20,
     "min_tracking_sec": 0.3,
     "max_physical_accel": 6.0,
-    "min_survival_sec": 1.0, 
     "exit_timeout_sec": 1.0  
   },
   "ocr_params": {

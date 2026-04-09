@@ -24,9 +24,8 @@ except Exception as e:
 _sys = _cfg["system"]
 VIDEO_PATH = _sys["video_path"]
 LOCAL_VIDEO_PATH = _sys.get("local_video_path", VIDEO_PATH)
-TARGET_VIDEO_PATH = _sys["target_video_path"]
 DB_PATH = _sys["db_path"]
-FPS = _sys["fps"]
+FPS = max(1.0, float(_sys.get("fps", 30.0))) # [防御性编程] 防止ZeroDivisionError
 DEBUG_MODE = _sys["debug_mode"]
 USE_CAMERA = _sys.get("use_camera", False)
 
@@ -44,13 +43,11 @@ ACCEL_WINDOW_SEC = _k.get("accel_window_sec", 3.0)
 BORDER_MARGIN = _k["border_margin"]
 MIN_TRACKING_SEC = _k.get("min_tracking_sec", 0.3)
 MAX_PHYSICAL_ACCEL = _k["max_physical_accel"]
-MIN_SURVIVAL_SEC = _k.get("min_survival_sec", 1.0)
 EXIT_TIMEOUT_SEC = _k.get("exit_timeout_sec", 1.0)
 KINEMATICS_POLY_ORDER = _k.get("poly_order", 3)
 
 _o = _cfg["ocr_params"]
 OCR_RETRY_COOLDOWN = _o["retry_cooldown"]
-OCR_INTERVAL = _o["run_interval"]
 OCR_CONF_THRESHOLD = _o["confidence_threshold"]
 
 _p = _cfg.get("physics_params", {})
@@ -59,7 +56,7 @@ ROAD_GRADE_PERCENT = _p.get("road_grade_percent", 0.0)
 # 质量控制参数
 _qc = _cfg.get("quality_control", {})
 MIN_VALID_POINTS = _qc.get("min_valid_trajectory_points", 15)
-QC_MIN_SURVIVAL_SEC = _qc.get("min_survival_sec", 1.0)
+MIN_SURVIVAL_SEC = _qc.get("min_survival_sec", 1.0)
 MIN_MOVING_DIST = _qc.get("min_moving_distance_m", 2.0)
 BLUR_THRESHOLD = _qc.get("blur_threshold", 100.0)
 
@@ -85,10 +82,19 @@ LITEMODEL_PATH = _edge.get("litemodel_path", "perception/plate_classifier/models
 
 # --- 4. 延迟对齐与时间窗参数 (time_windows) ---
 _tw = _cfg.get("time_windows", {})
-ALIGNMENT_DELAY_SEC = _tw.get("alignment_delay_sec", 60.0)
-INTEGRATION_WINDOW_SEC = _tw.get("integration_window_sec", 300.0)
-BASELINE_WINDOW_MINUTE = _tw.get("baseline_window_minute", 10.0)
-DB_ALIGN_INTERVAL_SEC = _tw.get("db_align_interval_sec", 60.0)
+
+# [防御性编程] 为所有时序窗口强制施加物理/性能安全底线
+# 1. 强制延迟 > 30秒: 确保绝大多数车辆有足够的时间穿过监控画面并完成入库
+ALIGNMENT_DELAY_SEC = max(30.0, float(_tw.get("alignment_delay_sec", 60.0)))
+
+# 2. 强制积分窗 > 60秒: 积分窗口如果太短，VSP 能量累积会失去统计学意义
+INTEGRATION_WINDOW_SEC = max(60.0, float(_tw.get("integration_window_sec", 300.0)))
+
+# 3. 强制基线窗 > 5分钟: 保证至少有 5 分钟的跨度去寻找干净的 PMC 极小值
+BASELINE_WINDOW_MINUTE = max(5.0, float(_tw.get("baseline_window_minute", 10.0)))
+
+# 4. 强制对齐步长 > 10秒: 限制 SQLite 的密集 I/O 频率，防止树莓派 CPU 顶不住
+DB_ALIGN_INTERVAL_SEC = max(10.0, float(_tw.get("db_align_interval_sec", 60.0)))
 
 # --- 5. 物理与环境先验参数 (physics_priors) ---
 _pp = _cfg.get("physics_priors", {})
