@@ -9,9 +9,11 @@ from gi.repository import Gst, GLib
 
 def get_rpi_camera_pipeline(width=1440, height=1080, fps=30):
     """纯画面拉流管道 (原生 GStreamer 专用)"""
+    # 强制转换 fps 为 int，防止出现 30.0/1 导致 GStreamer 解析为 string 类型
+    fps_int = int(fps)
     return (
         f"libcamerasrc ! "
-        f"video/x-raw, format=NV12, width={width}, height={height}, framerate={fps}/1 ! "
+        f"video/x-raw, format=NV12, width={width}, height={height}, framerate={fps_int}/1 ! "
         f"videoconvert ! "
         f"video/x-raw, format=BGR ! "
         # 指定名字为 preview_sink，并允许 emit 提取画面
