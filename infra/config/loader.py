@@ -22,7 +22,7 @@ except Exception as e:
 
 # --- 1. 基础参数 ---
 _sys = _cfg["system"]
-RUN_MODE = _sys.get("run_mode", "stream").lower() # 'stream' 或 'batch'
+RUN_MODE = _sys.get("run_mode", "inference").lower() # 'inference' 或 'collection'
 VIDEO_PATH = _sys["video_path"]
 LOCAL_VIDEO_PATH = _sys.get("local_video_path", VIDEO_PATH)
 DB_PATH = _sys["db_path"]

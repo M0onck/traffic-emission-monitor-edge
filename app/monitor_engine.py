@@ -137,41 +137,22 @@ class TrafficMonitorEngine:
                 # 阻塞拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
 
-                # 拿到帧的同时打上时间戳，需要区分实时设备和离线文件
-                # 如果接入的是实时设备（摄像头或实时 RTSP 流）
-                if self.cfg.USE_CAMERA or self.cfg.VIDEO_PATH.startswith(('rtsp://', '/dev/video')):
-                    # 实时设备：使用现实世界的时钟
-                    frame_timestamp = self.time_sync.get_precise_timestamp()
-                    
-                # 如果处理的是本地离线视频文件
-                else:
-                    # 根据帧号和视频原生的 FPS 重构视频内部的绝对物理时间
-                    # 离线视频：根据帧号与探测到的 FPS 重构物理时间
-                    virtual_elapsed_sec = frame_id * (1.0 / self.native_fps)
-                    frame_timestamp = start_timestamp + virtual_elapsed_sec
+                # 无论视频还是摄像头，统一打上当前的真实物理时间
+                frame_timestamp = self.time_sync.get_precise_timestamp()
                 
                 if frame is None or buffer is None:
                     # 如果流未就绪，稍微休眠防止 CPU 空转
                     time.sleep(0.01)
                     continue
                 
-                frame_id += 1
-
-                # ====================================================
-                # 1. 性能统计：计算每秒的真实处理帧率（按照现实时间）
-                # ====================================================
+                # 执行 1Hz 频率的轮询，用于实时计算 fps 和采集环境数据
                 frame_count += 1
-                now_wall_clock = time.time()
-                if now_wall_clock - prev_time >= 1.0:
-                    current_fps = frame_count / (now_wall_clock - prev_time)
-                    prev_time = now_wall_clock
+                now = time.time()
+                if now - prev_time >= 1.0:
+                    # 1. 计算 FPS
+                    current_fps = frame_count / (now - prev_time)
+                    prev_time = now
                     frame_count = 0
-
-                # ====================================================
-                # 2. 业务打点：环境数据 1Hz 采样与入库（按照视频时间，同时兼容流批处理）
-                # ====================================================
-                if frame_timestamp - getattr(self, 'prev_env_timestamp', 0.0) >= 1.0:
-                    self.prev_env_timestamp = frame_timestamp
 
                     if getattr(self, 'current_session_id', None):
                         env_data = {}
@@ -266,6 +247,15 @@ class TrafficMonitorEngine:
                 
                 if not getattr(self, '_is_running', True):
                     break
+
+                # 视频播放限速器
+                # 作用：充当硬件在环仿真的节流阀。
+                # 无论树莓派算力多快，强制限制每帧处理不能快于原生帧间隔，
+                # 从而使得基于时间戳计算的速度、加速度以及 1Hz 传感器轮询全部严丝合缝。
+                target_delay = 1.0 / getattr(self, 'native_fps', self.cfg.FPS)
+                elapsed = time.time() - loop_start
+                if elapsed < target_delay:
+                    time.sleep(target_delay - elapsed)
                     
         except KeyboardInterrupt:
             print("\n>>> [Engine] 接收到退出信号...")

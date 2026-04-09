@@ -16,12 +16,12 @@ def main():
     app = QApplication(sys.argv)
     
     daemon_process = None
-    # 架构解耦：仅在 stream 模式下，于边缘端并行启动特征对齐守护进程
-    if cfg.RUN_MODE == 'stream':
+    # 架构解耦：仅在 inference 模式下，于边缘端并行启动特征对齐守护进程
+    if cfg.RUN_MODE == 'inference':
         daemon_process = Process(target=start_daemon, daemon=True)
         daemon_process.start()
     else:
-        print(">>> [System] 当前为 batch 批处理模式，后台对齐引擎已关闭。")
+        print(">>> [System] 当前为 collection 采集模式，后台对齐引擎已关闭。")
 
     # 1. 实例化 View (视图)
     view = MainWindow()

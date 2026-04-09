@@ -19,8 +19,9 @@ class AppBootstrap:
         # 1. 基础设施层：数据库 (补充缺失的 fps 参数)
         db = DatabaseManager(db_path=config.DB_PATH, fps=config.FPS)
 
-        # 如果是批处理模式，将强制切片时间设为无限大 (inf)，使得车辆只在真正离开画面时才结算
-        force_delay = config.ALIGNMENT_DELAY_SEC if config.RUN_MODE == 'stream' else float('inf')
+        # 动态切片逻辑
+        # inference: 切断滞留车辆防爆内存；collection: 获取车辆的完整生命周期
+        force_delay = config.ALIGNMENT_DELAY_SEC if config.RUN_MODE == 'inference' else float('inf')
 
         # 2. 领域层：注册表 (注入配置文件中的核心业务阈值)
         registry = VehicleRegistry(

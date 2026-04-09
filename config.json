@@ -1,6 +1,6 @@
 {
   "system": {
-    "run_mode": "stream",
+    "run_mode": "inference",
     "video_path": "video/input_video.MP4",
     "local_video_path": "video/input_video.MP4",
     "db_path": "data/traffic_data.db",
