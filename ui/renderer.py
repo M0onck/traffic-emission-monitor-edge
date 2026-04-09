@@ -45,10 +45,10 @@ class Visualizer:
         
         # 1. 绘制基础图层 (ROI 区域)
         if self.calibration_points is not None and len(self.calibration_points) > 0:
-            cv2.polylines(scene, [self.calibration_points], True, (255, 255, 0), 1)
+            cv2.polylines(scene, [self.calibration_points], True, (0, 255, 0), 3)
             text_anchor = tuple(self.calibration_points[3]) if len(self.calibration_points) > 3 else (50, 50)
             cv2.putText(scene, "Analysis Zone", text_anchor, 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
         # 2. 绘制轨迹 (依然使用 supervision)
         if self.trace_annotator:
