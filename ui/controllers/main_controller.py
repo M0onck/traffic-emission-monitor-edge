@@ -596,18 +596,33 @@ class MainController:
         """搜索物理设备并生成 GStreamer 管道"""
         self.view.radio_source_camera.setChecked(True)
         
-        # 针对树莓派 5，通常检查 /dev/video0 或利用 libcamera-hello
-        if os.path.exists("/dev/video0"):
+        camera_path = "/dev/video0"
+        
+        # 针对树莓派，检查视频设备节点是否存在
+        if os.path.exists(camera_path):
             # 获取针对 RPi 硬件加速优化的管道字符串
             pipeline = gst.get_rpi_camera_pipeline(cfg.FRAME_WIDTH, cfg.FRAME_HEIGHT, cfg.FPS)
             
-            self.view.lbl_camera_info.setText("检测到 IMX296 硬件加速流")
+            # 动态读取 Linux 底层硬件传感器名称
+            camera_name = "未知型号摄像头"
+            sysfs_path = "/sys/class/video4linux/video0/name"
+            if os.path.exists(sysfs_path):
+                try:
+                    with open(sysfs_path, 'r', encoding='utf-8') as f:
+                        camera_name = f.read().strip()
+                except Exception as e:
+                    print(f"读取摄像头硬件名称失败: {e}")
+            
+            # 拼接具体路径和动态获取到的型号信息
+            display_text = f"已接入: {camera_name} ({camera_path})"
+            self.view.lbl_camera_info.setText(display_text)
+            
             cfg.update_source_settings(pipeline, use_camera=True)
             # 立即更新标定画布的源
             self.view.canvas.load_frame(cfg.VIDEO_PATH)
             print(f"控制器：已切换至物理摄像头流: {pipeline}")
         else:
-            self.view.lbl_camera_info.setText("未发现摄像头设备 (/dev/video0)")
+            self.view.lbl_camera_info.setText(f"未发现摄像头设备 ({camera_path})")
 
     def handle_source_type_changed(self):
         """当用户手动切换单选框时更新配置"""

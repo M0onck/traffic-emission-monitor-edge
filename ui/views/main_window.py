@@ -1,3 +1,4 @@
+import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QStackedWidget, QTabWidget, 
                              QGridLayout, QFrame, QTableWidget, QTableWidgetItem, 
@@ -304,7 +305,14 @@ class MainWindow(QMainWindow):
 
         # 设备信息显示
         self.lbl_camera_info = QLabel("未检测到设备")
-        if cfg.USE_CAMERA: self.lbl_camera_info.setText("已接入默认摄像头")
+        if cfg.USE_CAMERA: 
+            camera_name = "物理摄像头"
+            if os.path.exists("/sys/class/video4linux/video0/name"):
+                try:
+                    with open("/sys/class/video4linux/video0/name", 'r') as f:
+                        camera_name = f.read().strip()
+                except: pass
+            self.lbl_camera_info.setText(f"已接入: {camera_name} (/dev/video0)")
         self.lbl_camera_info.setFont(QFont("Arial", 12))
         self.lbl_camera_info.setStyleSheet("color: #aaaaaa; border: none;")
 
