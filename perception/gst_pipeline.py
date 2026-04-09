@@ -83,7 +83,6 @@ class GstPipelineManager:
             self.pipeline.set_state(Gst.State.NULL)
             self.is_running = False
 
-    # 替换整个 read 方法：
     def read(self):
         if not self.is_running: return None, None
 
@@ -92,8 +91,12 @@ class GstPipelineManager:
             if msg.type == Gst.MessageType.ERROR:
                 err, debug = msg.parse_error()
                 print(f"\n[GStreamer 致命崩溃] {err}\n详情: {debug}\n")
+                self.is_running = False
+                
             elif msg.type == Gst.MessageType.EOS:
                 print(f"\n[GStreamer] 视频流已播放完毕 (EOS)\n")
+                self.is_running = False
+                
             return None, None 
 
         # 1. 获取视频帧 (允许5ms超时)

@@ -134,7 +134,7 @@ class TrafficMonitorEngine:
                 # 记录循环开始时间
                 loop_start = time.time()
 
-                # 阻塞拉取底层已经处理好的数据
+                # 拉取底层已经处理好的数据
                 frame, buffer = self.camera.read()
 
                 # 无论视频还是摄像头，统一打上当前的真实物理时间
