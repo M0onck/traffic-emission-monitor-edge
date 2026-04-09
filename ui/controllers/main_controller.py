@@ -145,8 +145,17 @@ class MainController:
 
     def return_to_home(self):
         """返回主界面"""
-        self.enter_app(self.view.page_main_menu) # 可复用硬件资源安全锁
+        # 获取跳转前的当前页面
+        current_widget = self.view.stack.currentWidget()
+        
+        # 执行原有的页面切换和资源释放逻辑
+        self.enter_app(self.view.page_main_menu) 
         self.update_main_menu_btn_style()
+        
+        # 如果是从“系统设置”页面返回，并且当前配置为“本地视频”
+        if current_widget == self.view.page_settings and not cfg.USE_CAMERA:
+            # 延时一小下弹出，等待主界面动画平稳
+            QTimer.singleShot(300, self.show_debug_mode_warning)
 
     def prev_page(self):
         """上一页触发逻辑"""
@@ -190,6 +199,17 @@ class MainController:
                     self.is_collecting = True
                     
         self.update_nav_buttons()
+
+    def show_debug_mode_warning(self):
+        """弹出本地视频模式的物理失真声明"""
+        dialog = EdgeMessageBox(
+            self.view, 
+            "⚙️ 调试模式已开启", 
+            "检测到视频输入源为本地文件。算力波动可能导致视频画面的处理无法贴合原始帧率。", 
+            info_text="注意：此模式仅供系统连通性测试，运动学特征将产生失真，不能用于科学数据收集。",
+            is_warning=False  # 使用常规样式，无需变红
+        )
+        dialog.exec_()
 
     def save_physics_settings(self):
         """将界面上的物理与环境参数同步到配置文件"""
