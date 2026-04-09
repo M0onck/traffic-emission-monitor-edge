@@ -82,6 +82,9 @@ class TrafficMonitorEngine:
         print(f">>> [Engine] 正在启动硬件加速管道...")
         self.camera.start()
 
+        # 初始化环境参数录入时间戳
+        self.prev_env_timestamp = 0.0
+
         # 启动热成像后台采集线程
         if self.thermal_cam:
             print(">>> [Engine] 检测到热成像模块，正在启动采集任务...")
@@ -154,20 +157,22 @@ class TrafficMonitorEngine:
                 
                 frame_id += 1
 
-                # 执行1Hz频率的轮询，用于实时计算fps和采集环境数据
+                # ====================================================
+                # 1. 性能统计：计算每秒的真实处理帧率（按照现实时间）
+                # ====================================================
                 frame_count += 1
-                now = time.time()
-                if now - prev_time >= 1.0:
-                    # ====================================================
-                    # 计算每秒的实时帧率
-                    # ====================================================
-                    current_fps = frame_count / (now - prev_time)
-                    prev_time = now
+                now_wall_clock = time.time()
+                if now_wall_clock - prev_time >= 1.0:
+                    current_fps = frame_count / (now_wall_clock - prev_time)
+                    prev_time = now_wall_clock
                     frame_count = 0
 
-                    # ====================================================
-                    # 环境数据采样与入库
-                    # ====================================================
+                # ====================================================
+                # 2. 业务打点：环境数据 1Hz 采样与入库（按照视频时间，同时兼容流批处理）
+                # ====================================================
+                if frame_timestamp - getattr(self, 'prev_env_timestamp', 0.0) >= 1.0:
+                    self.prev_env_timestamp = frame_timestamp
+
                     if getattr(self, 'current_session_id', None):
                         env_data = {}
                         
@@ -204,7 +209,7 @@ class TrafficMonitorEngine:
                         # 3. 写入数据库
                         self.db.insert_env_raw(
                             session_id=self.current_session_id,
-                            timestamp=frame_timestamp, # 使用 NTP 同步的绝对物理时间
+                            timestamp=frame_timestamp,
                             env_data=env_data
                         )
                     # ====================================================
