@@ -266,14 +266,6 @@ class MainController:
         self.worker = EngineWorker(source_points, self.view.phys_w, self.view.phys_h, weather_station=self.weather_gw)
         self.worker.frame_ready.connect(self.update_video_frame)
         self.worker.start()
-
-        # 启动延迟对齐引擎
-        self.align_engine = DelayedAlignmentEngine(cfg._cfg, cfg.DB_PATH)
-        self.align_timer = QTimer(self.view)
-        freq = cfg._cfg["time_windows"].get("db_align_frequency_hz", 1.0)
-        self.align_timer.timeout.connect(self._run_alignment_step)
-        # 根据配置文件频率设置定时器（1.0Hz -> 1000ms）
-        self.align_timer.start(int(1000 / freq))
     
     def stop_collection_trigger(self):
         """触发结束采集：弹出确认窗口"""
@@ -284,7 +276,6 @@ class MainController:
     def final_stop_process(self):
         """正式执行退出逻辑"""
         if hasattr(self, 'dash_timer'): self.dash_timer.stop()
-        if hasattr(self, 'align_timer'): self.align_timer.stop()
         if hasattr(self, 'worker'):
             self.worker.stop()
             self.worker.wait(1000)
@@ -728,27 +719,3 @@ class MainController:
         self.view.lbl_dash_dist.setText(f"行驶距离: {record.get('total_distance_m', 0.0):.1f} m")
         
         self.view.curve_widget.update_curve(speeds, accels)
-
-    def _run_alignment_step(self):
-        """定时触发的对齐任务钩子"""
-        if not self.is_collecting:
-            return
-            
-        # 检查底层工作线程和会话状态是否已准备就绪
-        if not hasattr(self, 'worker') or not self.worker.engine:
-            return
-            
-        # 正确的属性名是 current_session_id
-        current_session_id = getattr(self.worker.engine, 'current_session_id', None)
-        if not current_session_id:
-            return
-
-        # 统一使用底层引擎的 NTP 同步时钟（物理基准时间），避免时间窗偏移
-        if hasattr(self.worker.engine, 'time_sync'):
-            current_time = self.worker.engine.time_sync.get_precise_timestamp()
-        else:
-            import time
-            current_time = time.time()
-
-        # 触发对齐作业
-        self.align_engine.align_step(current_session_id, current_time)
