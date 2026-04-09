@@ -2,7 +2,6 @@
   "system": {
     "video_path": "video/input_video.MP4",
     "local_video_path": "video/input_video.MP4",
-    "target_video_path": "video/output_video.MP4",
     "db_path": "data/traffic_data.db",
     "fps": 30,
     "debug_mode": true,
@@ -33,7 +32,6 @@
   },
   "ocr_params": {
     "retry_cooldown": 5,
-    "run_interval": 5,
     "confidence_threshold": 0.4
   },
   "yolo_classes": {

@@ -140,7 +140,7 @@ class DelayedAlignmentEngine:
 
             # 基于纯物理静质量重构“质量加权等效调和传输距离” (D_trans)
             # 规避目标泄露，且精准捕获近场重卡对等效污染源质心的牵引效应
-            d_trans = (sum_m / sum_m_div_d) if sum_m_div_d > 0 else 0.0
+            d_trans = (sum_m / sum_m_div_d) if sum_m_div_d > 0 else 999.0 # 当没有车时，给一个代表极远距离的安全值
 
             # =======================================================
             # 3. 空间与气象调节特征构建 

@@ -70,7 +70,7 @@ class TrafficMonitorEngine:
         self.weather_station = components.get('weather_station')
 
         # 初始化 VSP 和 工况计算器
-        self.vsp_calc = VSPCalculator(getattr(config, 'VSP_CONFIG', {}))
+        self.vsp_calc = VSPCalculator(getattr(config, 'physics_params', {}))
         self.opmode_mapper = OpModeMapper(duration_threshold=1.0)
 
         # 初始化延迟对齐引擎
