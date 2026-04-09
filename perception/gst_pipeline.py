@@ -49,6 +49,11 @@ class GstPipelineManager:
             abs_path = os.path.abspath(self.video_path)
             source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
 
+        # 动态适配同步策略
+        # 如果是真实摄像头：False，追求绝对低延迟，跟不上就丢帧。
+        # 如果是本地视频模拟：True，强制底层解码器服从视频原生时间戳，严丝合缝播放。
+        sync_mode = "false" if is_camera else "true"
+
         pipeline = (
             f"{source_head} ! tee name=t "
             
@@ -56,7 +61,7 @@ class GstPipelineManager:
             # 队列限制为 2，并且开启 leaky=downstream（满了就丢弃旧帧）
             f"t. ! queue max-size-buffers=2 leaky=downstream ! "
             f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=1 drop=true sync=false "
+            f"appsink name=sink_video emit-signals=false max-buffers=1 drop=true sync={sync_mode} "
             
             # --- 分支2: AI 推理分支 ---
             f"t. ! queue max-size-buffers=2 leaky=downstream ! "
@@ -64,7 +69,7 @@ class GstPipelineManager:
             f"videoconvert ! video/x-raw, format=RGB ! "
             f"hailonet hef-path={self.hef_path} ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=1 drop=true sync=false "
+            f"appsink name=sink_meta emit-signals=false max-buffers=1 drop=true sync={sync_mode} "
         )
         return pipeline
 
