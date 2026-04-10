@@ -30,6 +30,11 @@ FPS = max(1.0, float(_sys.get("fps", 30.0))) # [防御性编程] 防止ZeroDivis
 DEBUG_MODE = _sys["debug_mode"]
 USE_CAMERA = _sys.get("use_camera", False)
 
+_rec = _cfg.get("record_options", {})
+ENABLE_RECORD = _rec.get("enable_record", False)
+RECORD_SEGMENT_MIN = _rec.get("segment_length_min", 10)
+RECORD_SAVE_PATH = _rec.get("save_path", "/mnt/nvmessd/recorded_videos") # 默认优先用 SSD
+
 _d = _cfg["display"]
 FRAME_WIDTH = _d.get("frame_width", 1280)
 FRAME_HEIGHT = _d.get("frame_height", 720)
@@ -139,3 +144,24 @@ def update_run_mode(new_mode):
             print(f"[Config] 运行模式已切换为: {new_mode}")
         except Exception as e:
             print(f"配置文件写入失败: {e}")
+
+def update_record_settings(enable: bool, segment_min: int, path: str):
+    """更新视频录制选项并持久化到 config.json"""
+    global ENABLE_RECORD, RECORD_SEGMENT_MIN, RECORD_SAVE_PATH
+    
+    if "record_options" not in _cfg:
+        _cfg["record_options"] = {}
+        
+    _cfg["record_options"]["enable_record"] = enable
+    _cfg["record_options"]["segment_length_min"] = segment_min
+    _cfg["record_options"]["save_path"] = path
+
+    ENABLE_RECORD = enable
+    RECORD_SEGMENT_MIN = segment_min
+    RECORD_SAVE_PATH = path
+
+    try:
+        with open(CONFIG_FILE, "w", encoding='utf-8') as f:
+            json.dump(_cfg, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"配置文件写入失败: {e}")

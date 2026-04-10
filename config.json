@@ -8,6 +8,11 @@
     "debug_mode": true,
     "use_camera": false
   },
+  "record_options": {
+    "enable_record": false,
+    "segment_length_min": 10,
+    "save_path": "/mnt/nvmessd/recorded_videos"
+  },
   "display": {
     "frame_width": 1280,
     "frame_height": 720

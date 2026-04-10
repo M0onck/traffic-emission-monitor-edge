@@ -45,9 +45,10 @@ class GstPipelineManager:
     def _build_pipeline(self) -> str:
         is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
+        # 实时拉流和离线文件分支构建逻辑
         if is_camera:
             source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1"
-            # 实时流：必须开启丢帧策略，保证永远获取最新画面，实现零延迟
+            # 实时拉流：必须开启丢帧策略，保证永远获取最新画面，实现零延迟
             queue_prop = "leaky=downstream"
             sink_prop = "drop=true sync=false"
         else:
@@ -56,6 +57,25 @@ class GstPipelineManager:
             # 离线文件：关闭所有丢帧属性。利用 Python 端循环速度反向阻塞 (Backpressure) GStreamer 解码流速
             queue_prop = "" 
             sink_prop = "drop=false sync=false"
+
+        # 录制分支构建逻辑
+        record_branch = ""
+        # 仅在物理摄像头模式且打开了录制开关时，激活录制管道
+        if is_camera and cfg.ENABLE_RECORD:
+            os.makedirs(cfg.RECORD_SAVE_PATH, exist_ok=True)
+            
+            # splitmuxsink 的 max-size-time 单位是纳秒 (ns)
+            segment_ns = int(cfg.RECORD_SEGMENT_MIN * 60 * 1000000000)
+            
+            # 文件命名模板：record_00001.mp4, record_00002.mp4...
+            loc_pattern = os.path.join(cfg.RECORD_SAVE_PATH, "record_%05d.mp4")
+            
+            # v4l2h264enc 是树莓派的硬件编码器。使用 h264parse 和 splitmuxsink 实现无缝切片封装
+            record_branch = (
+                f"t. ! queue max-size-buffers=30 leaky=downstream ! "
+                f"v4l2h264enc extra-controls=\"controls,h264_profile=4,video_bitrate=4000000\" ! "
+                f"h264parse ! splitmuxsink location=\"{loc_pattern}\" max-size-time={segment_ns} "
+            )
 
         pipeline = (
             f"{source_head} ! tee name=t "
@@ -72,6 +92,9 @@ class GstPipelineManager:
             f"hailonet hef-path={self.hef_path} ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
             f"appsink name=sink_meta emit-signals=false max-buffers=1 {sink_prop} "
+
+            # --- 分支3: 录制切片分支 ---
+            f"{record_branch}"
         )
         return pipeline
 

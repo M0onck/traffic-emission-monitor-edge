@@ -56,6 +56,19 @@ class MainController:
         self.sys_timer.timeout.connect(self.update_sys_board)
         self.sys_timer.start(1000) # 每 1000 毫秒刷新一次系统看板
 
+        # 录制界面初始化显示（从配置文件读取）
+        self.view.btn_record_switch.setChecked(cfg.ENABLE_RECORD)
+        self.handle_record_switch_toggled(cfg.ENABLE_RECORD)
+        
+        segment_map = {5: 0, 10: 1, 15: 2, 30: 3}
+        self.view.combo_segment_time.setCurrentIndex(segment_map.get(cfg.RECORD_SEGMENT_MIN, 1))
+        self.view.lbl_record_save_path.setText(cfg.RECORD_SAVE_PATH)
+        
+        # 启动一个低频的磁盘空间清理守护定时器 (每分钟检查一次)
+        self.disk_monitor_timer = QTimer(self.view)
+        self.disk_monitor_timer.timeout.connect(self.check_and_cleanup_disk_space)
+        self.disk_monitor_timer.start(60000)
+
     def bind_signals(self):
         """将视图组件的事件绑定到控制器的逻辑上"""
         self.view.btn_home.clicked.connect(self.return_to_home)
@@ -85,6 +98,7 @@ class MainController:
         self.view.radio_mode_collection.toggled.connect(self.handle_run_mode_changed)
         self.view.btn_record_switch.toggled.connect(self.handle_record_switch_toggled)
         self.view.btn_browse_record_path.clicked.connect(self.handle_browse_record_path)
+        self.view.combo_segment_time.currentIndexChanged.connect(self.save_record_settings)
 
         # 退出程序按钮的绑定
         self.view.btn_exit.clicked.connect(self.handle_exit_request)
@@ -688,12 +702,49 @@ class MainController:
         else:
             self.view.btn_record_switch.setText("已关闭")
             self.view.btn_record_switch.setStyleSheet(self.view.style_hollow_white)
+        self.save_record_settings() # 状态变化即保存
 
     def handle_browse_record_path(self):
         """选择录制视频保存目录"""
         dir_path = QFileDialog.getExistingDirectory(None, "选择视频保存目录", "")
         if dir_path:
             self.view.lbl_record_save_path.setText(dir_path)
+            self.save_record_settings()
+
+    def save_record_settings(self):
+        """将当前的录制 UI 状态同步到配置文件"""
+        enable = self.view.btn_record_switch.isChecked()
+        seg_str = self.view.combo_segment_time.currentText()
+        seg_min = int(seg_str.split()[0]) # 提取出纯数字 5, 10, 15...
+        path = self.view.lbl_record_save_path.text()
+        cfg.update_record_settings(enable, seg_min, path)
+
+    def check_and_cleanup_disk_space(self):
+        """后台守护：检查磁盘空间，不足时删除最早的切片视频"""
+        if not cfg.ENABLE_RECORD or not cfg.USE_CAMERA:
+            return
+            
+        path = cfg.RECORD_SAVE_PATH
+        if not os.path.exists(path):
+            return
+
+        import shutil
+        # 设定安全红线：低于 2GB 时触发清理 (后续可根据需求调整，或可配置化)
+        MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024 
+        
+        try:
+            usage = shutil.disk_usage(path)
+            if usage.free < MIN_FREE_BYTES:
+                # 寻找该目录下所有的 .mp4 文件
+                files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.mp4')]
+                if not files: return
+                
+                # 按照文件创建时间排序，找到最旧的
+                oldest_file = min(files, key=os.path.getctime)
+                os.remove(oldest_file)
+                print(f"[磁盘管理] 存储空间低于阈值，已自动清理最旧的切片: {oldest_file}")
+        except Exception as e:
+            print(f"[磁盘管理] 清理监控异常: {e}")
 
     def _update_thermal_view(self):
         """处理热力图渲染与数据提取"""
