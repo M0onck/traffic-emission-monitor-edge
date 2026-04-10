@@ -163,3 +163,7 @@ class GstPipelineManager:
         except Exception as e:
             print(f">>> [GStreamer] 内存解析异常: {e}")
             return None, None
+        
+        finally:
+            # 无论前面发生什么崩溃，finally 保证一定会释放视频画面内存锁
+            buffer_video.unmap(map_info)

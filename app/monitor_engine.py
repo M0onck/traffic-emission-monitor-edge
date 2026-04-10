@@ -207,11 +207,6 @@ class TrafficMonitorEngine:
                     # 给 video_info 赋值，打破 None 状态，保证此代码块只运行一次
                     video_info = True
 
-                    # 视频录制相关逻辑（已废弃，若想重新启用，应换用GStreamer管道分流）
-                    # video_info = sv.VideoInfo(width=w, height=h, fps=self.cfg.FPS)
-                    # sink = sv.VideoSink(self.cfg.TARGET_VIDEO_PATH, video_info=video_info)
-                    # sink.__enter__()
-
                     print(f">>> [Engine] 视频流已接入: {w}x{h} @ {self.cfg.FPS}fps")
                 
                     #  第一帧到达时，动态适配底层坐标系
@@ -234,16 +229,19 @@ class TrafficMonitorEngine:
 
                 # --- 核心处理流水线 ---
                 try:
-                    annotated_frame = self.process_frame(frame, buffer, frame_id, current_fps, frame_timestamp)
+                    # 提前呼叫感知层，剥离提取纯粹的 Python 数据字典
+                    detections = self.vision.process(frame, buffer)
+                    
+                    # 立刻斩断底层 GStreamer 内存锁！绝不将其带入后续耗时环节
+                    del buffer
+                    
+                    # 带着纯 Python 的 detections 进入重负载流水线，彻底解放底层视频流
+                    annotated_frame = self.process_frame(frame, detections, frame_id, current_fps, frame_timestamp)
                     frame_id += 1
                 except Exception as e:
                     print(f">>> [Engine 致命错误] 引擎在处理第 {frame_id} 帧时崩溃: {e}")
                     traceback.print_exc()
                     break # 遇到严重逻辑错误直接跳出循环，释放资源
-                
-                # --- 写入结果视频（已废弃，若想重新启用，应换用GStreamer管道分流） ---
-                # if sink:
-                #     sink.write_frame(annotated_frame)
                 
                 # --- 实时预览 ---
                 if self.frame_callback:
@@ -272,14 +270,12 @@ class TrafficMonitorEngine:
             #     sink.__exit__(None, None, None)
             self.cleanup(frame_id)
 
-    def process_frame(self, frame, buffer, frame_id, current_fps=0.0, frame_timestamp=0.0):
+    def process_frame(self, frame, detections, frame_id, current_fps=0.0, frame_timestamp=0.0):
         """
         单帧处理流水线。
         """
         h, w = frame.shape[:2]
         
-        # --- Step 1: 视觉感知与目标追踪 (交由感知层流水线处理) ---
-        detections = self.vision.process(frame, buffer)
         # 为防止识别错误，采用物理与事实先验知识进行过滤
         detections = self.box_filter.apply_pixel_filters(detections, frame.shape)
         if self.comps.get('transformer'):
