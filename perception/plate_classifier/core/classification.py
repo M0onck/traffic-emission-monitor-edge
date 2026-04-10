@@ -19,7 +19,12 @@ class ClassificationORT(HamburgerABC):
     def __init__(self, onnx_path, *args, **kwargs):
         import onnxruntime as ort
         super().__init__(*args, **kwargs)
-        self.session = ort.InferenceSession(onnx_path, None)
+        # 配置 ONNX Runtime 日志级别
+        sess_options = ort.SessionOptions()
+        sess_options.log_severity_level = 3  # 3 表示只输出 Error 及以上级别的日志
+
+        # 将 sess_options 传入 InferenceSession
+        self.session = ort.InferenceSession(onnx_path, sess_options)
         self.input_config = self.session.get_inputs()[0]
         self.output_config = self.session.get_outputs()[0]
         self.input_size = tuple(self.input_config.shape[2:])

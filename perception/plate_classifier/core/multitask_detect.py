@@ -90,7 +90,13 @@ class MultiTaskDetectorORT(HamburgerABC):
         import onnxruntime as ort
         self.box_threshold = box_threshold
         self.nms_threshold = nms_threshold
-        self.session = ort.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
+
+        # 配置 ONNX Runtime 日志级别
+        sess_options = ort.SessionOptions()
+        sess_options.log_severity_level = 3  # 屏蔽 Warning 日志
+
+        # 将 sess_options 传入 InferenceSession
+        self.session = ort.InferenceSession(onnx_path, sess_options, providers=['CPUExecutionProvider'])
         self.inputs_option = self.session.get_inputs()
         self.outputs_option = self.session.get_outputs()
         input_option = self.inputs_option[0]

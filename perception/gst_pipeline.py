@@ -76,7 +76,7 @@ class GstPipelineManager:
             record_branch = (
                 f"t. ! queue max-size-buffers=30 leaky=downstream ! "
                 f"videoconvert ! "
-                f"x264enc speed-preset=ultrafast tune=zerolatency bitrate=2048 ! "
+                f"x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 ! "
                 f"h264parse ! splitmuxsink location=\"{loc_pattern}\" max-size-time={segment_ns} "
             )
 
