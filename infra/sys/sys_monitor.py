@@ -13,15 +13,30 @@ class SysMonitor:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     @staticmethod
-    def get_edge_storage() -> str:
-        """2. 边缘存储 (获取根目录 / 的磁盘使用率)"""
+    def get_sd_storage() -> str:
+        """边缘存储 (获取根目录 / 的磁盘使用率，通常为 SD 卡)"""
         try:
             usage = psutil.disk_usage('/')
             used_gb = usage.used / (1024 ** 3)
             total_gb = usage.total / (1024 ** 3)
-            return f"{used_gb:.1f} GB / {total_gb:.1f} GB"
+            return f"{used_gb:.1f}G / {total_gb:.1f}G"
         except Exception:
-            return "-- GB / -- GB"
+            return "-- / --"
+
+    @staticmethod
+    def get_ssd_storage() -> str:
+        """扩展存储 (获取挂载点 /mnt/nvmessd 的磁盘使用率，即 SSD)"""
+        mount_point = '/mnt/nvmessd'
+        try:
+            if os.path.exists(mount_point) and os.path.ismount(mount_point):
+                usage = psutil.disk_usage(mount_point)
+                used_gb = usage.used / (1024 ** 3)
+                total_gb = usage.total / (1024 ** 3)
+                return f"{used_gb:.1f}G / {total_gb:.1f}G"
+            else:
+                return "未挂载"
+        except Exception:
+             return "读取失败"
 
     @staticmethod
     def get_network_status() -> str:

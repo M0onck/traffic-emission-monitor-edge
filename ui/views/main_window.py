@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         left_layout.addSpacing(15)
 
         self.status_labels = {}
-        status_keys = ["系统时间", "存储空间", "网络连接", "气象网关", "CPU 温度", "NPU 温度"]
+        status_keys = ["系统时间", "SD卡存储", "SSD存储", "网络连接", "气象网关", "CPU 温度", "NPU 温度"]
 
         font_label = QFont("Consolas", 14)
         font_value = QFont("Consolas", 14, QFont.Bold)
