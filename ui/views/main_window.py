@@ -382,6 +382,80 @@ class MainWindow(QMainWindow):
             self.radio_mode_collection.setChecked(True)
 
         self.settings_tabs.addTab(tab_run_mode, "工作模式")
+
+        # --- 页签 3: 录制选项 ---
+        self.tab_record_settings = QWidget()
+        rs_layout = QVBoxLayout(self.tab_record_settings)
+        rs_layout.setContentsMargins(40, 40, 40, 40)
+        rs_layout.setSpacing(25)
+
+        # 录制开关控制
+        record_toggle_layout = QHBoxLayout()
+        lbl_record_toggle = QLabel("开启视频录制:")
+        lbl_record_toggle.setFont(QFont("Arial", 14))
+        lbl_record_toggle.setStyleSheet("color: #cccccc; border: none;")
+        
+        self.btn_record_switch = QPushButton("已关闭")
+        self.btn_record_switch.setCheckable(True) # 使其成为开关按钮
+        self.btn_record_switch.setFixedSize(120, 40)
+        self.btn_record_switch.setFont(QFont("Arial", 12, QFont.Bold))
+        self.btn_record_switch.setStyleSheet(self.style_hollow_white) # 初始使用白色镂空
+        
+        record_toggle_layout.addWidget(lbl_record_toggle)
+        record_toggle_layout.addSpacing(20)
+        record_toggle_layout.addWidget(self.btn_record_switch)
+        record_toggle_layout.addStretch()
+        rs_layout.addLayout(record_toggle_layout)
+
+        # 视频切片时间下拉菜单
+        segment_layout = QHBoxLayout()
+        lbl_segment = QLabel("视频切片长度:")
+        lbl_segment.setFont(QFont("Arial", 14))
+        lbl_segment.setStyleSheet("color: #cccccc; border: none;")
+        
+        self.combo_segment_time = QComboBox()
+        self.combo_segment_time.addItems(["5 分钟", "10 分钟", "15 分钟", "30 分钟"])
+        self.combo_segment_time.setFont(QFont("Arial", 12))
+        self.combo_segment_time.setFixedWidth(180)
+        # 沿用深色科技风样式
+        self.combo_segment_time.setStyleSheet("""
+            QComboBox { background-color: #111; color: white; border: 1px solid #444; padding: 5px; min-height: 25px;}
+            QComboBox QAbstractItemView { background-color: #111; color: white; selection-background-color: #333; }
+        """)
+        
+        segment_layout.addWidget(lbl_segment)
+        segment_layout.addSpacing(20)
+        segment_layout.addWidget(self.combo_segment_time)
+        segment_layout.addStretch()
+        rs_layout.addLayout(segment_layout)
+
+        # 录制保存路径选择
+        path_layout = QHBoxLayout()
+        lbl_path = QLabel("保存路径:")
+        lbl_path.setFont(QFont("Arial", 14))
+        lbl_path.setStyleSheet("color: #cccccc; border: none;")
+        
+        self.btn_browse_record_path = QPushButton(" 选择目录 ")
+        self.btn_browse_record_path.setFont(QFont("Arial", 12))
+        self.btn_browse_record_path.setStyleSheet(self.style_hollow_white)
+        self.btn_browse_record_path.setFixedHeight(40)
+        
+        self.lbl_record_save_path = QLabel("/mnt/nvmessd/recorded_videos")
+        self.lbl_record_save_path.setFont(QFont("Arial", 11))
+        self.lbl_record_save_path.setStyleSheet("color: #aaaaaa; border: none;")
+        
+        path_layout.addWidget(lbl_path)
+        path_layout.addSpacing(20)
+        path_layout.addWidget(self.btn_browse_record_path)
+        path_layout.addSpacing(15)
+        path_layout.addWidget(self.lbl_record_save_path)
+        path_layout.addStretch()
+        rs_layout.addLayout(path_layout)
+        
+        rs_layout.addStretch()
+        # 将新页签添加到选项卡中
+        self.settings_tabs.addTab(self.tab_record_settings, "录制选项")
+
         self.stack.addWidget(self.page_settings)
 
     def init_page_calibration(self):

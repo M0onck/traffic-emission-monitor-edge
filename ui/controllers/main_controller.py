@@ -83,6 +83,8 @@ class MainController:
         self.view.radio_source_camera.toggled.connect(self.handle_source_type_changed)
         self.view.radio_mode_inference.toggled.connect(self.handle_run_mode_changed)
         self.view.radio_mode_collection.toggled.connect(self.handle_run_mode_changed)
+        self.view.btn_record_switch.toggled.connect(self.handle_record_switch_toggled)
+        self.view.btn_browse_record_path.clicked.connect(self.handle_browse_record_path)
 
         # 退出程序按钮的绑定
         self.view.btn_exit.clicked.connect(self.handle_exit_request)
@@ -650,6 +652,11 @@ class MainController:
 
     def handle_source_type_changed(self):
         """当用户手动切换视频源单选框时更新配置"""
+        is_camera = self.view.radio_source_camera.isChecked()
+        
+        # 仅在摄像头源时激活录制选项页签的内容
+        self.view.tab_record_settings.setEnabled(is_camera)
+
         if self.view.radio_source_local.isChecked():
             # 切换到本地模式
             current_path = self.view.lbl_local_path.text()
@@ -672,6 +679,21 @@ class MainController:
             cfg.update_run_mode('inference')
         else:
             cfg.update_run_mode('collection')
+
+    def handle_record_switch_toggled(self, checked):
+        """处理录制开关的 UI 状态变化"""
+        if checked:
+            self.view.btn_record_switch.setText("已开启")
+            self.view.btn_record_switch.setStyleSheet(self.view.style_hollow_green)
+        else:
+            self.view.btn_record_switch.setText("已关闭")
+            self.view.btn_record_switch.setStyleSheet(self.view.style_hollow_white)
+
+    def handle_browse_record_path(self):
+        """选择录制视频保存目录"""
+        dir_path = QFileDialog.getExistingDirectory(None, "选择视频保存目录", "")
+        if dir_path:
+            self.view.lbl_record_save_path.setText(dir_path)
 
     def _update_thermal_view(self):
         """处理热力图渲染与数据提取"""
