@@ -70,10 +70,13 @@ class GstPipelineManager:
             # 文件命名模板：record_00001.mp4, record_00002.mp4...
             loc_pattern = os.path.join(cfg.RECORD_SAVE_PATH, "record_%05d.mp4")
             
-            # v4l2h264enc 是树莓派的硬件编码器。使用 h264parse 和 splitmuxsink 实现无缝切片封装
+            # 采用高兼容性软件编码器方案：
+            # 1. 增加 videoconvert 自动协商色彩空间（x264enc 通常偏好 I420）
+            # 2. 使用 x264enc 替代 v4l2h264enc，并使用 ultrafast 降低 CPU 占用
             record_branch = (
                 f"t. ! queue max-size-buffers=30 leaky=downstream ! "
-                f"v4l2h264enc extra-controls=\"controls,h264_profile=4,video_bitrate=4000000\" ! "
+                f"videoconvert ! "
+                f"x264enc speed-preset=ultrafast tune=zerolatency bitrate=2048 ! "
                 f"h264parse ! splitmuxsink location=\"{loc_pattern}\" max-size-time={segment_ns} "
             )
 
