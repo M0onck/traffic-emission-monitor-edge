@@ -53,6 +53,14 @@ class VisionPipeline:
                 class_ids.append(cid)
                 confs.append(det.get_confidence())
 
+                # 释放单次循环的底层引用对象
+                del bbox
+                del det
+            
+            # 循环结束后，主动释放 ROI 和列表对象
+            del hailo_detections
+            del roi
+
         except Exception:
             # 解析出错或在非真实设备环境下，静默通过
             pass
