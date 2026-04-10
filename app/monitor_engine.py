@@ -123,12 +123,16 @@ class TrafficMonitorEngine:
             start_timestamp = time.time()
             time_str = time.strftime('%Y%m%d_%H%M%S', time.localtime(start_timestamp))
             self.current_session_id = f"Task_{time_str}"
+
+            # 根据本次任务 ID 更新录制文件名
+            if cfg.ENABLE_RECORD and cfg.USE_CAMERA:
+                self.camera.set_record_location(self.current_session_id)
             
             # 在数据库中注册本次采集任务
             self.db.create_session(
                 session_id=self.current_session_id, 
                 start_time=start_timestamp, 
-                location_desc="试验路段A" # 后续可以从 config.json 读取
+                location_desc="TestLocation" # 后续可以从 config.json 读取
             )
 
             while True:

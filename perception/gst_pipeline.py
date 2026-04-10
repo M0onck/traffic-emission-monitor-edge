@@ -67,8 +67,8 @@ class GstPipelineManager:
             # splitmuxsink 的 max-size-time 单位是纳秒 (ns)
             segment_ns = int(cfg.RECORD_SEGMENT_MIN * 60 * 1000000000)
             
-            # 文件命名模板：record_00001.mp4, record_00002.mp4...
-            loc_pattern = os.path.join(cfg.RECORD_SAVE_PATH, "record_%05d.mp4")
+            # 默认路径模板，稍后会被 monitor_engine 动态修改
+            loc_pattern = os.path.join(cfg.RECORD_SAVE_PATH, "temp_rec_%05d.mp4")
             
             # 采用高兼容性软件编码器方案：
             # 1. 增加 videoconvert 自动协商色彩空间（x264enc 通常偏好 I420）
@@ -77,7 +77,7 @@ class GstPipelineManager:
                 f"t. ! queue max-size-buffers=30 leaky=downstream ! "
                 f"videoconvert ! "
                 f"x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 ! "
-                f"h264parse ! splitmuxsink location=\"{loc_pattern}\" max-size-time={segment_ns} "
+                f"h264parse ! splitmuxsink name=rec_sink location=\"{loc_pattern}\" max-size-time={segment_ns} "
             )
 
         pipeline = (
@@ -108,8 +108,28 @@ class GstPipelineManager:
 
     def stop(self):
         if self.is_running:
+            # 动态判断当前是否处于录制状态
+            is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
+            is_recording = is_camera and cfg.ENABLE_RECORD
+
+            if is_recording:
+                print(">>> [GStreamer] 正在发送 EOS 信号以安全封装视频切片...")
+                # 1. 发送 EOS 事件，通知 muxer 插件写入文件尾
+                self.pipeline.send_event(Gst.Event.new_eos())
+                
+                # 2. 等待 EOS 消息出现在总线上 (最多等待 2 秒)
+                bus = self.pipeline.get_bus()
+                bus.timed_pop_filtered(
+                    2 * Gst.SECOND, 
+                    Gst.MessageType.EOS | Gst.MessageType.ERROR
+                )
+            else:
+                print(">>> [GStreamer] 正在关闭推理管道...")
+            
+            # 3. 彻底关闭管道
             self.pipeline.set_state(Gst.State.NULL)
             self.is_running = False
+            print(">>> [GStreamer] 管道已安全关闭。")
 
     def read(self):
         if not self.is_running: return None, None
@@ -167,3 +187,16 @@ class GstPipelineManager:
             # 无论前面发生什么崩溃、或者正常 return，finally 保证一定会执行且仅执行一次内存释放
             if map_info is not None:
                 buffer_video.unmap(map_info)
+
+    def set_record_location(self, session_id):
+        """根据 session_id 动态更新录制文件名模板"""
+        rec_sink = self.pipeline.get_by_name("rec_sink")
+        if rec_sink:
+            import time
+            timestamp = int(time.time())
+            # 命名规则：session_id + 编号(%05d) + 开始时间戳
+            filename = f"{session_id}_seq%05d_start{timestamp}.mp4"
+            full_path = os.path.join(cfg.RECORD_SAVE_PATH, filename)
+            rec_sink.set_property("location", full_path)
+            print(f">>> [GStreamer] 录制路径已更新为: {full_path}")
+    
