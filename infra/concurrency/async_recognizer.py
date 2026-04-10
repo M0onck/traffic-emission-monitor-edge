@@ -6,7 +6,7 @@ import queue
 from perception.plate_classifier.core.multitask_detect import letter_box, post_precessing
 
 class AsyncPlateRecognizer:
-    def __init__(self, y5fu_onnx_path, litemodel_onnx_path, num_workers=2):
+    def __init__(self, y5fu_onnx_path, litemodel_onnx_path, num_workers=1):
         ctx = mp.get_context('spawn')
         self.task_queue = ctx.Queue(maxsize=30)
         self.result_queue = ctx.Queue()

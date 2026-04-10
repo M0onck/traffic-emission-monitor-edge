@@ -1,4 +1,5 @@
 import cv2
+cv2.setNumThreads(1) # 关闭 OpenCV 底层多线程优化，防止与系统和 AI 引擎抢夺资源
 import numpy as np
 import supervision as sv
 import time

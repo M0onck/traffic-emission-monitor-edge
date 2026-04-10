@@ -76,7 +76,7 @@ class GstPipelineManager:
             record_branch = (
                 f"t. ! queue max-size-buffers=30 leaky=downstream ! "
                 f"videoconvert ! "
-                f"x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 ! "
+                f"x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 ! "
                 f"h264parse ! splitmuxsink location=\"{loc_pattern}\" max-size-time={segment_ns} "
             )
 
@@ -156,7 +156,6 @@ class GstPipelineManager:
             actual_h = struct.get_value("height")
             
             frame = np.ndarray((actual_h, actual_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
-            buffer_video.unmap(map_info)
 
             return frame, buffer_meta
             
@@ -165,5 +164,6 @@ class GstPipelineManager:
             return None, None
         
         finally:
-            # 无论前面发生什么崩溃，finally 保证一定会释放视频画面内存锁
-            buffer_video.unmap(map_info)
+            # 无论前面发生什么崩溃、或者正常 return，finally 保证一定会执行且仅执行一次内存释放
+            if map_info is not None:
+                buffer_video.unmap(map_info)
