@@ -18,6 +18,8 @@ class ClassificationORT(HamburgerABC):
 
     def __init__(self, onnx_path, *args, **kwargs):
         import onnxruntime as ort
+        # 设置全局默认日志级别
+        ort.set_default_logger_severity(3)
         super().__init__(*args, **kwargs)
         # 配置 ONNX Runtime 日志级别
         sess_options = ort.SessionOptions()

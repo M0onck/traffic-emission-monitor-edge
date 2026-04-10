@@ -88,6 +88,9 @@ class MultiTaskDetectorORT(HamburgerABC):
     def __init__(self, onnx_path, box_threshold: float = 0.5, nms_threshold: float = 0.6, *args, **kwargs):
         super().__init__(*args, **kwargs)
         import onnxruntime as ort
+        # 设置全局默认日志级别
+        ort.set_default_logger_severity(3)
+        
         self.box_threshold = box_threshold
         self.nms_threshold = nms_threshold
 
