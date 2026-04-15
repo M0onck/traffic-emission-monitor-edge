@@ -80,6 +80,15 @@ class TrafficMonitorEngine:
         """
         启动基于 GStreamer 轮询的主处理循环。
         """
+        # 生成全局唯一的 Session ID (前缀+时间戳)
+        start_timestamp = time.time()
+        time_str = time.strftime('%Y%m%d_%H%M%S', time.localtime(start_timestamp))
+        self.current_session_id = f"Task_{time_str}"
+        
+        # 判断是否需要录像
+        if getattr(self.cfg, 'ENABLE_RECORD', False) and getattr(self.cfg, 'USE_CAMERA', False):
+            self.camera.set_record_location(self.current_session_id)
+
         print(f">>> [Engine] 正在启动硬件加速管道...")
         self.camera.start()
 
@@ -118,21 +127,12 @@ class TrafficMonitorEngine:
             prev_time = time.time()
             frame_count = 0
             current_fps = 0.0
-
-            # 生成全局唯一的 Session ID (前缀+时间戳)
-            start_timestamp = time.time()
-            time_str = time.strftime('%Y%m%d_%H%M%S', time.localtime(start_timestamp))
-            self.current_session_id = f"Task_{time_str}"
-
-            # 根据本次任务 ID 更新录制文件名
-            if cfg.ENABLE_RECORD and cfg.USE_CAMERA:
-                self.camera.set_record_location(self.current_session_id)
             
             # 在数据库中注册本次采集任务
             self.db.create_session(
                 session_id=self.current_session_id, 
                 start_time=start_timestamp, 
-                location_desc="TestLocation" # 后续可以从 config.json 读取
+                location_desc="TestRoad" # 后续可以从 config.json 读取
             )
 
             while True:
