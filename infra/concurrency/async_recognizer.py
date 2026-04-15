@@ -1,9 +1,9 @@
 import cv2
 import numpy as np
-import onnxruntime as ort
 import multiprocessing as mp
 import queue
 from perception.plate_classifier.core.multitask_detect import letter_box, post_precessing
+from perception.plate_classifier.core.hailo_support import MultiTaskDetectorHailo, ClassificationHailo
 
 class AsyncPlateRecognizer:
     def __init__(self, y5fu_onnx_path, litemodel_onnx_path, num_workers=1):
@@ -44,86 +44,73 @@ class AsyncPlateRecognizer:
 
     @staticmethod
     def _worker_loop(task_queue, result_queue, y5fu_path, lite_path, worker_id):
-        sess_options = ort.SessionOptions()
-        sess_options.intra_op_num_threads = 1
-        sess_options.inter_op_num_threads = 1
+        # 1. 引入 Hailo 虚拟设备管理器
+        from hailo_platform import VDevice, HailoSchedulingAlgorithm
+
+        # 2. 创建允许跨进程共享的参数
+        params = VDevice.create_params()
+        params.group_id = "SHARED" 
+        params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+        params.multi_process_service = True # 启用多进程服务开关
         
-        sess_y5fu = ort.InferenceSession(y5fu_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
-        sess_lite = ort.InferenceSession(lite_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
+        # 3. 在子进程内部接管 NPU 硬件资源
+        with VDevice(params) as target_vdevice:
+            print(f">>> [Worker {worker_id}] 已成功挂载 Hailo VDevice 并开始加载 HEF...")
+            
+            # 4. 实例化你封装好的 NPU 推理引擎
+            detector = MultiTaskDetectorHailo(y5fu_path, target_vdevice)
+            classifier = ClassificationHailo(lite_path, target_vdevice)
 
-        colors = ["blue", "green", "yellow", "white", "black"]
-        dst_pts = np.array([[0, 0], [96, 0], [96, 32], [0, 32]], dtype=np.float32)
+            colors = ["blue", "green", "yellow", "white", "black"]
+            # 车牌标准几何透视点
+            dst_pts = np.array([[0, 0], [96, 0], [96, 32], [0, 32]], dtype=np.float32)
 
-        while True:
-            try:
-                track_id, vehicle_img = task_queue.get()
-            except Exception:
-                continue
-
-            try:
-                # ================= 1. y5fu 定位 =================
-                img, r, left, top = letter_box(vehicle_img, (320, 320))
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                img_chw = np.transpose(img_rgb, (2, 0, 1)) 
-                tensor = np.expand_dims((img_chw / 255.0).astype(np.float32), axis=0)
-
-                in_name = sess_y5fu.get_inputs()[0].name
-                raw_outputs = sess_y5fu.run(None, {in_name: tensor})
-
-                sorted_outputs = sorted(raw_outputs, key=lambda x: x.shape[2], reverse=True)
-                reshaped_outputs = []
-                for out in sorted_outputs:
-                    if len(out.shape) == 4 and out.shape[1] == 15:
-                        out = np.transpose(out, (0, 2, 3, 1))
-                    reshaped_outputs.append(out.reshape(1, -1, 15))
-                
-                merged = np.concatenate(reshaped_outputs, axis=1)
-                p_out = post_precessing(merged, r, left, top)
-
-                if len(p_out) == 0: 
+            while True:
+                try:
+                    track_id, vehicle_img = task_queue.get()
+                except Exception:
                     continue
-                
-                best_plate = p_out[0]
-                landmarks = best_plate[5:13].reshape(4, 2).astype(np.float32)
 
-                # ================= 2. 几何透视变换 =================
-                M = cv2.getPerspectiveTransform(landmarks, dst_pts)
-                warped_plate = cv2.warpPerspective(vehicle_img, M, (96, 32))
-                
-                # ================= 3. litemodel 颜色分类 =================
-                # 动态获取 ONNX 模型期望的输入尺寸
-                lite_shape = sess_lite.get_inputs()[0].shape
-                in_h = lite_shape[2] if isinstance(lite_shape[2], int) else 32
-                in_w = lite_shape[3] if isinstance(lite_shape[3], int) else 96
-                
-                # 保持正确的长宽比进行 Resize
-                plate_resize = cv2.resize(warped_plate, (in_w, in_h))
-                plate_chw = np.transpose(plate_resize, (2, 0, 1))
-                lite_tensor = np.expand_dims((plate_chw / 255.0).astype(np.float32), axis=0)
-                
-                lite_in_name = sess_lite.get_inputs()[0].name
-                lite_out = sess_lite.run(None, {lite_in_name: lite_tensor})
-                
-                logits = lite_out[0][0]
-                
-                # 智能概率转换：完美兼容 Raw Logits 和 Pre-Softmax
-                if np.isclose(np.sum(logits), 1.0) and np.all(logits >= 0):
-                    probs = logits
-                else:
-                    exp_logits = np.exp(logits - np.max(logits))
-                    probs = exp_logits / np.sum(exp_logits)
-                
-                color_idx = np.argmax(probs)
-                conf = float(probs[color_idx])
+                try:
+                    # ================= 1. y5fu 定位 (NPU) =================
+                    # 直接调用实例，底层代码已处理好 Letterbox 缩放和特征图拼接
+                    bboxes, landmarks = detector(vehicle_img)
+                    
+                    if len(bboxes) == 0: 
+                        continue
+                    
+                    # 取置信度最高的第一个车牌关键点
+                    best_landmarks = landmarks[0].astype(np.float32)
 
-                # 计算车牌在车辆截图中的相对比例坐标 (0.0 ~ 1.0)
-                h, w = vehicle_img.shape[:2]
-                rel_landmarks = landmarks / np.array([w, h], dtype=np.float32)
+                    # ================= 2. 几何透视变换 (CPU) =================
+                    # 利用 NPU 给出的坐标，在 CPU 执行几毫秒的轻量级拉直
+                    M = cv2.getPerspectiveTransform(best_landmarks, dst_pts)
+                    warped_plate = cv2.warpPerspective(vehicle_img, M, (96, 32))
+                    
+                    # ================= 3. litemodel 颜色分类 (NPU) =================
+                    # 直接将拉直后的图片扔给分类器
+                    lite_out = classifier(warped_plate)
+                    
+                    # 剥离输出的 Batch 维度 (例如从 (1, 5) 变为 (5,))
+                    logits = np.squeeze(lite_out)
+                    
+                    # 智能概率转换：兼容 Raw Logits 和 Pre-Softmax
+                    if np.isclose(np.sum(logits), 1.0) and np.all(logits >= 0):
+                        probs = logits
+                    else:
+                        exp_logits = np.exp(logits - np.max(logits))
+                        probs = exp_logits / np.sum(exp_logits)
+                    
+                    color_idx = np.argmax(probs)
+                    conf = float(probs[color_idx])
 
-                # 🚨 降低子进程的拦截阈值，只要有一点倾向性就发回给主进程处理
-                if conf > 0.3:
-                    result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
+                    # ================= 4. 坐标归一化与投递 =================
+                    h, w = vehicle_img.shape[:2]
+                    rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
 
-            except Exception as e:
-                # 静默捕获避免刷屏
-                pass
+                    if conf > 0.3:
+                        result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
+
+                except Exception as e:
+                    # 静默捕获，防止单帧错误导致进程崩溃
+                    pass

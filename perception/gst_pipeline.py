@@ -92,7 +92,7 @@ class GstPipelineManager:
             f"t. ! queue max-size-buffers=2 {queue_prop} ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
-            f"hailonet hef-path={self.hef_path} ! "
+            f"hailonet hef-path={self.hef_path} multi-process-service=true vdevice-group-id=SHARED ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
             f"appsink name=sink_meta emit-signals=false max-buffers=1 {sink_prop} "
 

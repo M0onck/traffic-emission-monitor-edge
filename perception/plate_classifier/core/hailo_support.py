@@ -52,7 +52,7 @@ class MultiTaskDetectorHailo(HamburgerABC):
     """
     def __init__(self, hef_path, target_vdevice, box_threshold=0.5, nms_threshold=0.6, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from hailo_platform import HEF, InferVStream
+        from hailo_platform import HEF, InferVStreams
         
         self.box_threshold = box_threshold
         self.nms_threshold = nms_threshold
@@ -62,7 +62,7 @@ class MultiTaskDetectorHailo(HamburgerABC):
         
         # 配置到 NPU
         self.network_group = target_vdevice.configure(self.hef)[0]
-        self.infer_pipeline = InferVStream(self.network_group, self.hef.get_input_vstream_infos(), self.hef.get_output_vstream_infos())
+        self.infer_pipeline = InferVStreams(self.network_group, self.hef.get_input_vstream_infos(), self.hef.get_output_vstream_infos())
         self.infer_pipeline.activate()
 
     def _preprocess(self, image):
