@@ -23,10 +23,6 @@ class ClassificationHailo(HamburgerABC):
         # 显式创建输入和输出虚拟流参数
         self.input_vstreams_params = InputVStreamParams.make(self.network_group)
         self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
-
-        # 激活硬件通道
-        self.activated_network = self.network_group.activate(self.network_group.create_params())
-        self.activated_network.__enter__()
         
         # 实例化 InferVStreams，并手动开启上下文
         self.infer_pipeline = InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params)
@@ -36,11 +32,11 @@ class ClassificationHailo(HamburgerABC):
         # 1. 强行拉伸到 96x96 (保持 BGR 色彩空间)
         image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[0]))
         
-        # 2. 增加 Batch 维度，保留原生的 HWC 排列
+        # 2. 增加 Batch 维度 (变成 1, 96, 96, 3)
         input_tensor = np.expand_dims(image_resize, axis=0)
         
-        # 3. 强制转换为底层 C++ 友好的连续内存 uint8 数组
-        input_tensor = np.ascontiguousarray(input_tensor, dtype=np.uint8)
+        # 3. 使用 np.array(copy=True) 深拷贝，防止传递空内存
+        input_tensor = np.array(input_tensor, copy=True, dtype=np.uint8)
         
         return {self.input_vstream_info.name: input_tensor}
 
@@ -72,10 +68,6 @@ class MultiTaskDetectorHailo(HamburgerABC):
         self.input_vstreams_params = InputVStreamParams.make(self.network_group)
         self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
 
-        # 激活硬件通道
-        self.activated_network = self.network_group.activate(self.network_group.create_params())
-        self.activated_network.__enter__()
-
         self.infer_pipeline = InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params)
         self.infer_pipeline.__enter__()
 
@@ -83,14 +75,14 @@ class MultiTaskDetectorHailo(HamburgerABC):
         # 1. Letterbox 缩放
         img, r, left, top = letter_box(image, self.input_size)
         
-        # 2. 转为 RGB (保留 HWC 排列)
+        # 2. 转为 RGB 格式 (保留 HWC)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # 3. 增加 Batch 维度
-        img = np.expand_dims(img, axis=0) # 变成 (1, 320, 320, 3)
+        # 3. 增加 Batch 维度 (变成 1, 320, 320, 3)
+        img = np.expand_dims(img, axis=0) 
         
-        # 4. 强制转换为底层 C++ 友好的连续内存 uint8 数组
-        img = np.ascontiguousarray(img, dtype=np.uint8)
+        # 4. 使用 np.array(copy=True) 深拷贝，防止传递空内存
+        img = np.array(img, copy=True, dtype=np.uint8)
         
         self.tmp_pack = r, left, top
         return {self.input_vstream_info.name: img}
