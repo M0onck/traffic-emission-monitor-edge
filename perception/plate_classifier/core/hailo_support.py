@@ -23,18 +23,25 @@ class ClassificationHailo(HamburgerABC):
         # 显式创建输入和输出虚拟流参数
         self.input_vstreams_params = InputVStreamParams.make(self.network_group)
         self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
+
+        # 激活硬件通道
+        self.activated_network = self.network_group.activate(self.network_group.create_params())
+        self.activated_network.__enter__()
         
-        # 实例化 InferVStreams，并手动开启上下文 (替代 with 语法)
-        self.vstreams = InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params)
-        self.vstreams.__enter__()
+        # 实例化 InferVStreams，并手动开启上下文
+        self.infer_pipeline = InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params)
+        self.infer_pipeline.__enter__()
 
     def _preprocess(self, image) -> dict:
         # 1. 强行拉伸到 96x96 (保持 BGR 色彩空间)
-        image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[2]))
-        # 2. 归一化到 0-1
-        encode = (image_resize / 255.0).astype(np.float32)
-        # 3. 增加 Batch 维度，保留原生的 HWC 排列
-        input_tensor = np.expand_dims(encode, 0)
+        image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[0]))
+        
+        # 2. 增加 Batch 维度，保留原生的 HWC 排列
+        input_tensor = np.expand_dims(image_resize, axis=0)
+        
+        # 3. 强制转换为底层 C++ 友好的连续内存 uint8 数组
+        input_tensor = np.ascontiguousarray(input_tensor, dtype=np.uint8)
+        
         return {self.input_vstream_info.name: input_tensor}
 
     def _run_session(self, data: dict) -> np.ndarray:
@@ -52,27 +59,38 @@ class MultiTaskDetectorHailo(HamburgerABC):
     """
     def __init__(self, hef_path, target_vdevice, box_threshold=0.5, nms_threshold=0.6, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from hailo_platform import HEF, InferVStreams
+        from hailo_platform import HEF, InferVStreams, InputVStreamParams, OutputVStreamParams
         
         self.box_threshold = box_threshold
         self.nms_threshold = nms_threshold
         self.hef = HEF(hef_path)
         self.input_vstream_info = self.hef.get_input_vstream_infos()[0]
-        self.input_size = (self.input_vstream_info.shape[1], self.input_vstream_info.shape[2]) # 期望 (320, 320)
+        self.input_size = (self.input_vstream_info.shape[0], self.input_vstream_info.shape[1])
         
         # 配置到 NPU
         self.network_group = target_vdevice.configure(self.hef)[0]
-        self.infer_pipeline = InferVStreams(self.network_group, self.hef.get_input_vstream_infos(), self.hef.get_output_vstream_infos())
-        self.infer_pipeline.activate()
+        self.input_vstreams_params = InputVStreamParams.make(self.network_group)
+        self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
+
+        # 激活硬件通道
+        self.activated_network = self.network_group.activate(self.network_group.create_params())
+        self.activated_network.__enter__()
+
+        self.infer_pipeline = InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params)
+        self.infer_pipeline.__enter__()
 
     def _preprocess(self, image):
         # 1. Letterbox 缩放
         img, r, left, top = letter_box(image, self.input_size)
         
-        # 2. 转为 RGB 并归一化 (保留 HWC 排列)
+        # 2. 转为 RGB (保留 HWC 排列)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = (img / 255.0).astype(np.float32)
+        
+        # 3. 增加 Batch 维度
         img = np.expand_dims(img, axis=0) # 变成 (1, 320, 320, 3)
+        
+        # 4. 强制转换为底层 C++ 友好的连续内存 uint8 数组
+        img = np.ascontiguousarray(img, dtype=np.uint8)
         
         self.tmp_pack = r, left, top
         return {self.input_vstream_info.name: img}
