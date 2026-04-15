@@ -15,6 +15,6 @@ class SystemOptimizer:
                 os.nice(5)
             except PermissionError:
                 pass
-            print(f">>> [System] 🚜 车牌分类工作进程 (PID: {p.pid}) 已隔离至 CPU Core 3")
+            print(f">>> [System] 车牌分类工作进程 (PID: {p.pid}) 已隔离至 CPU Core 3")
         except Exception as e:
             pass

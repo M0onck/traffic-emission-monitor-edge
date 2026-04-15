@@ -29,8 +29,8 @@ class GstPipelineManager:
         self.hef_path = config.get("hef_path", "resources/yolov8s.hef")
         self.post_so_path = config.get("post_so_path", "/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_hailortpp_post.so")
 
-        self.out_w = config.get("FRAME_WIDTH", 1280) 
-        self.out_h = config.get("FRAME_HEIGHT", 720)
+        self.out_w = config.get("frame_width", 1280) 
+        self.out_h = config.get("frame_height", 720)
         
         self.use_camera = cfg.USE_CAMERA
         self.pipeline_string = self._build_pipeline()

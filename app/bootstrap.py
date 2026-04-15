@@ -45,7 +45,9 @@ class AppBootstrap:
         camera_cfg = {
             "video_path": config.VIDEO_PATH,
             "hef_path": config.HEF_PATH,
-            "post_so_path": config.POST_SO_PATH
+            "post_so_path": config.POST_SO_PATH,
+            "frame_width": config.FRAME_WIDTH,
+            "frame_height": config.FRAME_HEIGHT
         }
         camera = GstPipelineManager(camera_cfg)
 
