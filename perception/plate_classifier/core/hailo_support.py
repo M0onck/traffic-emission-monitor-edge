@@ -21,24 +21,25 @@ class ClassificationHailo(HamburgerABC):
         self.network_group = target_vdevice.configure(self.hef)[0]
         
         # 显式创建输入和输出虚拟流参数
-        self.input_vstreams_params = InputVStreamParams.make(self.network_group)
-        self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
+        self.in_params = InputVStreamParams.make(self.network_group)
+        self.out_params = OutputVStreamParams.make(self.network_group)
         
-        # 实例化 InferVStreams，并手动开启上下文
-        self.infer_pipeline = InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params)
-        self.infer_pipeline.__enter__()
+    def get_pipeline_args(self):
+        return (self.network_group, self.in_params, self.out_params)
+
+    def __call__(self, image, active_pipeline):
+        data = self._preprocess(image)
+        raw_outputs = active_pipeline.infer(data) # 使用外部传入的安全管道
+        return self._postprocess(raw_outputs)
 
     def _preprocess(self, image) -> dict:
         # 1. 强行拉伸到 96x96 (保持 BGR 色彩空间)
         image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[0]))
         
-        # 2. 增加 Batch 维度 (变成 1, 96, 96, 3)
-        input_tensor = np.expand_dims(image_resize, axis=0)
+        tensor = np.zeros((1, self.input_shape[0], self.input_shape[1], 3), dtype=np.uint8)
+        tensor[0] = image_resize
         
-        # 3. 使用 np.array(copy=True) 深拷贝，防止传递空内存
-        input_tensor = np.array(input_tensor, copy=True, dtype=np.uint8)
-        
-        return {self.input_vstream_info.name: input_tensor}
+        return {self.input_vstream_info.name: tensor}
 
     def _run_session(self, data: dict) -> np.ndarray:
         # NPU 硬件推理
@@ -65,11 +66,16 @@ class MultiTaskDetectorHailo(HamburgerABC):
         
         # 配置到 NPU
         self.network_group = target_vdevice.configure(self.hef)[0]
-        self.input_vstreams_params = InputVStreamParams.make(self.network_group)
-        self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
+        self.in_params = InputVStreamParams.make(self.network_group)
+        self.out_params = OutputVStreamParams.make(self.network_group)
 
-        self.infer_pipeline = InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params)
-        self.infer_pipeline.__enter__()
+    def get_pipeline_args(self):
+        return (self.network_group, self.in_params, self.out_params)
+
+    def __call__(self, image, active_pipeline):
+        data = self._preprocess(image)
+        raw_outputs = active_pipeline.infer(data) # 使用外部传入的安全管道
+        return self._postprocess(raw_outputs)
 
     def _preprocess(self, image):
         # 1. Letterbox 缩放
@@ -78,14 +84,11 @@ class MultiTaskDetectorHailo(HamburgerABC):
         # 2. 转为 RGB 格式 (保留 HWC)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # 3. 增加 Batch 维度 (变成 1, 320, 320, 3)
-        img = np.expand_dims(img, axis=0) 
-        
-        # 4. 使用 np.array(copy=True) 深拷贝，防止传递空内存
-        img = np.array(img, copy=True, dtype=np.uint8)
+        tensor = np.zeros((1, self.input_size[1], self.input_size[0], 3), dtype=np.uint8)
+        tensor[0] = img # 将图像数据安全拷贝进这个容器
         
         self.tmp_pack = r, left, top
-        return {self.input_vstream_info.name: img}
+        return {self.input_vstream_info.name: tensor}
 
     def _run_session(self, data):
         # NPU 硬件推理，返回的是 3 个被切断的特征图

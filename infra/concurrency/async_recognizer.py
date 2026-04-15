@@ -45,7 +45,7 @@ class AsyncPlateRecognizer:
     @staticmethod
     def _worker_loop(task_queue, result_queue, y5fu_path, lite_path, worker_id):
         # 1. 引入 Hailo 虚拟设备管理器
-        from hailo_platform import VDevice, HailoSchedulingAlgorithm
+        from hailo_platform import VDevice, InferVStreams, HailoSchedulingAlgorithm
 
         # 2. 创建允许跨进程共享的参数
         params = VDevice.create_params()
@@ -61,56 +61,62 @@ class AsyncPlateRecognizer:
             detector = MultiTaskDetectorHailo(y5fu_path, target_vdevice)
             classifier = ClassificationHailo(lite_path, target_vdevice)
 
+            det_args = detector.get_pipeline_args()
+            cls_args = classifier.get_pipeline_args()
+
             colors = ["blue", "green", "yellow", "white", "black"]
             # 车牌标准几何透视点
             dst_pts = np.array([[0, 0], [96, 0], [96, 32], [0, 32]], dtype=np.float32)
 
-            while True:
-                try:
-                    track_id, vehicle_img = task_queue.get()
-                except Exception:
-                    continue
+            with InferVStreams(*det_args) as det_pipe, InferVStreams(*cls_args) as cls_pipe:
+                print(f">>> [Worker {worker_id}] 所有的 NPU 推理通道已成功安全建立！")
 
-                try:
-                    # ================= 1. y5fu 定位 (NPU) =================
-                    # 直接调用实例，底层代码已处理好 Letterbox 缩放和特征图拼接
-                    bboxes, landmarks = detector(vehicle_img)
-                    
-                    if len(bboxes) == 0: 
+                while True:
+                    try:
+                        track_id, vehicle_img = task_queue.get()
+                    except Exception:
                         continue
-                    
-                    # 取置信度最高的第一个车牌关键点
-                    best_landmarks = landmarks[0].astype(np.float32)
 
-                    # ================= 2. 几何透视变换 (CPU) =================
-                    # 利用 NPU 给出的坐标，在 CPU 执行几毫秒的轻量级拉直
-                    M = cv2.getPerspectiveTransform(best_landmarks, dst_pts)
-                    warped_plate = cv2.warpPerspective(vehicle_img, M, (96, 32))
-                    
-                    # ================= 3. litemodel 颜色分类 (NPU) =================
-                    # 直接将拉直后的图片扔给分类器
-                    lite_out = classifier(warped_plate)
-                    
-                    # 剥离输出的 Batch 维度 (例如从 (1, 5) 变为 (5,))
-                    logits = np.squeeze(lite_out)
-                    
-                    # 智能概率转换：兼容 Raw Logits 和 Pre-Softmax
-                    if np.isclose(np.sum(logits), 1.0) and np.all(logits >= 0):
-                        probs = logits
-                    else:
-                        exp_logits = np.exp(logits - np.max(logits))
-                        probs = exp_logits / np.sum(exp_logits)
-                    
-                    color_idx = np.argmax(probs)
-                    conf = float(probs[color_idx])
+                    try:
+                        # ================= 1. y5fu 定位 (NPU) =================
+                        # 直接调用实例，底层代码已处理好 Letterbox 缩放和特征图拼接
+                        bboxes, landmarks = detector(vehicle_img, det_pipe)
+                        
+                        if len(bboxes) == 0: 
+                            continue
+                        
+                        # 取置信度最高的第一个车牌关键点
+                        best_landmarks = landmarks[0].astype(np.float32)
 
-                    # ================= 4. 坐标归一化与投递 =================
-                    h, w = vehicle_img.shape[:2]
-                    rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
+                        # ================= 2. 几何透视变换 (CPU) =================
+                        # 利用 NPU 给出的坐标，在 CPU 执行几毫秒的轻量级拉直
+                        M = cv2.getPerspectiveTransform(best_landmarks, dst_pts)
+                        warped_plate = cv2.warpPerspective(vehicle_img, M, (96, 32))
+                        
+                        # ================= 3. litemodel 颜色分类 (NPU) =================
+                        # 直接将拉直后的图片扔给分类器
+                        lite_out = classifier(warped_plate, cls_pipe)
+                        
+                        # 剥离输出的 Batch 维度 (例如从 (1, 5) 变为 (5,))
+                        logits = np.squeeze(lite_out)
+                        
+                        # 智能概率转换：兼容 Raw Logits 和 Pre-Softmax
+                        if np.isclose(np.sum(logits), 1.0) and np.all(logits >= 0):
+                            probs = logits
+                        else:
+                            exp_logits = np.exp(logits - np.max(logits))
+                            probs = exp_logits / np.sum(exp_logits)
+                        
+                        color_idx = np.argmax(probs)
+                        conf = float(probs[color_idx])
 
-                    if conf > 0.3:
-                        result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
+                        # ================= 4. 坐标归一化与投递 =================
+                        h, w = vehicle_img.shape[:2]
+                        rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
 
-                except Exception as e:
-                    # 静默捕获，防止单帧错误导致进程崩溃
-                    pass
+                        if conf > 0.3:
+                            result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
+
+                    except Exception as e:
+                        # 静默捕获，防止单帧错误导致进程崩溃
+                        pass
