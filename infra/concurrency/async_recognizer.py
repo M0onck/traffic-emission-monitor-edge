@@ -42,6 +42,14 @@ class AsyncPlateRecognizer:
                 break
         return results
 
+    def stop(self):
+        """强制终止所有的 OCR 工作进程"""
+        for worker in self.workers:
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=1.0)
+        print("[AsyncRecognizer] 所有 Hailo OCR 子进程已安全销毁。")
+
     @staticmethod
     def _worker_loop(task_queue, result_queue, y5fu_path, lite_path, worker_id):
         # 1. 引入 Hailo 虚拟设备管理器

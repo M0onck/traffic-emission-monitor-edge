@@ -682,6 +682,10 @@ class TrafficMonitorEngine:
         force_exit_timestamp = time.time() + 1000.0
         self._handle_exits(final_frame_id + 1000, force_exit_timestamp)
 
+        if getattr(self, 'plate_worker', None):
+            print("[Engine] 正在强制回收 OCR 子进程...")
+            self.plate_worker.stop()
+
         # 宣告采集任务结束
         if getattr(self, 'current_session_id', None):
             self.db.complete_session(self.current_session_id, time.time())
