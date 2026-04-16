@@ -425,8 +425,11 @@ class TrafficMonitorEngine:
             if tid not in self.plate_cache:
                 self.plate_cache[tid] = {'color': color_type, 'rel_landmarks': rel_landmarks}
             else:
-                # 仅更新坐标防抖，颜色暂不轻易覆盖
-                self.plate_cache[tid]['rel_landmarks'] = rel_landmarks
+                # 对相对坐标(0~1)进行 EMA 平滑
+                # 这能在消除模型检测框抖动的同时，解决拖尾
+                alpha = 0.6 
+                old_rel = self.plate_cache[tid]['rel_landmarks']
+                self.plate_cache[tid]['rel_landmarks'] = alpha * rel_landmarks + (1.0 - alpha) * old_rel
 
             target_threshold = color_thresholds.get(color_type, self.cfg.OCR_CONF_THRESHOLD)
             
