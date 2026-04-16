@@ -119,7 +119,7 @@ class GstPipelineManager:
             is_recording = is_camera and cfg.ENABLE_RECORD
 
             if is_recording:
-                print(">>> [GStreamer] 正在发送 EOS 信号以安全封装视频切片...")
+                logger.info("正在发送 EOS 信号以安全封装视频切片...")
                 # 1. 发送 EOS 事件，通知 muxer 插件写入文件尾
                 self.pipeline.send_event(Gst.Event.new_eos())
                 
@@ -130,12 +130,12 @@ class GstPipelineManager:
                     Gst.MessageType.EOS | Gst.MessageType.ERROR
                 )
             else:
-                print(">>> [GStreamer] 正在关闭推理管道...")
+                logger.info("正在关闭推理管道...")
             
             # 3. 彻底关闭管道
             self.pipeline.set_state(Gst.State.NULL)
             self.is_running = False
-            print(">>> [GStreamer] 管道已安全关闭。")
+            logger.info("GStreamer 管道已安全关闭。")
 
     def read(self):
         if not self.is_running: return None, None

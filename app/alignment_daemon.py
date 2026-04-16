@@ -1,8 +1,11 @@
 # 文件路径：app/alignment_daemon.py
 import time
+import logging
 from domain.physics.alignment_engine import DelayedAlignmentEngine
 from infra.store.sqlite_manager import DatabaseManager
 import infra.config.loader as cfg
+
+logger = logging.getLogger(__name__)
 
 class AlignmentDaemon:
     """
@@ -15,7 +18,7 @@ class AlignmentDaemon:
         self.is_running = True
 
     def run(self):
-        print(">>> [Daemon] 延迟对齐后台进程已启动，开始监听数据库...")
+        logger.info("延迟对齐后台进程已启动，开始监听数据库...")
         db = DatabaseManager(self.config.DB_PATH)
         
         while self.is_running:
@@ -40,13 +43,14 @@ class AlignmentDaemon:
                     self.engine.align_step(session_id, latest_timestamp)
                 
             except Exception as e:
-                print(f"[Daemon Error] 后台对齐异常: {e}")
+                # 可打印完整 Traceback，捕获如 SQLite 锁死等严重错误
+                logger.exception("后台对齐调度发生严重异常.")
             
             # 基础轮询休眠，防止死循环打满 CPU
             time.sleep(1.0)
             
         db.close()
-        print(">>> [Daemon] 延迟对齐后台进程已安全退出。")
+        logger.info("延迟对齐后台进程已安全退出.")
 
     def stop(self):
         self.is_running = False

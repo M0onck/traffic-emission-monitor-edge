@@ -3,8 +3,11 @@ import json
 import math
 import sqlite3
 import numpy as np
+import logging
 from infra.store.sqlite_manager import DatabaseManager
 import infra.config.loader as cfg
+
+logger = logging.getLogger(__name__)
 
 class DelayedAlignmentEngine:
     """
@@ -161,6 +164,13 @@ class DelayedAlignmentEngine:
             # =======================================================
             # 4. 落盘持久化
             # =======================================================
+            # 在落盘前注入一条详细的 DEBUG 日志，展示对齐断面的核心特征
+            logger.debug(
+                f"[延迟对齐] T={t_align:.1f} | Flux={delta_c_flux:.2f}, "
+                f"E_trf={e_traffic:.2E}, D_trans={d_trans:.1f}m, "
+                f"W_crs={w_cross:.2f}, dT_v={delta_tv:.2f}"
+            )
+
             db.insert_aligned_dataset(
                 session_id=session_id,
                 aligned_timestamp=t_align,
@@ -174,6 +184,7 @@ class DelayedAlignmentEngine:
             )
 
         except Exception as e:
-            print(f"[AlignmentEngine Error] 对齐过程发生异常: {e}")
+            # 捕获如除以零、JSON 解析失败、DB 锁定等报错
+            logger.exception("特征计算或落盘过程中发生异常")
         finally:
             db.close()
