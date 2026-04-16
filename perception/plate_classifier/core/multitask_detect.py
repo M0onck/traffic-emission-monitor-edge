@@ -61,7 +61,7 @@ def post_precessing(dets, r, left, top, conf_thresh=0.25, iou_thresh=0.5):
     boxes = xywh2xyxy(box)
     score = np.max(dets[:, 13:15], axis=-1, keepdims=True)
     index = np.argmax(dets[:, 13:15], axis=-1).reshape(-1, 1)
-    output = np.concatenate((boxes, score, dets[:, 5:13], index), axis=1)
+    output = np.concatenate((boxes, score, dets[:, 5:13], index.astype(np.float32)), axis=1)
     reserve_ = nms(output, iou_thresh)
     output = output[reserve_]
     output = restore_box(output, r, left, top)

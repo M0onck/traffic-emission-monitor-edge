@@ -23,12 +23,12 @@ class EdgePlateClassifierPipeline:
         # 取置信度最高的车牌框
         best_idx = np.argmax(bboxes[:, 4])
         plate_box = bboxes[best_idx]
-        plate_points = landmarks[best_idx]
+        plate_points = landmarks[best_idx].astype(np.float32)
         
         # 2. 透视变换抠图
-        pad_image = get_rotate_crop_image(vehicle_crop, plate_points)
+        pad_image = get_rotate_crop_image(vehicle_crop, plate_points.copy())
         
-        # 3. 车牌分类 (ONNX推断)
+        # 3. 车牌分类
         cls_result = self.classifier(pad_image)
         plate_type = UNKNOWN
         
