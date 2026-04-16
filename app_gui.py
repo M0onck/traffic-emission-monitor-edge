@@ -1,4 +1,5 @@
 import sys
+import logging
 from PyQt5.QtWidgets import QApplication
 from multiprocessing import Process
 import infra.config.loader as cfg
@@ -6,6 +7,20 @@ import infra.config.loader as cfg
 from ui.views.main_window import MainWindow
 from ui.controllers.main_controller import MainController
 from app.alignment_daemon import AlignmentDaemon
+
+# 配置全局日志基础设置
+logging.basicConfig(
+    level=logging.INFO,  # 默认级别设为 INFO，这样 DEBUG 级别的信息默认不会打印
+    format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout) # 输出到控制台
+        # 如果需要输出到文件，可以加上：logging.FileHandler("edge_monitor.log")
+    ]
+)
+
+# 车牌识别链路调试日志
+# logging.getLogger("app.monitor_engine").setLevel(logging.DEBUG)
 
 def start_daemon():
     """启动独立进程运行 Daemon"""

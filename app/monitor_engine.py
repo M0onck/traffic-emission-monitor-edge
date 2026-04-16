@@ -4,6 +4,7 @@ import numpy as np
 import supervision as sv
 import time
 import traceback
+import logging
 from collections import defaultdict
 from ui.renderer import resize_with_pad, LabelData
 from infra.time.ntp_sync import TimeSynchronizer
@@ -13,6 +14,8 @@ from domain.vehicle.physical_filter import PhysicalVehicleFilter
 from domain.physics.vsp_calculator import VSPCalculator
 from domain.physics.opmode_mapper import OpModeMapper
 from perception.vision_pipeline import VisionPipeline
+
+logger = logging.getLogger(__name__)
 
 class TrafficMonitorEngine:
     """
@@ -400,16 +403,14 @@ class TrafficMonitorEngine:
             if self.plate_worker.push_task(tid, enhanced_crop):
                 self.plate_retry[tid] = frame_id
 
-                # ====== 调试打印 ======
-                print(f"[DEBUG 1 投递] 成功向子进程投递 TID={tid} 的车牌识别任务 (方差: {blur_score:.1f})")
+                logger.debug(f"[DEBUG] 成功向子进程投递 TID={tid} 的车牌识别任务 (拉普拉斯方差: {blur_score:.1f})")
 
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
 
-        # ====== 调试打印 ======
         if len(results) > 0:
-            print(f"[DEBUG 3 接收] 主进程从队列收到了 {len(results)} 条车牌结果!")
+            logger.debug(f"[DEBUG] 主进程从队列收到了 {len(results)} 条车牌结果")
         
         color_thresholds = {
             'green': 0.60,  
@@ -653,7 +654,7 @@ class TrafficMonitorEngine:
                 data.plate_points = abs_lms
 
                 # ====== 调试打印 ======
-                print(f"[DEBUG 4 渲染准备] 成功生成 TID={tid} 的 UI 车牌框坐标!")
+                logger.debug(f"[DEBUG] 成功生成 TID={tid} 的 UI 车牌框坐标")
             else:
                 # 即使没找到车牌，也要用分类器的基础兜底逻辑解析车型 (例如 "LDV")
                 _, final_type = self.classifier.resolve_type(voted_class_id, plate_color_override=None)

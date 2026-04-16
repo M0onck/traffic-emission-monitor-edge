@@ -2,8 +2,11 @@ import cv2
 import numpy as np
 import multiprocessing as mp
 import queue
+import logging
 from perception.plate_classifier.core.multitask_detect import letter_box, post_precessing
 from perception.plate_classifier.core.hailo_support import MultiTaskDetectorHailo, ClassificationHailo
+
+logger = logging.getLogger(__name__)
 
 class AsyncPlateRecognizer:
     def __init__(self, y5fu_onnx_path, litemodel_onnx_path, num_workers=1):
@@ -52,6 +55,15 @@ class AsyncPlateRecognizer:
 
     @staticmethod
     def _worker_loop(task_queue, result_queue, y5fu_path, lite_path, worker_id):
+        # 为 Spawn 的子进程配置基础日志格式
+        import sys
+        logging.basicConfig(
+            level=logging.DEBUG, # 子进程可以默认开启 DEBUG
+            format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            handlers=[logging.StreamHandler(sys.stdout)]
+        )
+
         # 1. 引入 Hailo 虚拟设备管理器
         from hailo_platform import VDevice, InferVStreams, HailoSchedulingAlgorithm
 
@@ -123,10 +135,10 @@ class AsyncPlateRecognizer:
                         # 归一化操作，生成 0.0 ~ 1.0 之间的相对坐标
                         rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
                         if conf > 0.3:
-                            print(f"[DEBUG 2 子进程] NPU 识别出车牌! TID={track_id}, 颜色={colors[color_idx]}, 置信度={conf:.2f}")
+                            logger.debug(f"[DEBUG] NPU 识别出车牌 TID={track_id}, 颜色={colors[color_idx]}, 置信度={conf:.2f}")
                             result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
                         else:
-                            print(f"[DEBUG 2 子进程] 识别失败 TID={track_id}, 置信度过低 ({conf:.2f} < 0.3)")
+                            logger.debug(f"[DEBUG] 识别失败 TID={track_id}, 置信度过低 ({conf:.2f} < 0.3)")
 
                     except Exception as e:
-                        print(f"[ERROR 子进程异常] TID={track_id} 推理崩溃: {e}")
+                        logger.error(f"[ERROR] 子进程异常 TID={track_id} 推理崩溃: {e}")
