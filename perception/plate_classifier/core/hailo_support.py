@@ -33,8 +33,8 @@ class ClassificationHailo(HamburgerABC):
         # 直接传字典
         raw_outputs = active_pipeline.infer(frame_dict)
         
-        # 提取结果
-        array_out = raw_outputs[self.output_vstream_info.name]
+        # 提取结果并转换为float32
+        array_out = raw_outputs[self.output_vstream_info.name].astype(np.float32)
         
         return self._postprocess(array_out)
 
@@ -80,20 +80,29 @@ class MultiTaskDetectorHailo(HamburgerABC):
 
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
+        
+        # 1. 执行 NPU 硬件推理，成功拿到结果字典
         raw_outputs = active_pipeline.infer(frame_dict)
         
-        target_suffixes = ['Concat_617', 'Concat_521', 'Concat_713']
+        # 2. 按物理特征图的面积大小拼接
+        arrays = list(raw_outputs.values())
         reshaped_outs = []
         
-        for suffix in target_suffixes:
-            matching_key = next((k for k in raw_outputs.keys() if suffix in k), None)
-            if matching_key is None:
-                raise KeyError(f"NPU 输出中找不到预期的特征图: {suffix}")
-                
-            flat_tensor = raw_outputs[matching_key].reshape(1, -1, 15) 
-            reshaped_outs.append(flat_tensor)
+        for arr in arrays:
+            # 不管 NPU 返回的是 (40, 40, 15) 还是 (1, 40, 40, 15)
+            # 统一拉平为 (N, 15) 的二维矩阵
+            flat_arr = arr.reshape(-1, 15) 
+            reshaped_outs.append(flat_arr)
+            
+        # 按特征点数量降序排列 (即 1600 -> 400 -> 100)
+        # 这对应了目标检测模型 Stride 8 -> 16 -> 32 的标准拼接顺序
+        reshaped_outs.sort(key=lambda x: x.shape[0], reverse=True)
         
-        merged_output = np.concatenate(reshaped_outs, axis=1)
+        # 把排好序的矩阵装回 Batch=1 的三维容器 (1, N, 15)
+        reshaped_outs = [arr.reshape(1, -1, 15) for arr in reshaped_outs]
+        
+        # 无缝拼接，送入后处理，并转换为float32
+        merged_output = np.concatenate(reshaped_outs, axis=1).astype(np.float32)
         return self._postprocess(merged_output)
 
     def _preprocess(self, image):
