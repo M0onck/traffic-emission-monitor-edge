@@ -112,8 +112,8 @@ class AsyncPlateRecognizer:
 
                         # ================= 4. 坐标归一化与投递 =================
                         h, w = vehicle_img.shape[:2]
+                        # 归一化操作，生成 0.0 ~ 1.0 之间的相对坐标
                         rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
-
                         if conf > 0.3:
                             print(f"[DEBUG 2 子进程] NPU 识别出车牌! TID={track_id}, 颜色={colors[color_idx]}, 置信度={conf:.2f}")
                             result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))

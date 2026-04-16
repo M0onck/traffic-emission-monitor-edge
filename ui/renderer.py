@@ -102,11 +102,18 @@ class Visualizer:
                             p_color = v
                             break
 
-                # 复制一份点位数据，避免污染原始数据
-                absolute_points = data.plate_points.copy()
+                # 复制点位数据并转为浮点数，方便进行矩阵计算
+                absolute_points = data.plate_points.copy().astype(np.float32)
                 
-                # 再进行类型转换并重塑维度给 OpenCV 绘制
-                pts = absolute_points.astype(np.int32).reshape((-1, 1, 2))
+                # 计算 4 个点的几何中心 (cx, cy)
+                center = np.mean(absolute_points, axis=0)
+                
+                # 以中心点为基准，向外辐射放大 2 倍 (这个系数可根据视觉效果微调)
+                scale_factor = 2
+                expanded_points = center + (absolute_points - center) * scale_factor
+                
+                # 转换回整型，重塑维度给 OpenCV 绘制
+                pts = expanded_points.astype(np.int32).reshape((-1, 1, 2))
                 cv2.polylines(scene, [pts], isClosed=True, color=p_color, thickness=2)
 
         # 4. 在画面左上角绘制 FPS
