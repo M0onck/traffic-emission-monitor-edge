@@ -28,15 +28,23 @@ class ClassificationHailo(HamburgerABC):
         return (self.network_group, self.in_params, self.out_params)
 
     def __call__(self, image, active_pipeline):
-        data = self._preprocess(image)
-        raw_outputs = active_pipeline.infer(data) # 使用外部传入的安全管道
-        return self._postprocess(raw_outputs)
+        frame_dict = self._preprocess(image)
+        
+        # 用 List 包裹字典，触发安全传递路径
+        raw_outputs_list = active_pipeline.infer([frame_dict])
+        
+        frame_output = raw_outputs_list[0] if isinstance(raw_outputs_list, list) else raw_outputs_list
+        
+        # 提取结果，这一步必须有，因为后处理期待的是纯 numpy 数组，不是字典
+        array_out = frame_output[self.output_vstream_info.name]
+        
+        return self._postprocess(array_out)
 
     def _preprocess(self, image) -> dict:
-        # 1. 强行拉伸到 96x96 (保持 BGR 色彩空间)
+        # 拉伸到 96x96 (保持 BGR 色彩空间)
         image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[0]))
         
-        tensor = np.zeros((1, self.input_shape[0], self.input_shape[1], 3), dtype=np.uint8)
+        tensor = np.zeros((self.input_shape[0], self.input_shape[1], 3), dtype=np.uint8)
         tensor[0] = image_resize
         
         return {self.input_vstream_info.name: tensor}
@@ -73,22 +81,49 @@ class MultiTaskDetectorHailo(HamburgerABC):
         return (self.network_group, self.in_params, self.out_params)
 
     def __call__(self, image, active_pipeline):
-        data = self._preprocess(image)
-        raw_outputs = active_pipeline.infer(data) # 使用外部传入的安全管道
-        return self._postprocess(raw_outputs)
+        frame_dict = self._preprocess(image)
+        
+        # ==========================================================
+        # 2. 【核心破局点】：用 List 包裹字典！
+        # 传入 [ {key: 3D_tensor} ]，明确告诉 C++ 这是 Batch=1 的一帧任务
+        # 这能完美避开多进程下直接传 dict 导致的 got 0 内存指针丢失 BUG
+        # ==========================================================
+        raw_outputs_list = active_pipeline.infer([frame_dict]) 
+        
+        # 取出单帧结果字典
+        frame_output = raw_outputs_list[0] if isinstance(raw_outputs_list, list) else raw_outputs_list
+        
+        # --- 拯救回来的 CPU 智能缝合逻辑 ---
+        target_suffixes = ['Concat_617', 'Concat_521', 'Concat_713']
+        reshaped_outs = []
+        
+        for suffix in target_suffixes:
+            matching_key = next((k for k in frame_output.keys() if suffix in k), None)
+            if matching_key is None:
+                raise KeyError(f"NPU 输出中找不到预期的特征图: {suffix}")
+                
+            # 重塑并收集特征图
+            flat_tensor = frame_output[matching_key].reshape(1, -1, 15)
+            reshaped_outs.append(flat_tensor)
+        
+        merged_output = np.concatenate(reshaped_outs, axis=1)
+        return self._postprocess(merged_output)
 
     def _preprocess(self, image):
         # 1. Letterbox 缩放
         img, r, left, top = letter_box(image, self.input_size)
         
-        # 2. 转为 RGB 格式 (保留 HWC)
+        # 2. 转为 RGB 格式
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        tensor = np.zeros((1, self.input_size[1], self.input_size[0], 3), dtype=np.uint8)
-        tensor[0] = img # 将图像数据安全拷贝进这个容器
+        tensor = np.zeros((self.input_size[1], self.input_size[0], 3), dtype=np.uint8)
+        tensor[:] = img # 将图像数据安全拷贝进容器
+        
+        # 强制申请一块绝对干净、连续的物理内存，防止它是 view（视图）
+        safe_tensor = np.ascontiguousarray(tensor)
         
         self.tmp_pack = r, left, top
-        return {self.input_vstream_info.name: tensor}
+        return {self.input_vstream_info.name: safe_tensor}
 
     def _run_session(self, data):
         # NPU 硬件推理，返回的是 3 个被切断的特征图
