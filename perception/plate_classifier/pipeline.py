@@ -44,4 +44,4 @@ class EdgePlateClassifierPipeline:
         
         if plate_type == UNKNOWN: plate_type = GREEN
 
-        return plate_type, confidence, plate_box
+        return plate_type, confidence, plate_box, plate_points

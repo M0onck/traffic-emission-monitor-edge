@@ -1,10 +1,15 @@
-numpy
-opencv_python
-psutil
-supervision
+# 核心底层依赖 (版本依赖严格，适配 HailoRT)
+numpy==1.26.4
+opencv_python==4.9.0.80
+
+# 科学计算与视觉处理
+scipy==1.17.1
+supervision==0.27.0.post1
 ultralytics
-plotext
 onnxruntime
+
+# 系统与应用层工具
+plotext
+psutil
 PyQt5
 ntplib
-scipy
