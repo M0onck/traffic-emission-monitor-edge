@@ -353,8 +353,6 @@ class TrafficMonitorEngine:
         """派发任务给子进程：基于清晰度评估与预处理的动态抽帧"""
         img_h, img_w = frame.shape[:2]
 
-        # 【已删除】死板的全局间隔采样 (OCR_INTERVAL)
-
         for tid, box in zip(detections.tracker_id, detections.xyxy):
             # 1. 冷却检查防爆栈：防止对同一辆车频繁提交识别请求
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
@@ -383,8 +381,8 @@ class TrafficMonitorEngine:
             gray_crop = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2GRAY)
             blur_score = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
             
-            # 从配置中读取模糊阈值（提供默认兜底值 20.0）
-            blur_threshold = getattr(self.cfg, 'BLUR_THRESHOLD', 20.0)
+            # 从配置中读取模糊阈值（提供默认兜底值 100.0）
+            blur_threshold = getattr(self.cfg, 'BLUR_THRESHOLD', 100.0)
             
             if blur_score < blur_threshold:
                 # 直接 continue 丢弃这一帧，把识别机会留给车辆驶近后更清晰的下一帧
@@ -402,9 +400,16 @@ class TrafficMonitorEngine:
             if self.plate_worker.push_task(tid, enhanced_crop):
                 self.plate_retry[tid] = frame_id
 
+                # ====== 调试打印 ======
+                print(f"[DEBUG 1 投递] 成功向子进程投递 TID={tid} 的车牌识别任务 (方差: {blur_score:.1f})")
+
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
         results = self.plate_worker.get_results()
+
+        # ====== 调试打印 ======
+        if len(results) > 0:
+            print(f"[DEBUG 3 接收] 主进程从队列收到了 {len(results)} 条车牌结果!")
         
         color_thresholds = {
             'green': 0.60,  
@@ -646,6 +651,9 @@ class TrafficMonitorEngine:
                 rel_lms = plate_info['rel_landmarks']
                 abs_lms = rel_lms * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
                 data.plate_points = abs_lms
+
+                # ====== 调试打印 ======
+                print(f"[DEBUG 4 渲染准备] 成功生成 TID={tid} 的 UI 车牌框坐标!")
             else:
                 # 即使没找到车牌，也要用分类器的基础兜底逻辑解析车型 (例如 "LDV")
                 _, final_type = self.classifier.resolve_type(voted_class_id, plate_color_override=None)

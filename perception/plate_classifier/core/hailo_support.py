@@ -30,13 +30,11 @@ class ClassificationHailo(HamburgerABC):
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
         
-        # 用 List 包裹字典，触发安全传递路径
-        raw_outputs_list = active_pipeline.infer([frame_dict])
+        # 直接传字典
+        raw_outputs = active_pipeline.infer(frame_dict)
         
-        frame_output = raw_outputs_list[0] if isinstance(raw_outputs_list, list) else raw_outputs_list
-        
-        # 提取结果，这一步必须有，因为后处理期待的是纯 numpy 数组，不是字典
-        array_out = frame_output[self.output_vstream_info.name]
+        # 提取结果
+        array_out = raw_outputs[self.output_vstream_info.name]
         
         return self._postprocess(array_out)
 
@@ -83,19 +81,15 @@ class MultiTaskDetectorHailo(HamburgerABC):
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
         
-        # 传入 [ {key: 3D_tensor} ]，明确告诉 C++ 这是 Batch=1 的一帧任务
-        # 这能完美避开多进程下直接传 dict 导致的 got 0 内存指针丢失 BUG
-        raw_outputs_list = active_pipeline.infer([frame_dict]) 
-        
-        # 取出单帧结果字典
-        frame_output = raw_outputs_list[0] if isinstance(raw_outputs_list, list) else raw_outputs_list
+        # 直接传字典！只要 _preprocess 里是 3D 数组，PyBind11 就不会报错
+        raw_outputs = active_pipeline.infer(frame_dict)
         
         #  CPU 智能缝合逻辑
         target_suffixes = ['Concat_617', 'Concat_521', 'Concat_713']
         reshaped_outs = []
         
         for suffix in target_suffixes:
-            matching_key = next((k for k in frame_output.keys() if suffix in k), None)
+            matching_key = next((k for k in raw_outputs.keys() if suffix in k), None)
             if matching_key is None:
                 raise KeyError(f"NPU 输出中找不到预期的特征图: {suffix}")
                 

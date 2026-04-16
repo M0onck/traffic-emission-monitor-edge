@@ -115,8 +115,10 @@ class AsyncPlateRecognizer:
                         rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
 
                         if conf > 0.3:
+                            print(f"[DEBUG 2 子进程] NPU 识别出车牌! TID={track_id}, 颜色={colors[color_idx]}, 置信度={conf:.2f}")
                             result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
+                        else:
+                            print(f"[DEBUG 2 子进程] 识别失败 TID={track_id}, 置信度过低 ({conf:.2f} < 0.3)")
 
                     except Exception as e:
-                        # 静默捕获，防止单帧错误导致进程崩溃
-                        pass
+                        print(f"[ERROR 子进程异常] TID={track_id} 推理崩溃: {e}")
