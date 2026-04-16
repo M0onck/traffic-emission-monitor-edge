@@ -83,17 +83,14 @@ class MultiTaskDetectorHailo(HamburgerABC):
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
         
-        # ==========================================================
-        # 2. 【核心破局点】：用 List 包裹字典！
         # 传入 [ {key: 3D_tensor} ]，明确告诉 C++ 这是 Batch=1 的一帧任务
         # 这能完美避开多进程下直接传 dict 导致的 got 0 内存指针丢失 BUG
-        # ==========================================================
         raw_outputs_list = active_pipeline.infer([frame_dict]) 
         
         # 取出单帧结果字典
         frame_output = raw_outputs_list[0] if isinstance(raw_outputs_list, list) else raw_outputs_list
         
-        # --- 拯救回来的 CPU 智能缝合逻辑 ---
+        #  CPU 智能缝合逻辑
         target_suffixes = ['Concat_617', 'Concat_521', 'Concat_713']
         reshaped_outs = []
         

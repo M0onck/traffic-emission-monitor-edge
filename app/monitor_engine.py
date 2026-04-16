@@ -383,8 +383,8 @@ class TrafficMonitorEngine:
             gray_crop = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2GRAY)
             blur_score = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
             
-            # 从配置中读取模糊阈值（提供默认兜底值 100.0）
-            blur_threshold = getattr(self.cfg, 'BLUR_THRESHOLD', 100.0)
+            # 从配置中读取模糊阈值（提供默认兜底值 20.0）
+            blur_threshold = getattr(self.cfg, 'BLUR_THRESHOLD', 20.0)
             
             if blur_score < blur_threshold:
                 # 直接 continue 丢弃这一帧，把识别机会留给车辆驶近后更清晰的下一帧
@@ -416,6 +416,13 @@ class TrafficMonitorEngine:
         VETO_THRESHOLD = 1
 
         for tid, color_type, conf, rel_landmarks in results:
+            # 把车牌坐标存进 UI 缓存
+            if tid not in self.plate_cache:
+                self.plate_cache[tid] = {'color': color_type, 'rel_landmarks': rel_landmarks}
+            else:
+                # 仅更新坐标防抖，颜色暂不轻易覆盖
+                self.plate_cache[tid]['rel_landmarks'] = rel_landmarks
+
             target_threshold = color_thresholds.get(color_type, self.cfg.OCR_CONF_THRESHOLD)
             
             if conf > target_threshold: 
@@ -436,11 +443,8 @@ class TrafficMonitorEngine:
                 elif yellow_count >= VETO_THRESHOLD:
                     final_color_for_ui = 'yellow'
 
-                # 3. 更新缓存，允许更新坐标(rel_landmarks)，但颜色可能被强行纠正为绿/黄
-                self.plate_cache[tid] = {
-                    'color': final_color_for_ui,
-                    'rel_landmarks': rel_landmarks
-                }
+                # 3. 置信度达标后，更新确认的 UI 颜色
+                self.plate_cache[tid]['color'] = final_color_for_ui
 
     def _handle_exits(self, frame_id, current_timestamp):
         """
@@ -600,7 +604,7 @@ class TrafficMonitorEngine:
         record['trajectory_blob_data'] = trajectory_for_db
 
     def _prepare_labels(self, detections, frame_shape):
-        img_h, img_w = frame_shape[:2]  # 获取画面边界
+        img_h, img_w = frame_shape[:2]  
         labels = []
         for i, (tid, raw_class_id) in enumerate(zip(detections.tracker_id, detections.class_id)):
             record = self.registry.get_record(tid)
@@ -610,41 +614,42 @@ class TrafficMonitorEngine:
             voted_class_id = record['class_id']
             data = LabelData(track_id=tid, class_id=voted_class_id)
             
-            has_plate = len(record.get('plate_history', [])) > 0
+            # 直接查缓存判定
+            plate_info = self.plate_cache.get(tid)
             
-            if has_plate:
-                plate_info = self.plate_cache.get(tid)
-                current_color = plate_info['color'] if plate_info else "Unknown"
+            if plate_info:
+                current_color = plate_info['color']
                 _, final_type = self.classifier.resolve_type(
                     voted_class_id, 
                     plate_color_override=current_color
                 )
                 data.display_type = final_type
+                data.plate_color = current_color
                 
-                # 动态计算车牌框
-                if plate_info:
-                    data.plate_color = plate_info['color']
-                    x1, y1, x2, y2 = map(int, detections.xyxy[i])
-                    
-                    # 与裁切时的 Padding 规则保持一致
-                    bw = x2 - x1
-                    bh = y2 - y1
-                    pad_x = int(bw * 0.05)
-                    pad_top = int(bh * 0.05)
-                    pad_bottom = int(bh * 0.20)
-                    
-                    crop_x1 = max(0, x1 - pad_x)
-                    crop_y1 = max(0, y1 - pad_top)
-                    crop_x2 = min(img_w, x2 + pad_x)
-                    crop_y2 = min(img_h, y2 + pad_bottom)
-                    
-                    crop_w = crop_x2 - crop_x1
-                    crop_h = crop_y2 - crop_y1
-                    
-                    # 使用扩大后的 crop_w, crop_h 和 crop_x1, crop_y1 进行绝对坐标反算
-                    rel_lms = plate_info['rel_landmarks']
-                    abs_lms = rel_lms * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
-                    data.plate_points = abs_lms
+                x1, y1, x2, y2 = map(int, detections.xyxy[i])
+                
+                # 与裁切时的 Padding 规则保持一致
+                bw = x2 - x1
+                bh = y2 - y1
+                pad_x = int(bw * 0.05)
+                pad_top = int(bh * 0.05)
+                pad_bottom = int(bh * 0.20)
+                
+                crop_x1 = max(0, x1 - pad_x)
+                crop_y1 = max(0, y1 - pad_top)
+                crop_x2 = min(img_w, x2 + pad_x)
+                crop_y2 = min(img_h, y2 + pad_bottom)
+                
+                crop_w = crop_x2 - crop_x1
+                crop_h = crop_y2 - crop_y1
+                
+                rel_lms = plate_info['rel_landmarks']
+                abs_lms = rel_lms * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
+                data.plate_points = abs_lms
+            else:
+                # 即使没找到车牌，也要用分类器的基础兜底逻辑解析车型 (例如 "LDV")
+                _, final_type = self.classifier.resolve_type(voted_class_id, plate_color_override=None)
+                data.display_type = final_type
             
             labels.append(data)
             
