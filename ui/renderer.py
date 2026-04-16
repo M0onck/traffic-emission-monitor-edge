@@ -105,10 +105,6 @@ class Visualizer:
                 # 复制一份点位数据，避免污染原始数据
                 absolute_points = data.plate_points.copy()
                 
-                # 加上车辆检测框的左上角偏移量 (x1, y1)
-                absolute_points[:, 0] += x1  # 所有点的 x 坐标加上 x1
-                absolute_points[:, 1] += y1  # 所有点的 y 坐标加上 y1
-                
                 # 再进行类型转换并重塑维度给 OpenCV 绘制
                 pts = absolute_points.astype(np.int32).reshape((-1, 1, 2))
                 cv2.polylines(scene, [pts], isClosed=True, color=p_color, thickness=2)

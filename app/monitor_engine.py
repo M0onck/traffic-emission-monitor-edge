@@ -649,7 +649,9 @@ class TrafficMonitorEngine:
                 crop_h = crop_y2 - crop_y1
                 
                 rel_lms = plate_info['rel_landmarks']
-                abs_lms = rel_lms * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
+                # rel_lms 已经是相对 crop 小图的真实像素坐标
+                # 直接加上裁剪框的左上角绝对坐标 (crop_x1, crop_y1) 即可
+                abs_lms = rel_lms + np.array([crop_x1, crop_y1])
                 data.plate_points = abs_lms
 
                 # ====== 调试打印 ======
