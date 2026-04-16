@@ -39,11 +39,11 @@ class ClassificationHailo(HamburgerABC):
         return self._postprocess(array_out)
 
     def _preprocess(self, image) -> dict:
-        # 拉伸到 96x96 (保持 BGR 色彩空间)
         image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[0]))
         
-        tensor = np.zeros((self.input_shape[0], self.input_shape[1], 3), dtype=np.uint8)
-        tensor[0] = image_resize
+        tensor = np.zeros((1, self.input_shape[0], self.input_shape[1], 3), dtype=np.uint8)
+        
+        tensor[:] = image_resize 
         
         return {self.input_vstream_info.name: tensor}
 
@@ -80,11 +80,8 @@ class MultiTaskDetectorHailo(HamburgerABC):
 
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
-        
-        # 直接传字典！只要 _preprocess 里是 3D 数组，PyBind11 就不会报错
         raw_outputs = active_pipeline.infer(frame_dict)
         
-        #  CPU 智能缝合逻辑
         target_suffixes = ['Concat_617', 'Concat_521', 'Concat_713']
         reshaped_outs = []
         
@@ -93,8 +90,7 @@ class MultiTaskDetectorHailo(HamburgerABC):
             if matching_key is None:
                 raise KeyError(f"NPU 输出中找不到预期的特征图: {suffix}")
                 
-            # 重塑并收集特征图
-            flat_tensor = frame_output[matching_key].reshape(1, -1, 15)
+            flat_tensor = raw_outputs[matching_key].reshape(1, -1, 15) 
             reshaped_outs.append(flat_tensor)
         
         merged_output = np.concatenate(reshaped_outs, axis=1)
@@ -107,7 +103,7 @@ class MultiTaskDetectorHailo(HamburgerABC):
         # 2. 转为 RGB 格式
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        tensor = np.zeros((self.input_size[1], self.input_size[0], 3), dtype=np.uint8)
+        tensor = np.zeros((1, self.input_size[1], self.input_size[0], 3), dtype=np.uint8)
         tensor[:] = img # 将图像数据安全拷贝进容器
         
         # 强制申请一块绝对干净、连续的物理内存，防止它是 view（视图）
