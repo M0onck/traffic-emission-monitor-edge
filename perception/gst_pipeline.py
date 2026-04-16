@@ -2,10 +2,13 @@ import gi
 import cv2
 import numpy as np
 import os
+import logging
 import infra.config.loader as cfg
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
+
+logger = logging.getLogger(__name__)
 
 def get_rpi_camera_pipeline(width=1440, height=1080, fps=30):
     """纯画面拉流管道 (原生 GStreamer 专用)"""
@@ -99,10 +102,13 @@ class GstPipelineManager:
             # --- 分支3: 录制切片分支 ---
             f"{record_branch}"
         )
+
+        # 使用 INFO 记录生成的完整指令，方便复制到终端测试
+        logger.info(f"构建 GStreamer 管道: {pipeline}")
         return pipeline
 
     def start(self):
-        print(f"正在启动 GStreamer 推理管道...")
+        logger.info("正在启动 GStreamer 推理管道...")
         self.pipeline.set_state(Gst.State.PLAYING)
         self.is_running = True
 
@@ -138,11 +144,11 @@ class GstPipelineManager:
         if msg:
             if msg.type == Gst.MessageType.ERROR:
                 err, debug = msg.parse_error()
-                print(f"\n[GStreamer 致命崩溃] {err}\n详情: {debug}\n")
+                logger.critical(f"GStreamer 致命崩溃: {err} | 详情: {debug}")
                 self.is_running = False
                 
             elif msg.type == Gst.MessageType.EOS:
-                print(f"\n[GStreamer] 视频流已播放完毕 (EOS)\n")
+                logger.info("视频流播放完毕 (EOS)。")
                 self.is_running = False
                 
             return None, None 
@@ -150,6 +156,8 @@ class GstPipelineManager:
         # 1. 获取视频帧 (允许5ms超时)
         sample_video = self.sink_video.emit("try-pull-sample", 5000000)
         if not sample_video: 
+            # 实时流中偶尔丢帧可使用 WARNING
+            logger.warning("无法从 appsink 拉取视频样本 (超时)")
             return None, None 
 
         # 2. 尝试获取 AI 结果 (仅等待1ms)
@@ -163,12 +171,15 @@ class GstPipelineManager:
             # 防丢帧欺骗策略
             # 如果 AI 没赶上，造一个空的假 Buffer 骗过 monitor_engine.py
             # 这样引擎就不会触发 "if buffer is None: continue" 把视频帧丢掉了，黑屏彻底解决！
+            logger.debug("AI 元数据未就绪，使用空 Buffer 占位。")
             buffer_meta = Gst.Buffer.new()
 
         buffer_video = sample_video.get_buffer()
         try:
             success, map_info = buffer_video.map(Gst.MapFlags.READ)
-            if not success: return None, None
+            if not success:
+                logger.error("GstBuffer 内存映射失败！")
+                return None, None
             
             caps = sample_video.get_caps()
             struct = caps.get_structure(0)
@@ -180,7 +191,8 @@ class GstPipelineManager:
             return frame, buffer_meta
             
         except Exception as e:
-            print(f">>> [GStreamer] 内存解析异常: {e}")
+            # 使用 exception 自动记录堆栈，这对排查 numpy 维度错误非常管用
+            logger.exception(f"解析视频内存时发生异常: {e}")
             return None, None
         
         finally:
@@ -198,5 +210,4 @@ class GstPipelineManager:
             filename = f"{session_id}_seq%05d_start{timestamp}.mp4"
             full_path = os.path.join(cfg.RECORD_SAVE_PATH, filename)
             rec_sink.set_property("location", full_path)
-            print(f">>> [GStreamer] 录制路径已更新为: {full_path}")
-    
+            logger.info(f"录制路径已更新为: {full_path}")

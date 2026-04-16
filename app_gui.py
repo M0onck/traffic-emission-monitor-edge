@@ -22,6 +22,9 @@ logging.basicConfig(
 # 车牌识别链路调试日志
 # logging.getLogger("app.monitor_engine").setLevel(logging.DEBUG)
 
+# GStreamer 硬件流媒体层调试日志
+# logging.getLogger("perception.gst_pipeline").setLevel(logging.DEBUG)
+
 def start_daemon():
     """启动独立进程运行 Daemon"""
     daemon = AlignmentDaemon(cfg)
