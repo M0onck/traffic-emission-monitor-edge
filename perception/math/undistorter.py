@@ -1,34 +1,31 @@
+# perception/math/undistorter.py
+
 import cv2
 import numpy as np
 
-class CameraUndistorter:
-    def __init__(self, npz_path):
-        # 加载 .npz 文件
+class CamUndistorter:
+    def __init__(self, npz_path, resolution):
+        """
+        初始化定点数加速映射表
+        :param npz_path: 标定文件路径 (resources/camera_calib_6mm.npz)
+        :param resolution: 视频流分辨率 (width, height)，必须与初始化保持绝对一致
+        """
         data = np.load(npz_path)
-        self.mtx = data['mtx']
-        self.dist = data['dist']
-        self.map_x = None
-        self.map_y = None
-        self.refined_mtx = None
-
-    def init_maps(self, image_shape):
-        """
-        根据图像尺寸预计算映射表，只需要在第一帧调用一次
-        image_shape: (height, width)
-        """
-        h, w = image_shape[:2]
-        # 获取优化后的内参矩阵，alpha=0 表示保留所有有效像素
-        self.refined_mtx, _ = cv2.getOptimalNewCameraMatrix(
-            self.mtx, self.dist, (w, h), 0, (w, h)
-        )
-        # 生成映射表
+        mtx = data['mtx']
+        dist = data['dist']
+        w, h = resolution
+        
+        # 计算最佳新内参矩阵 (alpha=0 裁剪掉黑边，alpha=1 保留所有畸变像素并产生黑边)
+        new_mtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w, h), 0, (w, h))
+        
+        # 核心优化：使用 cv2.CV_16SC2 极大地加速 ARM CPU 上的重映射过程
         self.map_x, self.map_y = cv2.initUndistortRectifyMap(
-            self.mtx, self.dist, None, self.refined_mtx, (w, h), cv2.CV_32FC1
+            mtx, dist, None, new_mtx, (w, h), cv2.CV_16SC2
         )
-
-    def process_frame(self, frame):
-        """对单帧图像进行去畸变"""
-        if self.map_x is None:
-            self.init_maps(frame.shape)
-        # 使用重映射函数，速度极快
+        
+    def process(self, frame):
+        """
+        执行极速映射
+        """
+        # cv2.INTER_LINEAR 是画质和速度的最佳平衡点
         return cv2.remap(frame, self.map_x, self.map_y, cv2.INTER_LINEAR)

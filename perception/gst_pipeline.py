@@ -4,6 +4,7 @@ import numpy as np
 import os
 import logging
 import infra.config.loader as cfg
+from perception.math.undistorter import CamUndistorter
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
@@ -34,6 +35,12 @@ class GstPipelineManager:
 
         self.out_w = config.get("frame_width", 1280) 
         self.out_h = config.get("frame_height", 720)
+
+        # 实例化硬件加速去畸变器
+        self.undistorter = CamUndistorter(
+            "resources/camera_calib_6mm.npz", 
+            (self.out_w, self.out_h)
+        )
         
         self.use_camera = cfg.USE_CAMERA
         self.pipeline_string = self._build_pipeline()
