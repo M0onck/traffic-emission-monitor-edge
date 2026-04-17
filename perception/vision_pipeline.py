@@ -1,5 +1,6 @@
 import numpy as np
 import supervision as sv
+from math.undistorter import CameraUndistorter
 
 # 引入 Hailo 元数据解析库
 try:
@@ -22,6 +23,9 @@ class VisionPipeline:
             minimum_matching_threshold=0.8,
             frame_rate=fps
         )
+
+        # 初始化去畸变器
+        self.undistorter = CameraUndistorter("resources/camera_calib_6mm.npz")
 
     def process(self, frame: np.ndarray, buffer) -> sv.Detections:
         """
