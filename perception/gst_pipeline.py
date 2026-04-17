@@ -4,7 +4,6 @@ import numpy as np
 import os
 import logging
 import infra.config.loader as cfg
-from perception.math.undistorter import CamUndistorter
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
@@ -35,12 +34,6 @@ class GstPipelineManager:
 
         self.out_w = config.get("frame_width", 1280) 
         self.out_h = config.get("frame_height", 720)
-
-        # 实例化硬件加速去畸变器
-        self.undistorter = CamUndistorter(
-            "resources/camera_calib_6mm.npz", 
-            (self.out_w, self.out_h)
-        )
         
         self.use_camera = cfg.USE_CAMERA
         self.pipeline_string = self._build_pipeline()
@@ -68,6 +61,13 @@ class GstPipelineManager:
             queue_prop = "" 
             sink_prop = "drop=false sync=false"
 
+        # 去畸变相关设置
+        xml_path = os.path.abspath("resources/camera_calib_6mm.yml")
+        undistort_stage = (
+            f"videoconvert ! video/x-raw, format=BGR ! "
+            f"cameraundistort settings=\"{xml_path}\" ! "
+        )
+
         # 录制分支构建逻辑
         record_branch = ""
         # 仅在物理摄像头模式且打开了录制开关时，激活录制管道
@@ -91,7 +91,7 @@ class GstPipelineManager:
             )
 
         pipeline = (
-            f"{source_head} ! tee name=t "
+            f"{source_head} ! {undistort_stage} tee name=t "
             
             # --- 分支1: 视频画面分支 ---
             f"t. ! queue max-size-buffers=2 {queue_prop} ! "
