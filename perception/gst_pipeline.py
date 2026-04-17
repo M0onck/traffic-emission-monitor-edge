@@ -38,6 +38,19 @@ class GstPipelineManager:
         self.use_camera = cfg.USE_CAMERA
         self.pipeline_string = self._build_pipeline()
         self.pipeline = Gst.parse_launch(self.pipeline_string)
+
+        # 将 YAML 文本注入给底层的 OpenCV 插件
+        undistort_node = self.pipeline.get_by_name("undistort_node")
+        if undistort_node:
+            yml_path = os.path.abspath("resources/camera_calib_6mm.yml")
+            try:
+                with open(yml_path, "r") as f:
+                    calib_data = f.read()
+                # 动态设置属性，避开字符串转义陷阱
+                undistort_node.set_property("settings", calib_data)
+                logger.info(f"成功加载相机去畸变标定文件: {yml_path}")
+            except Exception as e:
+                logger.error(f"加载畸变文件失败，程序可能会崩溃: {e}")
         
         self.sink_video = self.pipeline.get_by_name("sink_video")
         self.sink_meta = self.pipeline.get_by_name("sink_meta")
@@ -62,11 +75,7 @@ class GstPipelineManager:
             sink_prop = "drop=false sync=false"
 
         # 去畸变相关设置
-        xml_path = os.path.abspath("resources/camera_calib_6mm.yml")
-        undistort_stage = (
-            f"videoconvert ! video/x-raw, format=BGR ! "
-            f"cameraundistort settings=\"{xml_path}\" ! "
-        )
+        undistort_stage = "videoconvert ! video/x-raw, format=BGR ! cameraundistort name=undistort_node ! "
 
         # 录制分支构建逻辑
         record_branch = ""
