@@ -1,15 +1,9 @@
 import time
 import cv2
 import numpy as np
-import gc
 from PyQt5.QtWidgets import QLabel
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
-
-# 引入原生 GStreamer 库
-import gi
-gi.require_version('Gst', '1.0')
-from gi.repository import Gst
 
 class CalibrationCanvas(QLabel):
     def __init__(self, parent=None):
@@ -22,61 +16,35 @@ class CalibrationCanvas(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(800, 380)
         
-        self.cap = None
-        self.gst_pipeline = None # 原生 GStreamer 管道对象
-        self.gst_appsink = None  # 画面接收器对象
+        self.shared_camera = None
         
         self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self._read_next_frame)
-        
-        # 初始化 GStreamer 环境
-        if not Gst.is_initialized():
-            Gst.init(None)
 
-    def load_frame(self, video_path):
-        if getattr(self, 'current_video_path', None) == video_path and (self.cap or self.gst_pipeline):
-            return
-            
+    def load_camera(self, camera_instance):
+        """接收外部注入的全局 Camera 实例"""
         self.stop_preview()
-        time.sleep(0.3) 
-        self.current_video_path = video_path
+        time.sleep(0.1) 
+        self.shared_camera = camera_instance
 
-        # === 引擎 1：原生 GStreamer (用于真实摄像头) ===
-        if "libcamerasrc" in video_path:
-            print(">>> [DEBUG] 使用原生 GStreamer 引擎拉取摄像头画面...")
-            try:
-                self.gst_pipeline = Gst.parse_launch(video_path)
-                self.gst_appsink = self.gst_pipeline.get_by_name("preview_sink")
-                self.gst_pipeline.set_state(Gst.State.PLAYING)
-                
-                # 预热 ISP
-                print(">>> 正在预热 ISP 并等待首帧出流...")
-                frame_received = False
-                for _ in range(20):  # 最长容忍等待 2 秒 (20次 * 0.1秒)
-                    ret, frame = self._read_gst_frame()
-                    if ret:
-                        self._start_preview(frame)
-                        frame_received = True
-                        break
-                    time.sleep(0.1)
-                
-                if not frame_received:
-                    print(">>> 警告：摄像头拉流超时！")
-                    self._show_error_screen("Video Stream Error")
-                
-            except Exception as e:
-                print(f">>> GStreamer 启动失败: {e}")
-                self._show_error_screen("Pipeline Fatal")
-
-        # === 引擎 2：OpenCV cv2 (用于本地 MP4 文件) ===
-        else:
-            self.cap = cv2.VideoCapture(video_path)
-            if not self.cap.isOpened():
-                self._show_error_screen("File Error")
-                return
-            ret, frame = self.cap.read()
-            if ret:
+        # 确保管道已启动
+        if not self.shared_camera.is_running:
+            self.shared_camera.start()
+        
+        print(">>> [DEBUG] 正在通过全局 GstPipelineManager 拉取预处理画面...")
+        frame_received = False
+        for _ in range(20):  # 最长容忍等待 2 秒
+            # 解构返回的元组 (clean_frame, buffer_meta)，标定只要干净画面
+            frame, _ = self.shared_camera.read()
+            if frame is not None:
                 self._start_preview(frame)
+                frame_received = True
+                break
+            time.sleep(0.1)
+        
+        if not frame_received:
+            print(">>> 警告：视频流拉取超时！")
+            self._show_error_screen("Video Stream Error")
 
     def _start_preview(self, first_frame):
         """成功读取第一帧后的初始化工作"""
@@ -102,61 +70,23 @@ class CalibrationCanvas(QLabel):
         cv2.putText(self.orig_frame, msg, (500, 360), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
         self.update_display()
 
-    def _read_gst_frame(self):
-        """核心：通过原生 GStreamer 提取内存数据转换为 OpenCV 图像"""
-        if not self.gst_appsink: return False, None
-        
-        # 尝试拉取样本 (带 100ms 超时防假死)
-        sample = self.gst_appsink.emit("try-pull-sample", 100000000)
-        if not sample: return False, None
-        
-        buffer = sample.get_buffer()
-        success, map_info = buffer.map(Gst.MapFlags.READ)
-        if success:
-            caps = sample.get_caps()
-            w = caps.get_structure(0).get_value("width")
-            h = caps.get_structure(0).get_value("height")
-            
-            # 直接通过内存地址构建 Numpy 数组
-            frame = np.ndarray((h, w, 3), buffer=map_info.data, dtype=np.uint8).copy()
-            buffer.unmap(map_info)
-            return True, frame
-            
-        return False, None
-
     def _read_next_frame(self):
-        """定时器回调：读取下一帧并渲染"""
-        if self.gst_pipeline:
-            ret, frame = self._read_gst_frame()
-            if ret:
-                self.orig_frame = frame
-                self.update_display()
-                
-        elif self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if not ret:
-                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                ret, frame = self.cap.read()
-            if ret:
+        """
+        定时器回调：直接向统一的 camera 接口索要画面
+        """
+        if self.shared_camera and self.shared_camera.is_running:
+            frame, _ = self.shared_camera.read()
+            if frame is not None:
                 self.orig_frame = frame
                 self.update_display()
 
     def stop_preview(self):
-        """停止预览并释放硬件资源"""
+        """
+        停止预览。
+        注意：不要在这里调用 shared_camera.stop()
+        生命周期已上移，这里只负责停止 UI 定时刷新，让管道在后台继续热身。
+        """
         self.preview_timer.stop()
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
-            
-        if self.gst_pipeline is not None:
-            self.gst_pipeline.set_state(Gst.State.NULL)
-            # 删除引用
-            del self.gst_appsink
-            del self.gst_pipeline
-            self.gst_pipeline = None
-            self.gst_appsink = None
-            # 要求 Python 立即执行垃圾回收，彻底释放底层 /dev/video0 文件描述符
-            gc.collect()
 
     def init_points(self):
         h, w = self.orig_frame.shape[:2]
