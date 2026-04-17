@@ -136,46 +136,69 @@ class GstPipelineManager:
             logger.info("所有 GStreamer 管道已安全关闭。")
 
     def read(self):
-        """主动拉取模式，彻底摆脱 GIL 阻塞，且极速释放底层 DMA 内存"""
-        if not self.pipeline:
+        """双管道桥接模式：从源管道拉取 -> 去畸变 -> 推入处理管道 -> 提取 AI 结果"""
+        if not self.is_running:
             return None, None
 
-        # 设置 5 毫秒超时 (5000000纳秒)，防止队列空时卡死 Python 主循环
-        sample = self.sink.emit("try-pull-sample", 5000000)
-        if not sample:
+        # 1. 从上游 (源管道) 拉取原始畸变画面
+        raw_sample = self.raw_sink.emit("try-pull-sample", 5000000) # 5毫秒超时
+        if not raw_sample:
             return None, None
 
-        buffer = sample.get_buffer()
-
-        # 1. 趁着底层 buffer 存活，立刻提取 Hailo 元数据并转换为纯 Python 字典
-        hailo_data = []
-        try:
-            import hailo
-            roi = hailo.get_roi_from_buffer(buffer)
-            hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
-            for det in hailo_detections:
-                bbox = det.get_bbox()
-                hailo_data.append({
-                    'label': det.get_label(),
-                    'conf': det.get_confidence(),
-                    'xmin': bbox.xmin(), 'ymin': bbox.ymin(),
-                    'xmax': bbox.xmax(), 'ymax': bbox.ymax()
-                })
-        except Exception:
-            pass # 非真实设备环境静默通过
-
-        # 2. 立即拷贝图像，斩断底层硬件内存锁！
-        success, map_info = buffer.map(Gst.MapFlags.READ)
+        raw_buffer = raw_sample.get_buffer()
+        
+        # 2. 极速拷贝并释放源管道内存
+        success, map_info = raw_buffer.map(Gst.MapFlags.READ)
         if success:
-            # 注意结尾的 .copy() 是保命的关键，它将画面从显存区复制到了 Python 堆内存
-            frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
-            buffer.unmap(map_info)
+            # 拷贝到 Python 内存，让 GStreamer 可以去接下一帧
+            raw_frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
+            raw_buffer.unmap(map_info)
         else:
-            frame = None
+            return None, None
 
-        # 当函数 return 时，局部的 sample 和 buffer 对象瞬间失去引用
-        # 底层 GStreamer 会立刻将这块空闲内存还给 libcamerasrc，杜绝队列崩溃！
-        return frame, hailo_data
+        # 3. Python 层 CPU 极速去畸变 (由于已经解除线程封印，这里会很快)
+        clean_frame = self.undistorter.process(raw_frame)
+
+        # 4. 重新打包为 GstBuffer 推入下游处理管道 (AI & 录制)
+        clean_data = clean_frame.tobytes()
+        
+        # 必须用 new_allocate 为 GStreamer 分配独立堆内存
+        # 否则 Python 的 GC 会把正在排队录像的帧销毁，导致 stl_queue 崩溃
+        buf_clean = Gst.Buffer.new_allocate(None, len(clean_data), None)
+        buf_clean.fill(0, clean_data)
+        
+        # 继承原始时间戳，保证录像视频流时间轴平滑不卡顿
+        buf_clean.pts = raw_buffer.pts
+        buf_clean.dts = raw_buffer.dts
+        buf_clean.duration = raw_buffer.duration
+
+        # 将干净画面推入下游的 appsrc
+        self.clean_src.emit("push-buffer", buf_clean)
+
+        # 5. 从处理管道的 AI 终点拉取 Hailo 推理结果
+        # 因为画面刚推入，经过缩放和 NPU 推理需要几毫秒，这里给 15 毫秒宽容度
+        meta_sample = self.meta_sink.emit("try-pull-sample", 15000000) 
+        hailo_data = []
+        
+        if meta_sample:
+            meta_buffer = meta_sample.get_buffer()
+            try:
+                import hailo
+                roi = hailo.get_roi_from_buffer(meta_buffer)
+                hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+                for det in hailo_detections:
+                    bbox = det.get_bbox()
+                    hailo_data.append({
+                        'label': det.get_label(),
+                        'conf': det.get_confidence(),
+                        'xmin': bbox.xmin(), 'ymin': bbox.ymin(),
+                        'xmax': bbox.xmax(), 'ymax': bbox.ymax()
+                    })
+            except Exception:
+                pass # 解析失败或在非真实设备下跳过
+
+        # 返回去畸变后的干净画面 和 纯 Python 字典格式的 AI 数据
+        return clean_frame, hailo_data
 
     def set_record_location(self, session_id):
         rec_sink = self.process_pipeline.get_by_name("rec_sink")
