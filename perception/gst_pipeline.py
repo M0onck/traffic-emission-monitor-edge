@@ -162,7 +162,10 @@ class GstPipelineManager:
 
         # 3. 将干净的画面重新封装为 GstBuffer，推入处理管道 (AI / Record)
         clean_data = clean_frame.tobytes()
-        buf_clean = Gst.Buffer.new_wrapped(clean_data)
+        # 为 GStreamer 分配独立的堆内存并拷贝数据
+        # 防止 Python 垃圾回收销毁排队中的帧数据
+        buf_clean = Gst.Buffer.new_allocate(None, len(clean_data), None)
+        buf_clean.fill(0, clean_data)
         buf_clean.pts = pts
         buf_clean.dts = dts
         buf_clean.duration = duration
