@@ -15,6 +15,7 @@ from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
 from perception.sensor.weather_station import WeatherGateway
+from perception.math.geometry import FastUndistorter
 import perception.gst_pipeline as gst
 from domain.physics.alignment_engine import DelayedAlignmentEngine
 

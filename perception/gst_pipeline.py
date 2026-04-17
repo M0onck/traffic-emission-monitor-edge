@@ -20,8 +20,11 @@ def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
     f = int(float(fps)) 
     
     return (
-        f"libcamerasrc ! video/x-raw, format=NV12, width={w}, height={h}, framerate={f}/1 ! "
-        f"videoconvert ! video/x-raw, format=BGR ! appsink drop=true sync=false"
+        f"libcamerasrc ! "
+        f"video/x-raw, format=NV12, width={w}, height={h}, framerate={f}/1 ! "
+        f"videoconvert ! "
+        f"video/x-raw, format=BGR ! "
+        f"appsink name=preview_sink emit-signals=true max-buffers=2 drop=true sync=false"
     )
 
 class GstPipelineManager:
