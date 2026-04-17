@@ -23,49 +23,34 @@ class VisionPipeline:
             frame_rate=fps
         )
 
-    def process(self, frame: np.ndarray, buffer) -> sv.Detections:
+    def process(self, frame: np.ndarray, hailo_data: list) -> sv.Detections:
         """
-        处理单帧硬件推理输出，返回带有 Track ID 的标准 Detections 对象。
+        处理脱壳后的纯 Python 硬件推理元数据，返回带有 Track ID 的标准 Detections 对象。
         """
         h, w = frame.shape[:2]
         xyxy, class_ids, confs = [], [], []
 
-        try:
-            roi = hailo.get_roi_from_buffer(buffer)
-            hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+        # 直接遍历上一层已经解析好的纯 Python 字典列表，无需再处理底层的 buffer 和 try-except
+        for item in hailo_data:
+            # 获取归一化坐标并映射到实际物理像素
+            raw_x1, raw_y1 = int(item['xmin'] * w), int(item['ymin'] * h)
+            raw_x2, raw_y2 = int(item['xmax'] * w), int(item['ymax'] * h)
             
-            for det in hailo_detections:
-                bbox = det.get_bbox()
-                raw_x1, raw_y1 = int(bbox.xmin() * w), int(bbox.ymin() * h)
-                raw_x2, raw_y2 = int(bbox.xmax() * w), int(bbox.ymax() * h)
+            # 安全过滤：确保坐标合理，防止下游崩溃
+            x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
+            y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
+            
+            # 标签白名单过滤
+            label = item['label']
+            if label not in self.label_map:
+                continue  
                 
-                # 安全过滤：确保坐标合理，防止下游崩溃
-                x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
-                y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
-                
-                # 标签白名单过滤
-                label = det.get_label()
-                if label not in self.label_map:
-                    continue  
-                    
-                cid = self.label_map[label]
-                xyxy.append([x1, y1, x2, y2])
-                class_ids.append(cid)
-                confs.append(det.get_confidence())
+            cid = self.label_map[label]
+            xyxy.append([x1, y1, x2, y2])
+            class_ids.append(cid)
+            confs.append(item['conf'])
 
-                # 释放单次循环的底层引用对象
-                del bbox
-                del det
-            
-            # 循环结束后，主动释放 ROI 和列表对象
-            del hailo_detections
-            del roi
-
-        except Exception:
-            # 解析出错或在非真实设备环境下，静默通过
-            pass
-            
-        # 构建并更新追踪器
+        # 构建并更新追踪器 (此部分逻辑保持不变)
         if len(xyxy) > 0:
             detections = sv.Detections(
                 xyxy=np.array(xyxy, dtype=np.float32),

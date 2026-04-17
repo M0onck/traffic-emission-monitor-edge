@@ -136,49 +136,46 @@ class GstPipelineManager:
             logger.info("所有 GStreamer 管道已安全关闭。")
 
     def read(self):
-        if not self.is_running: return None, None
+        """主动拉取模式，彻底摆脱 GIL 阻塞，且极速释放底层 DMA 内存"""
+        if not self.pipeline:
+            return None, None
 
-        # 1. 从源头拉取原始畸变画面
-        sample_raw = self.raw_sink.emit("try-pull-sample", 5000000) # 5ms timeout
-        if not sample_raw: 
-            return None, None 
+        # 设置 5 毫秒超时 (5000000纳秒)，防止队列空时卡死 Python 主循环
+        sample = self.sink.emit("try-pull-sample", 5000000)
+        if not sample:
+            return None, None
 
-        buf_raw = sample_raw.get_buffer()
-        # 提取原始时间戳，后续要转交给下游，否则录制器会因时间戳混乱而崩溃
-        pts = buf_raw.pts
-        dts = buf_raw.dts
-        duration = buf_raw.duration
+        buffer = sample.get_buffer()
 
+        # 1. 趁着底层 buffer 存活，立刻提取 Hailo 元数据并转换为纯 Python 字典
+        hailo_data = []
         try:
-            success, map_info = buf_raw.map(Gst.MapFlags.READ)
-            if not success: return None, None
-            raw_frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8)
-            
-            # 2. 调用 Python 硬件加速去畸变 (耗时 ~3-5ms)
-            clean_frame = self.undistorter.process(raw_frame)
-            
-        finally:
-            buf_raw.unmap(map_info)
+            import hailo
+            roi = hailo.get_roi_from_buffer(buffer)
+            hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+            for det in hailo_detections:
+                bbox = det.get_bbox()
+                hailo_data.append({
+                    'label': det.get_label(),
+                    'conf': det.get_confidence(),
+                    'xmin': bbox.xmin(), 'ymin': bbox.ymin(),
+                    'xmax': bbox.xmax(), 'ymax': bbox.ymax()
+                })
+        except Exception:
+            pass # 非真实设备环境静默通过
 
-        # 3. 将干净的画面重新封装为 GstBuffer，推入处理管道 (AI / Record)
-        clean_data = clean_frame.tobytes()
-        # 为 GStreamer 分配独立的堆内存并拷贝数据
-        # 防止 Python 垃圾回收销毁排队中的帧数据
-        buf_clean = Gst.Buffer.new_allocate(None, len(clean_data), None)
-        buf_clean.fill(0, clean_data)
-        buf_clean.pts = pts
-        buf_clean.dts = dts
-        buf_clean.duration = duration
-        
-        # 注入管道
-        self.clean_src.emit("push-buffer", buf_clean)
+        # 2. 立即拷贝图像，斩断底层硬件内存锁！
+        success, map_info = buffer.map(Gst.MapFlags.READ)
+        if success:
+            # 注意结尾的 .copy() 是保命的关键，它将画面从显存区复制到了 Python 堆内存
+            frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
+            buffer.unmap(map_info)
+        else:
+            frame = None
 
-        # 4. 从处理管道拉取 AI 推理结果
-        sample_meta = self.meta_sink.emit("try-pull-sample", 1000000)
-        buffer_meta = sample_meta.get_buffer() if sample_meta else Gst.Buffer.new()
-
-        # 将干净的画面返回给 UI 显示
-        return clean_frame, buffer_meta
+        # 当函数 return 时，局部的 sample 和 buffer 对象瞬间失去引用
+        # 底层 GStreamer 会立刻将这块空闲内存还给 libcamerasrc，杜绝队列崩溃！
+        return frame, hailo_data
 
     def set_record_location(self, session_id):
         rec_sink = self.process_pipeline.get_by_name("rec_sink")

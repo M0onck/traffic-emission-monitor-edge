@@ -1,5 +1,5 @@
 import cv2
-cv2.setNumThreads(1) # 限制OpenCV使用线程数，防止资源争抢
+cv2.setNumThreads(2) # 限制OpenCV使用线程数，防止资源争抢
 import numpy as np
 import supervision as sv
 import time
@@ -79,6 +79,10 @@ class TrafficMonitorEngine:
         # 当前采集任务的会话 ID
         self.current_session_id = None
 
+        # 性能探针变量
+        self.profile_stats = defaultdict(float)
+        self.profile_frames = 0
+
     def run(self):
         """
         启动基于 GStreamer 轮询的主处理循环。
@@ -140,10 +144,12 @@ class TrafficMonitorEngine:
 
             while True:
                 # 记录循环开始时间
-                loop_start = time.time()
+                loop_start = time.perf_counter()
 
                 # 拉取底层已经处理好的数据
+                t_read = time.perf_counter() # 性能探针开始
                 frame, buffer = self.camera.read()
+                self.profile_stats['01_camera_read'] += (time.perf_counter() - t_read) # 性能探针结束
 
                 # 异步握手与终止判定
                 if not getattr(self.camera, 'is_running', True):
@@ -238,10 +244,13 @@ class TrafficMonitorEngine:
                 # --- 核心处理流水线 ---
                 try:
                     # 提前呼叫感知层，剥离提取纯粹的 Python 数据字典
+                    t_vision = time.perf_counter() # 性能探针开始
                     detections = self.vision.process(frame, buffer)
                     
                     # 立刻斩断底层 GStreamer 内存锁！绝不将其带入后续耗时环节
-                    del buffer
+                    # del buffer
+
+                    self.profile_stats['02_vision_extract'] += (time.perf_counter() - t_vision) # 性能探针结束
                     
                     # 带着纯 Python 的 detections 进入重负载流水线，彻底解放底层视频流
                     annotated_frame = self.process_frame(frame, detections, frame_id, current_fps, frame_timestamp)
@@ -252,10 +261,10 @@ class TrafficMonitorEngine:
                     break # 遇到严重逻辑错误直接跳出循环，释放资源
                 
                 # --- 实时预览 ---
+                t_ui = time.perf_counter() # 性能探针开始
                 if self.frame_callback:
-                    # 为了性能，直接在 Engine 端缩放到树莓派屏幕尺寸 800x480
-                    display = resize_with_pad(annotated_frame, (800, 480))
-                    self.frame_callback(display)
+                    self.frame_callback(annotated_frame)
+                self.profile_stats['08_ui_resize_emit'] += (time.perf_counter() - t_ui) # 性能探针结束
                 
                 if not getattr(self, '_is_running', True):
                     break
@@ -270,6 +279,12 @@ class TrafficMonitorEngine:
                     elapsed = time.time() - loop_start
                     if elapsed < target_delay:
                         time.sleep(target_delay - elapsed)
+
+                # 结算打印性能信息
+                self.profile_stats['00_total_loop'] += (time.perf_counter() - loop_start)
+                self.profile_frames += 1
+                if self.profile_frames >= 30:
+                    self._print_profile_stats()
                     
         except KeyboardInterrupt:
             print("\n>>> [Engine] 接收到退出信号...")
@@ -284,13 +299,17 @@ class TrafficMonitorEngine:
         """
         h, w = frame.shape[:2]
         
+        # --- Step 1: 逻辑过滤 ---
         # 为防止识别错误，采用物理与事实先验知识进行过滤
+        t_start = time.perf_counter()
         detections = self.box_filter.apply_pixel_filters(detections, frame.shape)
         if self.comps.get('transformer'):
             detections = self.box_filter.correct_classes_by_physics(detections, self.spatial)
+        self.profile_stats['03_physics_filter'] += (time.perf_counter() - t_start)
 
         # --- Step 2: 注册表更新 (Registry Update) ---
         # 提取标定区域的垂直边界 (用于空间加权)
+        t_start = time.perf_counter()
         roi_bounds = None
         if self.comps.get('transformer'):
             # 返回的是 (min_y, max_y)，代表画面中 ROI 的最上端和最下端
@@ -299,15 +318,19 @@ class TrafficMonitorEngine:
         # 将 roi_bounds 传给 update 方法
         self.registry.update(detections, frame_id, frame_timestamp, None, roi_bounds=roi_bounds)
         self._handle_exits(frame_id, frame_timestamp)
+        self.profile_stats['04_registry_update'] += (time.perf_counter() - t_start)
         
         # --- Step 3: 异步车牌分类 ---
+        t_start = time.perf_counter()
         if self.ocr_on and self.plate_worker:
             # 1. 投递新任务
             self._dispatch_plate_tasks(frame, frame_id, detections)
             # 2. 收割已完成的结果 (不阻塞)
             self._collect_plate_results()
+        self.profile_stats['05_ocr_dispatch'] += (time.perf_counter() - t_start)
 
         # --- Step 4: 物理轨迹打点与动态死区判定 ---
+        t_start = time.perf_counter()
         if self.motion_on and self.comps.get('transformer'):
             points = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
 
@@ -341,16 +364,21 @@ class TrafficMonitorEngine:
                         pixel_x=raw_point[0], pixel_y=raw_point[1],  
                         timestamp=frame_timestamp
                     )
+        self.profile_stats['06_kinematics'] += (time.perf_counter() - t_start)
 
         # --- Step 5: 可视化渲染 ---
+        t_start = time.perf_counter()
         # 传入所有追踪到的目标
         filtered_detections = detections
         
         # 为真实车辆和正在识别中的车辆生成 UI 标签数据
         label_data_list = self._prepare_labels(filtered_detections, frame.shape)
-        
+
         # 传递过滤后的数据给视觉渲染器
-        return self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
+        annotated_frame = self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
+        self.profile_stats['07_visualizer_render'] += (time.perf_counter() - t_start)
+        
+        return annotated_frame
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):
         """派发任务给子进程：基于清晰度评估与预处理的动态抽帧"""
@@ -692,3 +720,23 @@ class TrafficMonitorEngine:
             self.db.complete_session(self.current_session_id, time.time())
 
         self.db.close()
+
+    def _print_profile_stats(self):
+        """打印每 30 帧的性能监控报表"""
+        print(f"\n{'='*45}")
+        print(f"[性能探针] 过去 30 帧平均耗时 (ms/帧)")
+        print(f"{'-'*45}")
+        keys = sorted(self.profile_stats.keys())
+        for k in keys:
+            avg_ms = (self.profile_stats[k] / self.profile_frames) * 1000
+            # 突出显示总耗时和拉流耗时
+            if k == '00_total_loop':
+                print(f"{'-'*45}\n> {k.ljust(23)}: {avg_ms:6.2f} ms")
+            else:
+                print(f"  {k.ljust(23)}: {avg_ms:6.2f} ms")
+        print(f"{'='*45}\n")
+
+        # 重置统计
+        for k in keys:
+            self.profile_stats[k] = 0.0
+        self.profile_frames = 0
