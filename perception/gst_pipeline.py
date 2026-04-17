@@ -11,6 +11,19 @@ from gi.repository import Gst, GLib
 
 logger = logging.getLogger(__name__)
 
+def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
+    """
+    提供给 UI 面板测试摄像头或系统降级备用的纯字符串管道。
+    """
+    w = int(float(width))
+    h = int(float(height))
+    f = int(float(fps)) 
+    
+    return (
+        f"libcamerasrc ! video/x-raw, format=NV12, width={w}, height={h}, framerate={f}/1 ! "
+        f"videoconvert ! video/x-raw, format=BGR ! appsink drop=true sync=false"
+    )
+
 class GstPipelineManager:
     def __init__(self, config: dict):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
