@@ -4,24 +4,12 @@ import numpy as np
 import os
 import logging
 import infra.config.loader as cfg
+from perception.math.geometry import FastUndistorter # 导入去畸变器
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 
 logger = logging.getLogger(__name__)
-
-def get_rpi_camera_pipeline(width=1440, height=1080, fps=30):
-    """纯画面拉流管道 (原生 GStreamer 专用)"""
-    # 强制转换 fps 为 int，防止出现 30.0/1 导致 GStreamer 解析为 string 类型
-    fps_int = int(fps)
-    return (
-        f"libcamerasrc ! "
-        f"video/x-raw, format=NV12, width={width}, height={height}, framerate={fps_int}/1 ! "
-        f"videoconvert ! "
-        f"video/x-raw, format=BGR ! "
-        # 指定名字为 preview_sink，并允许 emit 提取画面
-        f"appsink name=preview_sink emit-signals=true max-buffers=2 drop=true sync=false"
-    )
 
 class GstPipelineManager:
     def __init__(self, config: dict):
@@ -34,195 +22,150 @@ class GstPipelineManager:
 
         self.out_w = config.get("frame_width", 1280) 
         self.out_h = config.get("frame_height", 720)
-        
         self.use_camera = cfg.USE_CAMERA
-        self.pipeline_string = self._build_pipeline()
-        self.pipeline = Gst.parse_launch(self.pipeline_string)
-
-        # 将 YAML 文本注入给底层的 OpenCV 插件
-        undistort_node = self.pipeline.get_by_name("undistort_node")
-        if undistort_node:
-            yml_path = os.path.abspath("resources/camera_calib_6mm.yml")
-            try:
-                with open(yml_path, "r") as f:
-                    calib_data = f.read()
-                # 动态设置属性，避开字符串转义陷阱
-                undistort_node.set_property("settings", calib_data)
-                logger.info(f"成功加载相机去畸变标定文件: {yml_path}")
-            except Exception as e:
-                logger.error(f"加载畸变文件失败，程序可能会崩溃: {e}")
         
-        self.sink_video = self.pipeline.get_by_name("sink_video")
-        self.sink_meta = self.pipeline.get_by_name("sink_meta")
-        self.bus = self.pipeline.get_bus() 
-        self.is_running = False
-        self._kept_sample = None
+        # 1. 初始化 Python 极速去畸变器
+        self.undistorter = FastUndistorter("resources/camera_calib_6mm.npz", (self.out_w, self.out_h))
 
-    def _build_pipeline(self) -> str:
+        # 2. 构建两条独立的管道
+        self.src_pipeline_str, self.process_pipeline_str = self._build_pipelines()
+        
+        self.src_pipeline = Gst.parse_launch(self.src_pipeline_str)
+        self.process_pipeline = Gst.parse_launch(self.process_pipeline_str)
+
+        # 3. 获取所有数据交接节点
+        self.raw_sink = self.src_pipeline.get_by_name("raw_sink")
+        self.clean_src = self.process_pipeline.get_by_name("clean_src")
+        self.meta_sink = self.process_pipeline.get_by_name("meta_sink")
+        
+        # 监听两条管道的总线
+        self.src_bus = self.src_pipeline.get_bus() 
+        self.process_bus = self.process_pipeline.get_bus()
+        self.is_running = False
+
+    def _build_pipelines(self):
         is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
-        # 实时拉流和离线文件分支构建逻辑
+        # ==================== 管道 1：源流拉取 (Camera -> Python) ====================
         if is_camera:
             source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1"
-            # 实时拉流：必须开启丢帧策略，保证永远获取最新画面，实现零延迟
-            queue_prop = "leaky=downstream"
-            sink_prop = "drop=true sync=false"
+            sink_prop = "drop=true max-buffers=2 sync=false"
         else:
             abs_path = os.path.abspath(self.video_path)
             source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
-            # 离线文件：关闭所有丢帧属性。利用 Python 端循环速度反向阻塞 (Backpressure) GStreamer 解码流速
-            queue_prop = "" 
-            sink_prop = "drop=false sync=false"
+            sink_prop = "drop=false max-buffers=2 sync=false"
 
-        # 去畸变相关设置
-        undistort_stage = "videoconvert ! video/x-raw, format=BGR ! cameraundistort name=undistort_node ! "
+        src_pipeline = (
+            f"{source_head} ! "
+            f"videoconvert ! video/x-raw, format=BGR ! "
+            f"appsink name=raw_sink emit-signals=false {sink_prop}"
+        )
 
-        # 录制分支构建逻辑
+        # ==================== 管道 2：分发处理 (Python -> AI & Record) ====================
+        # appsrc 是入口，声明接收 BGR 格式
+        appsrc_head = (
+            f"appsrc name=clean_src is-live=true format=time ! "
+            f"video/x-raw, format=BGR, width={self.out_w}, height={self.out_h}, framerate=30/1 ! "
+            f"tee name=t"
+        )
+
         record_branch = ""
-        # 仅在物理摄像头模式且打开了录制开关时，激活录制管道
         if is_camera and cfg.ENABLE_RECORD:
             os.makedirs(cfg.RECORD_SAVE_PATH, exist_ok=True)
-            
-            # splitmuxsink 的 max-size-time 单位是纳秒 (ns)
             segment_ns = int(cfg.RECORD_SEGMENT_MIN * 60 * 1000000000)
-            
-            # 默认路径模板，稍后会被 monitor_engine 动态修改
             loc_pattern = os.path.join(cfg.RECORD_SAVE_PATH, "temp_rec_%05d.mp4")
-            
-            # 采用高兼容性软件编码器方案：
-            # 1. 增加 videoconvert 自动协商色彩空间（x264enc 通常偏好 I420）
-            # 2. 使用 x264enc 替代 v4l2h264enc，并使用 ultrafast 降低 CPU 占用
             record_branch = (
-                f"t. ! queue max-size-buffers=30 leaky=downstream ! "
-                f"videoconvert ! "
-                f"x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 ! "
-                f"h264parse ! splitmuxsink name=rec_sink location=\"{loc_pattern}\" max-size-time={segment_ns} "
+                f" t. ! queue max-size-buffers=30 leaky=downstream ! "
+                f"videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 ! "
+                f"h264parse ! splitmuxsink name=rec_sink location=\"{loc_pattern}\" max-size-time={segment_ns}"
             )
 
-        pipeline = (
-            f"{source_head} ! {undistort_stage} tee name=t "
+        process_pipeline = (
+            f"{appsrc_head} "
             
-            # --- 分支1: 视频画面分支 ---
-            f"t. ! queue max-size-buffers=2 {queue_prop} ! "
-            f"videoconvert ! video/x-raw, format=BGR ! "
-            f"appsink name=sink_video emit-signals=false max-buffers=1 {sink_prop} "
-            
-            # --- 分支2: AI 推理分支 ---
-            f"t. ! queue max-size-buffers=2 {queue_prop} ! "
+            # --- AI 推理分支 ---
+            f"t. ! queue max-size-buffers=2 leaky=downstream ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
             f"hailonet hef-path={self.hef_path} multi-process-service=true vdevice-group-id=SHARED ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
-            f"appsink name=sink_meta emit-signals=false max-buffers=1 {sink_prop} "
-
-            # --- 分支3: 录制切片分支 ---
+            f"appsink name=meta_sink emit-signals=false drop=true max-buffers=1 sync=false"
+            
+            # --- 录制分支 ---
             f"{record_branch}"
         )
 
-        # 使用 INFO 记录生成的完整指令，方便复制到终端测试
-        logger.info(f"构建 GStreamer 管道: {pipeline}")
-        return pipeline
+        logger.info(f"构建源流管道: {src_pipeline}")
+        logger.info(f"构建处理管道: {process_pipeline}")
+        return src_pipeline, process_pipeline
 
     def start(self):
-        logger.info("正在启动 GStreamer 推理管道...")
-        self.pipeline.set_state(Gst.State.PLAYING)
+        logger.info("正在启动双核 GStreamer 管道...")
+        # 必须先启动下游，再启动上游源流
+        self.process_pipeline.set_state(Gst.State.PLAYING)
+        self.src_pipeline.set_state(Gst.State.PLAYING)
         self.is_running = True
 
     def stop(self):
         if self.is_running:
-            # 动态判断当前是否处于录制状态
-            is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
-            is_recording = is_camera and cfg.ENABLE_RECORD
-
-            if is_recording:
-                logger.info("正在发送 EOS 信号以安全封装视频切片...")
-                # 1. 发送 EOS 事件，通知 muxer 插件写入文件尾
-                self.pipeline.send_event(Gst.Event.new_eos())
-                
-                # 2. 等待 EOS 消息出现在总线上 (最多等待 2 秒)
-                bus = self.pipeline.get_bus()
-                bus.timed_pop_filtered(
-                    2 * Gst.SECOND, 
-                    Gst.MessageType.EOS | Gst.MessageType.ERROR
-                )
-            else:
-                logger.info("正在关闭推理管道...")
+            self.src_pipeline.set_state(Gst.State.NULL)
             
-            # 3. 彻底关闭管道
-            self.pipeline.set_state(Gst.State.NULL)
+            # 给 appsrc 发送 EOS 以安全封装 mp4 录像
+            self.clean_src.emit("end-of-stream")
+            bus = self.process_pipeline.get_bus()
+            bus.timed_pop_filtered(2 * Gst.SECOND, Gst.MessageType.EOS)
+            
+            self.process_pipeline.set_state(Gst.State.NULL)
             self.is_running = False
-            logger.info("GStreamer 管道已安全关闭。")
+            logger.info("所有 GStreamer 管道已安全关闭。")
 
     def read(self):
         if not self.is_running: return None, None
 
-        msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.EOS)
-        if msg:
-            if msg.type == Gst.MessageType.ERROR:
-                err, debug = msg.parse_error()
-                logger.critical(f"GStreamer 致命崩溃: {err} | 详情: {debug}")
-                self.is_running = False
-                
-            elif msg.type == Gst.MessageType.EOS:
-                logger.info("视频流播放完毕 (EOS)。")
-                self.is_running = False
-                
+        # 1. 从源头拉取原始畸变画面
+        sample_raw = self.raw_sink.emit("try-pull-sample", 5000000) # 5ms timeout
+        if not sample_raw: 
             return None, None 
 
-        # 1. 获取视频帧 (允许5ms超时)
-        sample_video = self.sink_video.emit("try-pull-sample", 5000000)
-        if not sample_video: 
-            # 实时流中偶尔丢帧可使用 WARNING
-            logger.warning("无法从 appsink 拉取视频样本 (超时)")
-            return None, None 
+        buf_raw = sample_raw.get_buffer()
+        # 提取原始时间戳，后续要转交给下游，否则录制器会因时间戳混乱而崩溃
+        pts = buf_raw.pts
+        dts = buf_raw.dts
+        duration = buf_raw.duration
 
-        # 2. 尝试获取 AI 结果 (仅等待1ms)
-        sample_meta = self.sink_meta.emit("try-pull-sample", 1000000)
-
-        if sample_meta:
-            buffer_meta = sample_meta.get_buffer()
-            # 拿到 buffer_meta 后，sample_meta 局部变量会在函数结束时被 Python 垃圾回收
-            # 底层 C++ 内存会立刻被无缝释放回 GStreamer 内存池，管道永远畅通！
-        else:
-            # 防丢帧欺骗策略
-            # 如果 AI 没赶上，造一个空的假 Buffer 骗过 monitor_engine.py
-            # 这样引擎就不会触发 "if buffer is None: continue" 把视频帧丢掉了，黑屏彻底解决！
-            logger.debug("AI 元数据未就绪，使用空 Buffer 占位。")
-            buffer_meta = Gst.Buffer.new()
-
-        buffer_video = sample_video.get_buffer()
         try:
-            success, map_info = buffer_video.map(Gst.MapFlags.READ)
-            if not success:
-                logger.error("GstBuffer 内存映射失败！")
-                return None, None
+            success, map_info = buf_raw.map(Gst.MapFlags.READ)
+            if not success: return None, None
+            raw_frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8)
             
-            caps = sample_video.get_caps()
-            struct = caps.get_structure(0)
-            actual_w = struct.get_value("width")
-            actual_h = struct.get_value("height")
+            # 2. 调用 Python 硬件加速去畸变 (耗时 ~3-5ms)
+            clean_frame = self.undistorter.process(raw_frame)
             
-            frame = np.ndarray((actual_h, actual_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
-
-            return frame, buffer_meta
-            
-        except Exception as e:
-            # 使用 exception 自动记录堆栈，这对排查 numpy 维度错误非常管用
-            logger.exception(f"解析视频内存时发生异常: {e}")
-            return None, None
-        
         finally:
-            # 无论前面发生什么崩溃、或者正常 return，finally 保证一定会执行且仅执行一次内存释放
-            if map_info is not None:
-                buffer_video.unmap(map_info)
+            buf_raw.unmap(map_info)
+
+        # 3. 将干净的画面重新封装为 GstBuffer，推入处理管道 (AI / Record)
+        clean_data = clean_frame.tobytes()
+        buf_clean = Gst.Buffer.new_wrapped(clean_data)
+        buf_clean.pts = pts
+        buf_clean.dts = dts
+        buf_clean.duration = duration
+        
+        # 注入管道
+        self.clean_src.emit("push-buffer", buf_clean)
+
+        # 4. 从处理管道拉取 AI 推理结果
+        sample_meta = self.meta_sink.emit("try-pull-sample", 1000000)
+        buffer_meta = sample_meta.get_buffer() if sample_meta else Gst.Buffer.new()
+
+        # 将干净的画面返回给 UI 显示
+        return clean_frame, buffer_meta
 
     def set_record_location(self, session_id):
-        """根据 session_id 动态更新录制文件名模板"""
-        rec_sink = self.pipeline.get_by_name("rec_sink")
+        rec_sink = self.process_pipeline.get_by_name("rec_sink")
         if rec_sink:
             import time
             timestamp = int(time.time())
-            # 命名规则：session_id + 编号(%05d) + 开始时间戳
             filename = f"{session_id}_seq%05d_start{timestamp}.mp4"
             full_path = os.path.join(cfg.RECORD_SAVE_PATH, filename)
             rec_sink.set_property("location", full_path)
