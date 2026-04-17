@@ -18,6 +18,10 @@ class EngineWorker(QThread):
         self.weather_station = weather_station
         self.engine = None
 
+    def set_prebuilt_components(self, components):
+        """接收从外部（Controller）注入的已实例化组件，如摄像头"""
+        self.prebuilt_components = components
+
     def run(self):
         # 1. 加载基础配置
         config = cfg
@@ -39,12 +43,19 @@ class EngineWorker(QThread):
 
         # 4. 装配所有组件
         # 引导模块会根据 config 自动创建 db, registry, camera, plate_worker 等
-        components = AppBootstrap.setup_components(config)
+        if hasattr(self, 'prebuilt_components') and self.prebuilt_components:
+            components = self.prebuilt_components
+            base_comps = AppBootstrap.setup_components(config)
+            for k, v in base_comps.items():
+                if k not in components:
+                    components[k] = v
+        else:
+            components = AppBootstrap.setup_components(config)
+
         if getattr(self, 'weather_station', None):
             components['weather_station'] = self.weather_station
 
         # 5. 启动引擎
-        # 此时的 components 已经是一个包含了所有依赖的干净字典
         self.engine = TrafficMonitorEngine(config, components, self.emit_frame)
         self.engine.run()
 

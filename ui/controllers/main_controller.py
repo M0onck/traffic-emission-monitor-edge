@@ -15,7 +15,7 @@ from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
 from perception.sensor.weather_station import WeatherGateway
-from perception.math.geometry import FastUndistorter
+from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
 from domain.physics.alignment_engine import DelayedAlignmentEngine
 
@@ -26,6 +26,7 @@ class MainController:
         self.is_collecting = False
         self.sampled_tid = None
         self.worker = None
+        self.global_camera = None
 
         # 定义显式的页面向导流
         # 只要在这里修改顺序，整个向导流就会自动适应，不需要改其他逻辑
@@ -124,8 +125,10 @@ class MainController:
             # 如果已经在采集中，直接跳过标定和设置，切入监控面板
             self.enter_app(self.view.page_monitor)
         else:
-            # 进入第一步前，先确保加载最新的配置源
-            self.view.canvas.load_frame(cfg.VIDEO_PATH)
+            # 确保全局摄像头实例化，并注入给标定画布
+            if self.global_camera is None:
+                self.global_camera = GstPipelineManager(cfg)
+            self.view.canvas.load_camera(self.global_camera)
             # 如果尚未运行，按照正常流程进入第一步预设
             self.enter_app(self.wizard_flow[0])
     
@@ -164,6 +167,11 @@ class MainController:
 
     def return_to_home(self):
         """返回主界面"""
+        # 返回主页时，如果不处于收集中，彻底释放摄像头资源
+        if self.global_camera and not self.is_collecting:
+            self.global_camera.stop()
+            self.global_camera = None
+
         # 获取跳转前的当前页面
         current_widget = self.view.stack.currentWidget()
         
@@ -188,7 +196,10 @@ class MainController:
                 self.enter_app(prev_page_widget)
                 
                 if prev_page_widget == self.view.page_calibration:
-                    self.view.canvas.load_frame(cfg.VIDEO_PATH)
+                    # 恢复标定页面时，重新分配全局摄像头
+                    if self.global_camera is None:
+                        self.global_camera = GstPipelineManager(cfg)
+                    self.view.canvas.load_camera(self.global_camera)
 
     def next_page(self):
         """下一页触发逻辑"""
@@ -206,7 +217,9 @@ class MainController:
 
                 # 修复点：进入标定步骤时的处理，提前到路由跳转之前
                 if next_page_widget == self.view.page_calibration:
-                    self.view.canvas.load_frame(cfg.VIDEO_PATH)
+                    if self.global_camera is None:
+                        self.global_camera = GstPipelineManager(cfg)
+                    self.view.canvas.load_camera(self.global_camera)
 
                 # 修复点：使用 enter_app 统一接管路由，触发安全锁
                 self.enter_app(next_page_widget)
@@ -298,11 +311,14 @@ class MainController:
     
     # --- 任务启停控制 ---
     def start_engine(self):
-        # 提取的是反算好的原生 1080p 真实坐标
+        # 提取的是反算好的原生坐标
         source_points = self.view.canvas.get_real_points()
         
         # 启动后台引擎线程
         self.worker = EngineWorker(source_points, self.view.phys_w, self.view.phys_h, weather_station=self.weather_gw)
+        # 依赖注入，将处于热机状态的全局摄像头直接传给底层引擎
+        if self.global_camera:
+            self.worker.set_prebuilt_components({'camera': self.global_camera})
         self.worker.frame_ready.connect(self.update_video_frame)
         self.worker.start()
     
@@ -318,6 +334,9 @@ class MainController:
         if hasattr(self, 'worker'):
             self.worker.stop()
             self.worker.wait(1000)
+
+        # 清空摄像机实例状态，让下次点击采集时重新拉起管线
+        self.global_camera = None
         
         self.is_collecting = False
         self.update_main_menu_btn_style()
@@ -608,6 +627,17 @@ class MainController:
         self._update_thermal_view()  # 1. 实时刷新热成像
         self._update_dashboard()     # 2. 刷新车辆抽样看板
 
+    def _reload_global_camera(self):
+        """根据新配置销毁并重载摄像头"""
+        if self.global_camera:
+            self.global_camera.stop()
+            self.global_camera = None
+            
+        # 如果当前正停留在标定页，立马重载它（通常不会发生，因为设置页独立）
+        if self.view.stack.currentWidget() == self.view.page_calibration:
+            self.global_camera = GstPipelineManager(cfg)
+            self.view.canvas.load_camera(self.global_camera)
+
     def handle_browse_local_video(self):
         """处理点击浏览本地视频文件的逻辑"""
         # 用户既然点击了浏览，就顺便自动帮其勾选上“本地视频”单选框
@@ -627,9 +657,7 @@ class MainController:
             
             # 2. 调用 config/loader.py 中的方法更新并落盘
             cfg.update_source_settings(file_path, use_camera=False)
-            
-            # 如果此时在标定页，可能需要重新加载第一帧
-            self.view.canvas.load_frame(cfg.VIDEO_PATH) 
+            self._reload_global_camera() # 销毁旧实例
             
             print(f"前端控制器：已更新视频输入路径为 {file_path}，并保存至配置文件")
 
@@ -659,8 +687,7 @@ class MainController:
             self.view.lbl_camera_info.setText(display_text)
             
             cfg.update_source_settings(pipeline, use_camera=True)
-            # 立即更新标定画布的源
-            self.view.canvas.load_frame(cfg.VIDEO_PATH)
+            self._reload_global_camera() # 销毁旧实例
             print(f"控制器：已切换至物理摄像头流: {pipeline}")
         else:
             self.view.lbl_camera_info.setText(f"未发现摄像头设备 ({camera_path})")
@@ -676,6 +703,7 @@ class MainController:
             # 切换到本地模式
             current_path = self.view.lbl_local_path.text()
             cfg.update_source_settings(current_path, use_camera=False)
+            self._reload_global_camera()
         
         elif self.view.radio_source_camera.isChecked():
             # 只要当前提示标签显示为“已接入”，就自动切换配置
@@ -684,8 +712,7 @@ class MainController:
             if "已接入" in info_text:
                 pipeline = gst.get_rpi_camera_pipeline(cfg.FRAME_WIDTH, cfg.FRAME_HEIGHT, cfg.FPS)
                 cfg.update_source_settings(pipeline, use_camera=True)
-                # 立即尝试加载第一帧预览
-                self.view.canvas.load_frame(cfg.VIDEO_PATH)
+                self._reload_global_camera() # 【新增】
                 print(f"控制器：已根据现有状态自动切换至摄像头: {pipeline}")
 
     def handle_run_mode_changed(self):
