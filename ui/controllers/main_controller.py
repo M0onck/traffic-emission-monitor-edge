@@ -360,6 +360,12 @@ class MainController:
         """处理整个应用的关闭回收"""
         if self.is_collecting:
             self.final_stop_process()
+
+        # 如果在未收集状态下退出（例如停留在标定页、设置页），手动释放全局摄像头
+        if self.global_camera and not self.is_collecting:
+            self.global_camera.stop()
+            self.global_camera = None
+            print("前端控制器：已清理全局摄像头后台管线。")
         
         # 安全关闭气象网关 C++ 后台线程，防止内存或串口泄漏
         if self.weather_gw:

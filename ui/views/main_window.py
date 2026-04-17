@@ -467,7 +467,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_calib_title)
         
         self.canvas = CalibrationCanvas()
-        self.canvas.load_frame(cfg.VIDEO_PATH) # 加载第一帧
         layout.addWidget(self.canvas)
         
         self.stack.addWidget(self.page_calibration)

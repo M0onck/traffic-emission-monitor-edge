@@ -41,15 +41,8 @@ class AppBootstrap:
         }
         classifier = VehicleClassifier(yolo_classes=yolo_classes_dict)
 
-        # 3. 感知层：GStreamer 视频流硬件管道 (组装成期待的 dict)
-        camera_cfg = {
-            "video_path": config.VIDEO_PATH,
-            "hef_path": config.HEF_PATH,
-            "post_so_path": config.POST_SO_PATH,
-            "frame_width": config.FRAME_WIDTH,
-            "frame_height": config.FRAME_HEIGHT
-        }
-        camera = GstPipelineManager(camera_cfg)
+        # 3. 感知层：GStreamer 视频流硬件管道
+        camera = GstPipelineManager(config)
 
         # 4. 异步处理：OCR 车牌识别工人 (传入具体的模型路径)
         plate_worker = None

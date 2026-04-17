@@ -45,7 +45,16 @@ class EngineWorker(QThread):
         # 引导模块会根据 config 自动创建 db, registry, camera, plate_worker 等
         if hasattr(self, 'prebuilt_components') and self.prebuilt_components:
             components = self.prebuilt_components
+
+            # 临时关闭摄像头配置，防止 AppBootstrap 内部重复争抢 /dev/video0
+            temp_use_camera = config.USE_CAMERA
+            config.USE_CAMERA = False
+
             base_comps = AppBootstrap.setup_components(config)
+
+            # 恢复真实配置
+            config.USE_CAMERA = temp_use_camera
+            
             for k, v in base_comps.items():
                 if k not in components:
                     components[k] = v
