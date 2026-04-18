@@ -1,63 +1,131 @@
-# perception/sensor/thermal_camera.py
-from ctypes import *
+import multiprocessing as mp
+import ctypes
 import numpy as np
 import threading
 import time
 import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
+    """
+    隔离子进程
+    即使在这里发生 I2C 底层死锁，也不会波及主系统。
+    """
+    try:
+        lib = ctypes.cdll.LoadLibrary(lib_path)
+    except Exception as e:
+        logger.error(f"[ThermalWorker] 库加载失败: {e}")
+        return
+
+    ptemp = ctypes.pointer(shared_array)
+    
+    while run_flag.value:
+        try:
+            # 阻塞型硬件读取
+            lib.get_mlx90640_temp(ptemp)
+            # 读取成功，立刻更新心跳时间戳
+            heartbeat.value = time.time()
+        except Exception as e:
+            # 过滤偶发的传输错误，防止频发刷屏
+            time.sleep(0.5)
 
 class ThermalCamera:
     """
-    [感知层] 热成像传感器异步驱动
-    负责在后台线程安全地调用 .so 库读取 MLX90640 数据，防止阻塞主视频流。
+    具备自动恢复能力的热成像驱动封装
     """
     def __init__(self, lib_path='./libmlx90640.so'):
-        if not os.path.exists(lib_path):
-            print(f">>> [Warning] 热成像动态库未找到: {lib_path}")
-            self.lib = None
+        self.lib_path = lib_path
+        
+        # 1. 开辟进程间共享内存
+        self.shared_array = mp.Array(ctypes.c_float, 768)
+        self.heartbeat = mp.Value('d', time.time()) # 双精度浮点型时间戳
+        self.run_flag = mp.Value(ctypes.c_bool, False)
+        
+        self._process = None
+        self._watchdog_thread = None
+        
+        # 记录重启次数，防止陷入无限死循环
+        self._restart_count = 0
+        self._max_restarts = 5 
+
+    def start(self):
+        if not os.path.exists(self.lib_path):
+            logger.warning(f"热成像动态库未找到: {self.lib_path}，模块已停用.")
             return
             
-        self.lib = cdll.LoadLibrary(lib_path)
+        self.run_flag.value = True
+        self._start_worker_process()
         
-        # 预先分配 C 语言的 float 数组内存 (32 * 24 = 768)
-        self._temp_array = (c_float * 768)()
-        self._ptemp = pointer(self._temp_array)
-        
-        self.latest_frame = None
-        self._running = False
-        self._lock = threading.Lock()
-        
-    def start(self):
-        if self.lib is None: return
-        print(">>> [ThermalCamera] 启动热成像后台采集线程...")
-        self._running = True
-        self._thread = threading.Thread(target=self._update_loop, daemon=True)
-        self._thread.start()
+        # 启动后台看门狗线程监控子进程
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self._watchdog_thread.start()
 
-    def _update_loop(self):
-        while self._running:
-            try:
-                # 调用底层 C 库读取数据 (这是阻塞型操作)
-                self.lib.get_mlx90640_temp(self._ptemp)
-                
-                # 将 C 数组转化为 Numpy 数组，并 reshape 为图像矩阵 (高度24, 宽度32)
-                frame = np.array(self._temp_array, dtype=np.float32).reshape((24, 32))
-                
-                # 加锁更新最新帧，供主线程读取
-                with self._lock:
-                    self.latest_frame = frame
+    def _start_worker_process(self):
+        """拉起硬件工作进程"""
+        self.heartbeat.value = time.time() # 启动前刷新心跳
+        self._process = mp.Process(
+            target=_thermal_worker, 
+            args=(self.lib_path, self.shared_array, self.heartbeat, self.run_flag),
+            daemon=True
+        )
+        self._process.start()
+        logger.info(f"[ThermalCamera] 热成像工作进程已启动 (PID: {self._process.pid})")
+
+    def _watchdog_loop(self):
+        """
+        看门狗守护逻辑
+        监控硬件进程状态，实现自动断线重连。
+        """
+        while self.run_flag.value:
+            time.sleep(2.0) # 每2秒巡视一次
+            
+            # 计算距离上次成功读取的时间差
+            time_since_last_beat = time.time() - self.heartbeat.value
+            
+            # 如果超过 5 秒没有心跳，判定为 I2C 死锁
+            if time_since_last_beat > 5.0:
+                if self._restart_count >= self._max_restarts:
+                    logger.error("[ThermalCamera] I2C 硬件连续重启失败，已触发断路，停止热成像采集.")
+                    self.run_flag.value = False # 放弃该传感器，让系统主线继续运行
+                    break
                     
-            except Exception as e:
-                print(f"[ThermalCamera] 读取异常: {e}")
-                time.sleep(0.1)
+                logger.warning(f"[ThermalCamera] 检测到 I2C 死锁 (心跳停止 {time_since_last_beat:.1f}s)。正在尝试自动重启...")
+                self._restart_count += 1
+                
+                # 1. 强制猎杀卡死的进程，释放 /dev/i2c 文件描述符
+                if self._process and self._process.is_alive():
+                    self._process.terminate()
+                    self._process.join(timeout=1.0)
+                
+                # 2. 稍微给 Linux 内核一点时间清理底层驱动状态
+                time.sleep(1.0) 
+                
+                # 3. 重新拉起进程
+                self._start_worker_process()
+                logger.info(f"[ThermalCamera] 自动重启完成，已重置 I2C 连接 (当前重试: {self._restart_count}/{self._max_restarts})")
+            
+            # 如果成功读取，慢慢重置重启计数器（证明稳定下来了）
+            elif time_since_last_beat < 1.0 and self._restart_count > 0:
+                self._restart_count = 0
 
     def read(self) -> np.ndarray:
-        """非阻塞读取最新的一帧热成像数据 (24x32 的二维温度矩阵)"""
-        if self.lib is None: return None
-        with self._lock:
-            return self.latest_frame.copy() if self.latest_frame is not None else None
+        """主引擎调用的非阻塞读取接口"""
+        if not self.run_flag.value or self._process is None or not self._process.is_alive():
+            return None
+            
+        # 如果心跳严重超时，返回 None 避免主引擎拿到陈旧的冻结画面
+        if time.time() - self.heartbeat.value > 2.0:
+            return None
+            
+        # 极速零拷贝：直接从共享内存映射出 24x32 矩阵
+        return np.frombuffer(self.shared_array.get_obj(), dtype=np.float32).reshape((24, 32))
 
     def stop(self):
-        self._running = False
-        if hasattr(self, '_thread'):
-            self._thread.join(timeout=1.0)
-            print(">>> [ThermalCamera] 采集线程已安全停止。")
+        self.run_flag.value = False
+        if self._process and self._process.is_alive():
+            self._process.join(timeout=1.0)
+            if self._process.is_alive():
+                self._process.terminate()
+        logger.info("[ThermalCamera] 热成像模块已安全停止.")

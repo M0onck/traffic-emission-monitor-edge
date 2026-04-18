@@ -1,7 +1,7 @@
 import sys
 import logging
 from PyQt5.QtWidgets import QApplication
-from multiprocessing import Process
+from multiprocessing import Process, Event
 import infra.config.loader as cfg
 
 from ui.views.main_window import MainWindow
@@ -25,18 +25,20 @@ logging.basicConfig(
 # GStreamer 硬件流媒体层调试日志
 # logging.getLogger("perception.gst_pipeline").setLevel(logging.DEBUG)
 
-def start_daemon():
-    """启动独立进程运行 Daemon"""
-    daemon = AlignmentDaemon(cfg)
+def start_daemon(stop_event):
+    """将事件对象传入守护进程"""
+    from app.alignment_daemon import AlignmentDaemon
+    daemon = AlignmentDaemon(cfg, stop_event) # 传入 stop_event
     daemon.run()
 
 def main():
     app = QApplication(sys.argv)
     
     daemon_process = None
-    # 架构解耦：仅在 inference 模式下，于边缘端并行启动特征对齐守护进程
+    stop_event = Event()
+    # 仅在 inference 模式下，于边缘端并行启动特征对齐守护进程
     if cfg.RUN_MODE == 'inference':
-        daemon_process = Process(target=start_daemon, daemon=True)
+        daemon_process = Process(target=start_daemon, args=(stop_event,), daemon=True)
         daemon_process.start()
     else:
         print(">>> [System] 当前为 collection 采集模式，后台对齐引擎已关闭。")
@@ -53,10 +55,16 @@ def main():
     # 阻塞运行 GUI
     exit_code = app.exec_()
     
-    # 优雅退出守护进程
+    # 安全退出守护进程
     if daemon_process and daemon_process.is_alive():
-        daemon_process.terminate()
-        daemon_process.join()
+        print(">>> [System] 正在发送守护进程退出信号...")
+        stop_event.set() # 发送安全停止信号
+        daemon_process.join(timeout=3.0) # 留给它 3 秒时间完成最后的数据库事务
+        
+        # 兜底：如果 3 秒还没退出（发生死锁），才使用 terminate
+        if daemon_process.is_alive():
+            print(">>> [Warning] 守护进程超时未退出，已强制退出.")
+            daemon_process.terminate()
 
     sys.exit(exit_code)
 

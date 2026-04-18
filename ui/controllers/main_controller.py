@@ -332,8 +332,10 @@ class MainController:
         """正式执行退出逻辑"""
         if hasattr(self, 'dash_timer'): self.dash_timer.stop()
         if hasattr(self, 'worker'):
+            print("[Controller] 正在等待后台引擎清理数据并写入视频...")
             self.worker.stop()
-            self.worker.wait(1000)
+            if not self.worker.wait(4000):
+                print("[Warning] 后台引擎清理超时，可能导致最后一段录像损坏.")
 
         # 清空摄像机实例状态，让下次点击采集时重新拉起管线
         self.global_camera = None

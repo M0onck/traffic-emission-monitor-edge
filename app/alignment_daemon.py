@@ -12,16 +12,17 @@ class AlignmentDaemon:
     独立于视觉流的后台守护进程。
     通过轮询 SQLite 获取最新的时空游标，驱动延迟对齐引擎。
     """
-    def __init__(self, config):
+    def __init__(self, config, stop_event=None):
         self.config = config
         self.engine = DelayedAlignmentEngine(config, config.DB_PATH)
-        self.is_running = True
+        self.stop_event = stop_event
 
     def run(self):
         logger.info("延迟对齐后台进程已启动，开始监听数据库...")
         db = DatabaseManager(self.config.DB_PATH)
         
-        while self.is_running:
+        # 未收到停止信号前，循环执行
+        while not (self.stop_event and self.stop_event.is_set()):
             try:
                 # 1. 查找当前系统中最新启动的 Session
                 db.cursor.execute("SELECT session_id FROM Session_Task ORDER BY start_time DESC LIMIT 1")
