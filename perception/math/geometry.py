@@ -60,32 +60,3 @@ class ViewTransformer:
             ys = self.roi_contour[:, 1]
             
         return float(np.min(ys)), float(np.max(ys))
-
-class FastUndistorter:
-    def __init__(self, calib_file_path, resolution=(1280, 720)):
-        # 1. 加载相机内参和畸变系数
-        with np.load(calib_file_path) as data:
-            camera_matrix = data['mtx']
-            dist_coeffs = data['dist']
-
-        # 2. 获取优化后的新相机矩阵
-        w, h = resolution
-        new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(
-            camera_matrix, dist_coeffs, (w, h), 0, (w, h)
-        )
-
-        # 3. 预计算映射表，并强制使用 cv2.CV_16SC2 格式
-        # CV_16SC2 会将坐标转化为整数定点数格式，大幅提升 ARM 芯片上的重映射速度
-        self.map1, self.map2 = cv2.initUndistortRectifyMap(
-            camera_matrix, 
-            dist_coeffs, 
-            None, 
-            new_camera_matrix, 
-            (w, h), 
-            cv2.CV_16SC2
-        )
-
-    def process(self, frame):
-        # 4. 使用预计算的整数表进行快速重映射
-        # INTER_LINEAR (双线性插值) 是画质和速度的最佳平衡点
-        return cv2.remap(frame, self.map1, self.map2, interpolation=cv2.INTER_LINEAR)

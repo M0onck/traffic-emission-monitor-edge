@@ -5,15 +5,15 @@ import os
 # 确保使用绝对路径
 base_dir = os.path.abspath(os.path.dirname(__file__))
 npz_path = os.path.join(base_dir, 'camera_calib_6mm.npz')
-bin_path = os.path.join(base_dir, 'dewarp_map_rgba_1280x720.bin')
+bin_path = os.path.join(base_dir, 'dewarp_map_rgba_1456x1088.bin')
 
 print(f"正在读取标定文件: {npz_path}")
 calib_data = np.load(npz_path)
 mtx, dist = calib_data['mtx'], calib_data['dist']
-dim = (1280, 720) 
+dim = (1456, 1088) 
 
 # 生成 OpenCV 重映射表
-newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, dim, 1, dim)
+newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, dim, 0, dim)
 map_x, map_y = cv2.initUndistortRectifyMap(mtx, dist, None, newcameramtx, dim, 5)
 
 # 1. 坐标归一化并严格限制在 0.0 ~ 1.0 之间
@@ -38,6 +38,6 @@ map_rgba = np.flipud(map_rgba).copy()
 map_rgba.tofile(bin_path)
 
 file_size = os.path.getsize(bin_path)
-print(f"✅ 完美 RGBA 映射表已生成！")
+print(f"RGBA 映射表已生成！")
 print(f"文件位置: {bin_path}")
-print(f"文件大小: {file_size} bytes (必须精确为 3686400 字节)")
+print(f"文件大小: {file_size} bytes")

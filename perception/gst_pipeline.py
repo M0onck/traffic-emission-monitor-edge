@@ -4,7 +4,6 @@ import numpy as np
 import os
 import logging
 import infra.config.loader as cfg
-from perception.math.geometry import FastUndistorter # 导入去畸变器
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
@@ -52,7 +51,12 @@ class GstPipelineManager:
     def _build_pipelines(self):
         is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
-        map_bin = os.path.abspath("/home/m0onck/traffic-emission-monitor-edge/resources/dewarp_map_rgba_1280x720.bin") 
+        # 镜头原生分辨率标定文件（binary）
+        map_bin = os.path.abspath("/home/m0onck/traffic-emission-monitor-edge/resources/dewarp_map_rgba_1456x1088.bin")
+
+        # 定义底层物理分辨率和目标输出分辨率
+        cam_w, cam_h = 1456, 1088
+        out_w, out_h = self.out_w, self.out_h
         
         # 1. 录制分支
         record_branch = ""
@@ -67,17 +71,26 @@ class GstPipelineManager:
             )
 
         if is_camera:
-            source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={self.out_w}, height={self.out_h}, framerate=30/1"
+            source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={cam_w}, height={cam_h}, framerate=30/1"
         else:
             abs_path = os.path.abspath(self.video_path)
             source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
 
+        # 画幅裁剪参数计算
+        crop_left = (cam_w - out_w) // 2
+        crop_right = cam_w - out_w - crop_left
+        crop_top = (cam_h - out_h) // 2
+        crop_bottom = cam_h - out_h - crop_top
+
         # 2. 源流与 GPU 去畸变主干，动态接入 source_head
         source_section = (
             f"{source_head} ! "
-            f"glupload ! glcolorconvert ! "  
-            f"dewarpfilter map-file-path={map_bin} map-width={self.out_w} map-height={self.out_h} ! "
-            f"glcolorconvert ! gldownload ! videoconvert ! video/x-raw, format=BGR ! tee name=t"
+            f"glupload ! glcolorconvert ! "
+            # dewarpfilter 是自定义的 GPU 去畸变组件
+            f"dewarpfilter map-file-path={map_bin} map-width={cam_w} map-height={cam_h} ! " # GPU 处理段，此时流是 1456x1088
+            f"glcolorconvert ! gldownload ! videoconvert ! "
+            f"videocrop top={crop_top} bottom={crop_bottom} left={crop_left} right={crop_right} ! " # 裁剪段，切出中心画幅
+            f"video/x-raw, width={out_w}, height={out_h}, format=BGR ! tee name=t" # 锁定格式进入分支
         )
 
         # 3. AI 推理分支
