@@ -1,23 +1,27 @@
 import numpy as np
-from multiprocessing import shared_memory, Lock
+from multiprocessing import shared_memory
 import queue
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SharedMemoryPool:
-    """环形共享内存池，用于多进程间的图像零拷贝传输"""
-    def __init__(self, pool_size=10, max_width=256, max_height=256, channels=3):
+    """环形共享内存池，用于主进程与 Worker 进程间的图像零拷贝传输"""
+    
+    def __init__(self, pool_size=10, max_width=256, max_height=256, channels=3, dtype=np.uint8):
         self.pool_size = pool_size
-        self.block_bytes = max_width * max_height * channels
-        self.shape_limit = (max_height, max_width, channels)
+        # 使用真实的 dtype.itemsize 来计算物理字节上限，杜绝越界
+        self.block_bytes = max_width * max_height * channels * np.dtype(dtype).itemsize
         
         self.shm_blocks = []
+        # 注意：这是标准库队列，仅限主进程管理和使用，跨进程请用 mp.Queue
         self.free_indices = queue.Queue()
-        self.lock = Lock()
 
         # 初始化 N 块固定大小的共享内存
         for i in range(self.pool_size):
             shm_name = f"ocr_shm_block_{i}"
             try:
-                # 尝试清理残留的同名内存块
+                # 尝试清理上次异常退出残留的同名内存块
                 existing_shm = shared_memory.SharedMemory(name=shm_name)
                 existing_shm.unlink()
             except FileNotFoundError:
@@ -26,32 +30,48 @@ class SharedMemoryPool:
             shm = shared_memory.SharedMemory(name=shm_name, create=True, size=self.block_bytes)
             self.shm_blocks.append(shm)
             self.free_indices.put(i) # 初始时所有块均空闲
+            
+        logger.info(f"成功初始化零拷贝共享内存池: {pool_size} blocks, {self.block_bytes/1024:.1f} KB/block")
 
     def allocate_and_write(self, image: np.ndarray):
-        """主进程调用：获取一个空闲块并写入图像"""
-        h, w, c = image.shape
-        if h > self.shape_limit[0] or w > self.shape_limit[1]:
-            raise ValueError("图像尺寸超出共享内存块预设上限")
+        """
+        获取一个空闲块并写入图像。
+        返回 (idx, shape, dtype_str)，如果池满则返回 None。
+        """
+        # 1. 安全校验：基于物理字节数，兼容单通道灰度图或浮点图
+        if image.nbytes > self.block_bytes:
+            logger.error(f"图像尺寸超出共享内存上限! 需求: {image.nbytes}B, 上限: {self.block_bytes}B")
+            return None
 
         try:
-            # 获取空闲索引（非阻塞，拿不到说明池满了，直接丢弃该帧防堆积）
+            # 2. 获取空闲索引（非阻塞，拿不到说明池满了，限流丢弃）
             idx = self.free_indices.get_nowait()
         except queue.Empty:
-            return None # 缓冲池满，丢弃任务
+            # 缓冲池打满是边缘端的常态，直接静默丢弃即可，无需报错
+            return None 
 
-        # 写入数据
+        # 3. 内存拷贝
         shm = self.shm_blocks[idx]
-        shm_array = np.ndarray((h, w, c), dtype=image.dtype, buffer=shm.buf)
-        np.copyto(shm_array, image) # 内存拷贝
+        # 根据实际图像的 shape 和 dtype 创建一个指向共享内存的 Numpy 视图
+        shm_array = np.ndarray(image.shape, dtype=image.dtype, buffer=shm.buf)
+        np.copyto(shm_array, image) 
         
-        return idx, (h, w, c), image.dtype.str
+        return idx, image.shape, image.dtype.str
 
     def free_block(self, idx: int):
-        """主进程或子进程调用：释放内存块回内存池"""
+        """
+        归还内存块使用权。
+        子进程通过 IPC Queue 将 idx 发回给主进程，由主进程调用此方法。
+        """
         self.free_indices.put(idx)
 
     def cleanup(self):
         """系统退出时销毁所有共享内存"""
-        for shm in self.shm_blocks:
-            shm.close()
-            shm.unlink()
+        for i, shm in enumerate(self.shm_blocks):
+            try:
+                shm.close()
+                shm.unlink()
+            except Exception as e:
+                # 忽略清理时的重复释放错误
+                pass
+        logger.info("共享内存池已安全释放。")
