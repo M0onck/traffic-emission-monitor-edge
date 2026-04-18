@@ -99,16 +99,18 @@ class GstPipelineManager:
         # 3. AI 推理分支
         ai_branch = (
             f" t. ! queue max-size-buffers=2 leaky=downstream ! "
+            f"videorate ! video/x-raw, framerate=10/1 ! "
             f"videoscale ! video/x-raw, width=640, height=640 ! "
             f"videoconvert ! video/x-raw, format=RGB ! "
-            f"hailonet hef-path={self.hef_path} multi-process-service=true vdevice-group-id=SHARED ! "
+            f"hailonet hef-path={self.hef_path} multi-process-service=true vdevice-group-id=SHARED scheduling-algorithm=1 ! "
             f"hailofilter so-path={self.post_so_path} qos=false ! "
+            f"queue max-size-buffers=5 ! "
             f"appsink name=meta_sink emit-signals=false max-buffers=1 drop=true sync=false"
         )
 
-        # 4. 纯净画面预览分支
+        # 4. 画面预览分支
         preview_branch = (
-            f" t. ! queue max-size-buffers=2 leaky=downstream ! "
+            f" t. ! queue min-threshold-time=100000000 max-size-buffers=5 leaky=downstream ! "
             f"appsink name=clean_sink emit-signals=false max-buffers=1 drop=true sync=false"
         )
 

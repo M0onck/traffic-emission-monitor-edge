@@ -20,9 +20,8 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
         logger.error(f"[ThermalWorker] 库加载失败: {e}")
         return
 
-    # 剥离包装器，提取原生 C 数组，并转换为指针
-    raw_array = shared_array.get_obj()
-    ptemp = ctypes.cast(raw_array, ctypes.POINTER(ctypes.c_float))
+    # lock=False 时已经是原生 C 数组，直接转换为指针即可
+    ptemp = ctypes.cast(shared_array, ctypes.POINTER(ctypes.c_float))
     
     # 显式定义 C 函数的返回值类型为整型
     lib.get_mlx90640_temp.restype = ctypes.c_int
@@ -60,9 +59,9 @@ class ThermalCamera:
         self.lib = ctypes.cdll.LoadLibrary(lib_path)
         
         # 1. 开辟进程间共享内存
-        self.shared_array = mp.Array(ctypes.c_float, 768)
-        self.heartbeat = mp.Value('d', time.time()) # 双精度浮点型时间戳
-        self.run_flag = mp.Value(ctypes.c_bool, False)
+        self.shared_array = mp.Array(ctypes.c_float, 768, lock=False)
+        self.heartbeat = mp.Value('d', time.time(), lock=False) # 双精度浮点型时间戳
+        self.run_flag = mp.Value(ctypes.c_bool, False, lock=False)
         
         self._process = None
         self._watchdog_thread = None
@@ -136,8 +135,8 @@ class ThermalCamera:
         if time.time() - self.heartbeat.value > 2.0:
             return None
             
-        # 极速零拷贝：直接从共享内存映射出 24x32 矩阵
-        return np.frombuffer(self.shared_array.get_obj(), dtype=np.float32).reshape((24, 32))
+        # 极速零拷贝：直接从原生无锁共享内存映射出 24x32 矩阵
+        return np.frombuffer(self.shared_array, dtype=np.float32).reshape((24, 32))
 
     def stop(self):
         self.run_flag.value = False

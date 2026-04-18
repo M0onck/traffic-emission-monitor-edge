@@ -1,5 +1,7 @@
 import sys
 import logging
+import faulthandler
+faulthandler.enable()
 from PyQt5.QtWidgets import QApplication
 from multiprocessing import Process, Event
 import infra.config.loader as cfg
