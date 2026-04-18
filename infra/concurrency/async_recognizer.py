@@ -88,57 +88,78 @@ class AsyncPlateRecognizer:
             # 车牌标准几何透视点
             dst_pts = np.array([[0, 0], [96, 0], [96, 32], [0, 32]], dtype=np.float32)
 
-            with InferVStreams(*det_args) as det_pipe, InferVStreams(*cls_args) as cls_pipe:
-                print(f">>> [Worker {worker_id}] 所有的 NPU 推理通道已成功安全建立！")
+            # 外层循环，用于在 NPU 异常时自动重建 VStream 管道
+            while True:
+                try:
+                    with InferVStreams(*det_args) as det_pipe, InferVStreams(*cls_args) as cls_pipe:
+                        print(f">>> [Worker {worker_id}] 所有的 NPU 推理通道已成功安全建立！")
 
-                while True:
-                    try:
-                        track_id, vehicle_img = task_queue.get()
-                    except Exception:
-                        continue
+                        while True:
+                            try:
+                                # 使用 timeout 防止死锁阻塞
+                                track_id, vehicle_img = task_queue.get(timeout=1.0)
+                            except queue.Empty:
+                                continue
+                            except Exception:
+                                continue
 
-                    try:
-                        # ================= 1. y5fu 定位 (NPU) =================
-                        # 直接调用实例，底层代码已处理好 Letterbox 缩放和特征图拼接
-                        bboxes, landmarks = detector(vehicle_img, det_pipe)
-                        
-                        if len(bboxes) == 0: 
-                            continue
-                        
-                        # 取置信度最高的第一个车牌关键点
-                        best_landmarks = landmarks[0].astype(np.float32)
+                            try:
+                                # 空数据拦截
+                                if vehicle_img is None or vehicle_img.size == 0:
+                                    logger.warning(f"[Worker {worker_id}] TID={track_id} 收到空图像，已跳过")
+                                    continue
 
-                        # ================= 2. 几何透视变换 (CPU) =================
-                        # 利用 NPU 给出的坐标，在 CPU 执行几毫秒的轻量级拉直
-                        M = cv2.getPerspectiveTransform(best_landmarks, dst_pts)
-                        warped_plate = cv2.warpPerspective(vehicle_img, M, (96, 32))
-                        
-                        # ================= 3. litemodel 颜色分类 (NPU) =================
-                        # 直接将拉直后的图片扔给分类器
-                        lite_out = classifier(warped_plate, cls_pipe)
-                        
-                        # 剥离输出的 Batch 维度 (例如从 (1, 5) 变为 (5,))
-                        logits = np.squeeze(lite_out)
-                        
-                        # 智能概率转换：兼容 Raw Logits 和 Pre-Softmax
-                        if np.isclose(np.sum(logits), 1.0) and np.all(logits >= 0):
-                            probs = logits
-                        else:
-                            exp_logits = np.exp(logits - np.max(logits))
-                            probs = exp_logits / np.sum(exp_logits)
-                        
-                        color_idx = np.argmax(probs)
-                        conf = float(probs[color_idx])
+                                # ================= 1. y5fu 定位 (NPU) =================
+                                # 直接调用实例，底层代码已处理好 Letterbox 缩放和特征图拼接
+                                bboxes, landmarks = detector(vehicle_img, det_pipe)
+                                
+                                if len(bboxes) == 0: 
+                                    continue
+                                
+                                # 取置信度最高的第一个车牌关键点
+                                best_landmarks = landmarks[0].astype(np.float32)
 
-                        # ================= 4. 坐标归一化与投递 =================
-                        h, w = vehicle_img.shape[:2]
-                        # 归一化操作，生成 0.0 ~ 1.0 之间的相对坐标
-                        rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
-                        if conf > 0.3:
-                            logger.debug(f"[DEBUG] NPU 识别出车牌 TID={track_id}, 颜色={colors[color_idx]}, 置信度={conf:.2f}")
-                            result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
-                        else:
-                            logger.debug(f"[DEBUG] 识别失败 TID={track_id}, 置信度过低 ({conf:.2f} < 0.3)")
+                                # ================= 2. 几何透视变换 (CPU) =================
+                                # 利用 NPU 给出的坐标，在 CPU 执行几毫秒的轻量级拉直
+                                M = cv2.getPerspectiveTransform(best_landmarks, dst_pts)
+                                warped_plate = cv2.warpPerspective(vehicle_img, M, (96, 32))
+                                
+                                # ================= 3. litemodel 颜色分类 (NPU) =================
+                                # 直接将拉直后的图片扔给分类器
+                                lite_out = classifier(warped_plate, cls_pipe)
+                                
+                                # 剥离输出的 Batch 维度 (例如从 (1, 5) 变为 (5,))
+                                logits = np.squeeze(lite_out)
+                                
+                                # 智能概率转换：兼容 Raw Logits 和 Pre-Softmax
+                                if np.isclose(np.sum(logits), 1.0) and np.all(logits >= 0):
+                                    probs = logits
+                                else:
+                                    exp_logits = np.exp(logits - np.max(logits))
+                                    probs = exp_logits / np.sum(exp_logits)
+                                
+                                color_idx = np.argmax(probs)
+                                conf = float(probs[color_idx])
 
-                    except Exception as e:
-                        logger.error(f"[ERROR] 子进程异常 TID={track_id} 推理崩溃: {e}")
+                                # ================= 4. 坐标归一化与投递 =================
+                                h, w = vehicle_img.shape[:2]
+                                # 归一化操作，生成 0.0 ~ 1.0 之间的相对坐标
+                                rel_landmarks = best_landmarks / np.array([w, h], dtype=np.float32)
+                                if conf > 0.3:
+                                    logger.debug(f"[DEBUG] NPU 识别出车牌 TID={track_id}, 颜色={colors[color_idx]}, 置信度={conf:.2f}")
+                                    result_queue.put_nowait((track_id, colors[color_idx], conf, rel_landmarks))
+                                else:
+                                    logger.debug(f"[DEBUG] 识别失败 TID={track_id}, 置信度过低 ({conf:.2f} < 0.3)")
+
+                            except Exception as e:
+                                logger.error(f"[ERROR] 子进程异常 TID={track_id} 推理崩溃: {e}")
+                                # 如果是硬件或 Hailo 框架层面的报错，必须跳出内层循环，利用外层循环销毁并重建异常的 C++ 管道
+                                err_str = str(e).lower()
+                                if "hailo" in str(type(e)).lower() or "infer" in err_str or "vstream" in err_str:
+                                    logger.warning(f"[Worker {worker_id}] 检测到 Hailo 底层管道损坏，正在尝试重启 NPU 通道...")
+                                    break # 打破内层循环，退出 with 上下文释放损坏资源
+
+                except Exception as fatal_e:
+                    logger.error(f"[Worker {worker_id}] NPU 通道崩溃/挂载失败，等待重试: {fatal_e}")
+                    import time
+                    time.sleep(1) # 避免异常时高频刷日志榨干 CPU
