@@ -6,7 +6,7 @@ import time
 import traceback
 import logging
 from collections import defaultdict
-from ui.renderer import resize_with_pad, LabelData
+from ui.renderer import LabelData
 from infra.time.ntp_sync import TimeSynchronizer
 from domain.physics.spatial_analyzer import SpatialAnalyzer
 from domain.physics.kinematics_smoother import KinematicsSmoother

@@ -122,17 +122,3 @@ class Visualizer:
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (132, 201, 139), 3, cv2.LINE_AA)
         
         return scene
-
-def resize_with_pad(image: np.ndarray, target_size: tuple) -> np.ndarray:
-    """
-    工具函数：保持纵横比缩放并填充黑边
-    """
-    h, w = image.shape[:2]
-    target_w, target_h = target_size
-    scale = min(target_w / w, target_h / h)
-    new_w, new_h = int(w * scale), int(h * scale)
-    resized_img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-    canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-    x_off, y_off = (target_w - new_w) // 2, (target_h - new_h) // 2
-    canvas[y_off:y_off+new_h, x_off:x_off+new_w] = resized_img
-    return canvas
