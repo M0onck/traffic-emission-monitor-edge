@@ -261,10 +261,11 @@ class TrafficMonitorEngine:
                     break # 遇到严重逻辑错误直接跳出循环，释放资源
                 
                 # --- 实时预览 ---
-                t_ui = time.perf_counter() # 性能探针开始
-                if self.frame_callback:
-                    self.frame_callback(annotated_frame)
-                self.profile_stats['08_ui_resize_emit'] += (time.perf_counter() - t_ui) # 性能探针结束
+                if not getattr(self, 'headless_mode', False):
+                    t_ui = time.perf_counter() # 性能探针开始
+                    if self.frame_callback and annotated_frame is not None:
+                        self.frame_callback(annotated_frame)
+                    self.profile_stats['08_ui_resize_emit'] += (time.perf_counter() - t_ui) # 性能探针结束
                 
                 if not getattr(self, '_is_running', True):
                     break
@@ -367,16 +368,18 @@ class TrafficMonitorEngine:
         self.profile_stats['06_kinematics'] += (time.perf_counter() - t_start)
 
         # --- Step 5: 可视化渲染 ---
-        t_start = time.perf_counter()
-        # 传入所有追踪到的目标
-        filtered_detections = detections
-        
-        # 为真实车辆和正在识别中的车辆生成 UI 标签数据
-        label_data_list = self._prepare_labels(filtered_detections, frame.shape)
+        annotated_frame = None
+        if not getattr(self, 'headless_mode', False):
+            t_start = time.perf_counter()
+            # 传入所有追踪到的目标
+            filtered_detections = detections
+            
+            # 为真实车辆和正在识别中的车辆生成 UI 标签数据
+            label_data_list = self._prepare_labels(filtered_detections, frame.shape)
 
-        # 传递过滤后的数据给视觉渲染器
-        annotated_frame = self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
-        self.profile_stats['07_visualizer_render'] += (time.perf_counter() - t_start)
+            # 传递过滤后的数据给视觉渲染器
+            annotated_frame = self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
+            self.profile_stats['07_visualizer_render'] += (time.perf_counter() - t_start)
         
         return annotated_frame
 
@@ -722,21 +725,31 @@ class TrafficMonitorEngine:
         self.db.close()
 
     def _print_profile_stats(self):
-        """打印每 30 帧的性能监控报表"""
-        print(f"\n{'='*45}")
-        print(f"[性能探针] 过去 30 帧平均耗时 (ms/帧)")
-        print(f"{'-'*45}")
+        """打印每 30 帧的性能监控报表 (已接入 logging 模块并支持开关)"""
+        # 1. 检查配置：是否开启性能探针 (默认关闭)
+        if not getattr(self.cfg, 'ENABLE_PROFILE_LOG', False):
+            # 即使不输出，也要重置字典，防止长期运行导致内存累积
+            self.profile_stats.clear()
+            self.profile_frames = 0
+            return
+
+        # 2. 拼接多行字符串：必须一次性合成一个大字符串再传给 logger
+        # 防止在多线程/多进程高并发时，性能日志被其他普通日志从中间横向切断
+        log_lines = ["", "="*45, "[性能探针] 过去 30 帧平均耗时 (ms/帧)", "-"*45]
+        
         keys = sorted(self.profile_stats.keys())
         for k in keys:
             avg_ms = (self.profile_stats[k] / self.profile_frames) * 1000
-            # 突出显示总耗时和拉流耗时
             if k == '00_total_loop':
-                print(f"{'-'*45}\n> {k.ljust(23)}: {avg_ms:6.2f} ms")
+                log_lines.append(f"{'-'*45}\n> {k.ljust(23)}: {avg_ms:6.2f} ms")
             else:
-                print(f"  {k.ljust(23)}: {avg_ms:6.2f} ms")
-        print(f"{'='*45}\n")
+                log_lines.append(f"  {k.ljust(23)}: {avg_ms:6.2f} ms")
+        
+        log_lines.append("="*45)
 
-        # 重置统计
-        for k in keys:
-            self.profile_stats[k] = 0.0
+        # 3. 通过标准日志模块输出 (使用 DEBUG 级别，保持终端整洁)
+        logger.debug("\n".join(log_lines))
+
+        # 4. 重置统计
+        self.profile_stats.clear() # clear() 会清空 defaultdict，比遍历赋值更高效
         self.profile_frames = 0

@@ -80,6 +80,7 @@ class MainController:
         self.view.btn_app1.clicked.connect(self.route_app1_click)
         self.view.btn_app2.clicked.connect(self.route_app2_click)
         self.view.btn_app3.clicked.connect(self.route_app3_click)
+        self.view.btn_headless.clicked.connect(self.toggle_headless)
 
         # 绑定气象站的校准按钮事件
         self.view.btn_sync_clock.clicked.connect(self.handle_sync_clock)
@@ -142,6 +143,24 @@ class MainController:
         self.enter_app(self.view.page_db_browser)
         self.handle_db_refresh() # 进入时自动拉取一次最新数据
     
+    def toggle_headless(self):
+        # 翻转状态
+        self.is_headless = not getattr(self, 'is_headless', False)
+        
+        if self.is_headless:
+            self.view.btn_headless.setText("显示画面")
+            self.view.btn_headless.setStyleSheet(self.view.style_hollow_red)
+            # 替换视频画布为纯文本提示
+            self.view.video_label.setText("画面渲染已关闭，推理引擎仍在后端运行.")
+        else:
+            self.view.btn_headless.setText("隐藏画面")
+            self.view.btn_headless.setStyleSheet(self.view.style_hollow_green)
+            self.view.video_label.setText("正在恢复渲染通道...")
+        
+        # 将状态同步给底层的引擎
+        if getattr(self, 'worker', None) and getattr(self.worker, 'engine', None):
+            self.worker.engine.headless_mode = self.is_headless
+
     def route_settings_click(self):
         """跳转至系统设置页面"""
         # 如果当前正在采集中，禁止进入设置
@@ -273,6 +292,15 @@ class MainController:
         # 2. 控制特定功能按钮
         self.view.btn_stop.setVisible(current_page == self.view.page_monitor and self.is_collecting)
         self.view.btn_delete_db.setVisible(current_page == self.view.page_db_browser)
+
+        # 控制无头模式按钮仅在监测页面可见
+        is_monitor_page = (current_page == self.view.page_monitor)
+        self.view.btn_headless.setVisible(is_monitor_page)
+        
+        # 如果在监测页且正在采集，确保它显示
+        if is_monitor_page:
+            self.view.btn_prev.setVisible(False)
+            self.view.btn_next.setVisible(False)
 
         # 3. 控制“向导流”中的上一步/下一步
         if current_page in self.wizard_flow:
@@ -615,6 +643,8 @@ class MainController:
         dialog.exec_()
 
     def update_video_frame(self, rgb_img):
+        if getattr(self, 'is_headless', False):
+            return
         h, w, ch = rgb_img.shape
         bytes_per_line = ch * w
         qimg = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format_RGB888)

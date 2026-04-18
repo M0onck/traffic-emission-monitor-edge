@@ -86,11 +86,19 @@ class MainWindow(QMainWindow):
         self.btn_next.setFont(font); self.btn_next.setMinimumHeight(50)
         self.btn_next.setStyleSheet(self.style_hollow_white)
 
+        # 无头模式按钮
+        self.btn_headless = QPushButton("隐藏画面")
+        self.btn_headless.setFont(QFont("Arial", 12, QFont.Bold))
+        self.btn_headless.setMinimumHeight(50)
+        self.btn_headless.setStyleSheet(self.style_hollow_green)
+        self.btn_headless.setVisible(False) # 初始隐藏，仅在监测页显示
+
         self.nav_layout.addWidget(self.btn_home)
         self.nav_layout.addWidget(self.btn_stop)
         self.nav_layout.addWidget(self.btn_delete_db)
         self.nav_layout.addWidget(self.btn_prev)
         self.nav_layout.addStretch()
+        self.nav_layout.addWidget(self.btn_headless)
         self.nav_layout.addWidget(self.btn_next)
         self.main_layout.addWidget(self.nav_widget)
 
@@ -706,7 +714,7 @@ class MainWindow(QMainWindow):
         self.page_monitor = QWidget()
         layout = QVBoxLayout(self.page_monitor)
         layout.setContentsMargins(0,0,0,0)
-        
+
         # 创建底部 Tab 栏
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.South) # 页签放在底部
