@@ -89,6 +89,7 @@ class AsyncPlateRecognizer:
 
     @staticmethod
     def _worker_loop(task_queue, result_queue, y5fu_path, lite_path, worker_id):
+        import os
         import sys
         import time
         import queue
@@ -103,6 +104,20 @@ class AsyncPlateRecognizer:
             handlers=[logging.StreamHandler(sys.stdout)]
         )
         logger = logging.getLogger(f"Worker-{worker_id}")
+
+        # CPU 绑核与高优先级分配
+        try:
+            # 树莓派 5 有 4 个核心 (0, 1, 2, 3)
+            # 将 worker_id 映射到对应的核心上，防止被其他繁重线程挤占
+            core_id = worker_id % os.cpu_count()
+            os.sched_setaffinity(0, {core_id})
+            
+            # 尝试提高当前 NPU 进程的 Linux 调度优先级 (-5 比默认的 0 优先级高)
+            os.nice(-5)
+        except AttributeError:
+            pass # 兼容非 Linux 系统
+        except PermissionError:
+            pass # 如果没有 sudo 权限，nice 会报错，忽略即可
 
         # 1. 引入 Hailo 虚拟设备管理器
         from hailo_platform import VDevice, InferVStreams, HailoSchedulingAlgorithm
