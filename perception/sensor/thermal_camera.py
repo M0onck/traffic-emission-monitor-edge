@@ -47,11 +47,17 @@ class ThermalCamera:
     """
     具备自动恢复能力的热成像驱动封装
     """
-    def __init__(self):
-        # 动态解析当前 Python 脚本所在的绝对路径
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        # 拼接出动态库的绝对路径
-        self.lib_path = os.path.join(current_dir, 'mlx90640_driver', 'libmlx90640.so')
+    def __init__(self, lib_path="bin/libmlx90640.so"):
+        # 将传入的路径转换为绝对路径，并绑定到 self.lib_path
+        self.lib_path = os.path.abspath(lib_path)
+        
+        # 使用 self.lib_path 进行判断和加载
+        if not os.path.exists(self.lib_path):
+            print(f">>> [Warning] 热成像动态库未找到: {self.lib_path}")
+            self.lib = None
+            return
+            
+        self.lib = ctypes.cdll.LoadLibrary(lib_path)
         
         # 1. 开辟进程间共享内存
         self.shared_array = mp.Array(ctypes.c_float, 768)
