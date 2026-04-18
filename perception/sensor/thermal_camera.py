@@ -19,7 +19,9 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
         logger.error(f"[ThermalWorker] 库加载失败: {e}")
         return
 
-    ptemp = ctypes.pointer(shared_array)
+    # 剥离包装器，提取原生 C 数组，并转换为指针
+    raw_array = shared_array.get_obj()
+    ptemp = ctypes.cast(raw_array, ctypes.POINTER(ctypes.c_float))
     
     while run_flag.value:
         try:

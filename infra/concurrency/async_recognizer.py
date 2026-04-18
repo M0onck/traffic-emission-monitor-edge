@@ -46,10 +46,18 @@ class AsyncPlateRecognizer:
         return results
 
     def stop(self):
-        """强制终止所有的 OCR 工作进程"""
+        """安全终止所有的 OCR 工作进程"""
+        print("[AsyncRecognizer] 正在发送安全退出信号...")
+        for _ in self.workers:
+            try:
+                self.task_queue.put_nowait(("POISON_PILL", None))
+            except queue.Full:
+                pass 
+
         for worker in self.workers:
+            worker.join(timeout=3.0)
             if worker.is_alive():
-                worker.terminate()
+                worker.terminate() # 仅作最后兜底
                 worker.join(timeout=1.0)
         print("[AsyncRecognizer] 所有 Hailo OCR 子进程已安全销毁。")
 
@@ -98,6 +106,10 @@ class AsyncPlateRecognizer:
                             try:
                                 # 使用 timeout 防止死锁阻塞
                                 track_id, vehicle_img = task_queue.get(timeout=1.0)
+                                # 尝试接收停机指令
+                                if track_id == "POISON_PILL":
+                                    print(f">>> [Worker {worker_id}] 收到停机指令，释放 NPU...")
+                                    return # 触发 context manager 的 __exit__ 清理硬件
                             except queue.Empty:
                                 continue
                             except Exception:
