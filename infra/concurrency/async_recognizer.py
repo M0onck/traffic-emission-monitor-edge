@@ -5,6 +5,7 @@ import queue
 import logging
 from perception.plate_classifier.core.multitask_detect import letter_box, post_precessing
 from perception.plate_classifier.core.hailo_support import MultiTaskDetectorHailo, ClassificationHailo
+from infra.concurrency.shared_memory_pool import SharedMemoryPool
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,10 @@ class AsyncPlateRecognizer:
         self.task_queue = ctx.Queue(maxsize=30)
         self.result_queue = ctx.Queue()
         self.workers = [] # 保存子进程的引用
+
+        # 实例化共享内存池，容量与 task_queue 保持一致
+        # 上限应该适应大卡车或近景车辆的截图
+        self.shm_pool = SharedMemoryPool(pool_size=30, max_width=1280, max_height=1280, channels=3)
 
         print(f">>> [AsyncRecognizer] 启动 {num_workers} 个独立 Spawn 进程 ONNX 引擎...")
 
@@ -47,7 +52,16 @@ class AsyncPlateRecognizer:
         results = []
         while not self.result_queue.empty():
             try:
-                results.append(self.result_queue.get_nowait())
+                res = self.result_queue.get_nowait()
+                
+                # 拦截子进程发来的释放信号，完成内存池闭环
+                if isinstance(res, tuple) and res[0] == "FREE_BLOCK":
+                    shm_idx = res[1]
+                    self.shm_pool.free_block(shm_idx)
+                else:
+                    # 正常的识别结果放入列表返回给主循环
+                    results.append(res)
+                    
             except queue.Empty:
                 break
         return results
@@ -66,6 +80,11 @@ class AsyncPlateRecognizer:
             if worker.is_alive():
                 worker.terminate() # 仅作最后兜底
                 worker.join(timeout=1.0)
+
+        # 清理系统底层挂载的共享内存块，防泄漏
+        if hasattr(self, 'shm_pool'):
+            self.shm_pool.cleanup()
+        
         print("[AsyncRecognizer] 所有 Hailo OCR 子进程已安全销毁。")
 
     @staticmethod
