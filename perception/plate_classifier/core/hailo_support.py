@@ -20,13 +20,32 @@ class ClassificationHailo(HamburgerABC):
         # 强制声明输入输出为 FLOAT32
         self.in_params = InputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
         self.out_params = OutputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
+
+        # ====== [核心防线一：扩大硬件异步队列深度 (容忍 CPU 饥饿)] ======
+        # 赋予底层 C++ 极大的上下文切换缓冲裕度，彻底根除队列断言崩溃
+        for stream_name in self.in_params.keys():
+            self.in_params[stream_name].queue_size = 32
+        for stream_name in self.out_params.keys():
+            self.out_params[stream_name].queue_size = 32
+        # =========================================================
         
     def get_pipeline_args(self):
         return (self.network_group, self.in_params, self.out_params)
 
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
-        raw_outputs = active_pipeline.infer(frame_dict)
+
+        # ====== [核心防线二：推理隔离防洪闸] ======
+        try:
+            # 高阶 API infer() 会在底层走完 send -> recv
+            raw_outputs = active_pipeline.infer(frame_dict)
+        except Exception as e:
+            # 如果极端情况下 32 级队列依然打满或发生 DMA 超时，
+            # 这里将其拦截为 Python 标准异常，防止 C++ 段错误带走整个程序，
+            # 抛出后交由 async_recognizer_loop 销毁并重建异常管道。
+            raise RuntimeError(f"Classification 管道通信发生底层断流: {e}")
+        # ========================================
+
         array_out = raw_outputs[self.output_vstream_info.name].astype(np.float32)
         return self._postprocess(array_out)
 
@@ -34,10 +53,9 @@ class ClassificationHailo(HamburgerABC):
         image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[0]))
         image_rgb = cv2.cvtColor(image_resize, cv2.COLOR_BGR2RGB)
         
-        # 归一化处理并指定 np.float32
         tensor = (image_rgb / 255.0).astype(np.float32)
         tensor = np.expand_dims(tensor, axis=0) 
-        safe_tensor = np.ascontiguousarray(tensor)
+        safe_tensor = np.ascontiguousarray(tensor) # 确保内存连续，防止 DMA 拒绝服务
         return {self.input_vstream_info.name: safe_tensor}
 
     def _run_session(self, data: dict) -> np.ndarray: pass
@@ -60,6 +78,13 @@ class MultiTaskDetectorHailo(HamburgerABC):
         self.in_params = InputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
         self.out_params = OutputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
 
+        # ====== [核心防线一：扩大硬件异步队列深度 (容忍 CPU 饥饿)] ======
+        for stream_name in self.in_params.keys():
+            self.in_params[stream_name].queue_size = 32
+        for stream_name in self.out_params.keys():
+            self.out_params[stream_name].queue_size = 32
+        # =========================================================
+
         self.strides = [8, 16, 32]
         self.anchors = np.array([
             [[4, 5], [8, 10], [13, 16]],         
@@ -72,7 +97,14 @@ class MultiTaskDetectorHailo(HamburgerABC):
 
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
-        raw_outputs = active_pipeline.infer(frame_dict)
+
+        # ====== [核心防线二：推理隔离防洪闸] ======
+        try:
+            raw_outputs = active_pipeline.infer(frame_dict)
+        except Exception as e:
+            raise RuntimeError(f"Detector 管道通信发生底层断流: {e}")
+        # ========================================
+
         merged_output = self._decode_raw_logits(raw_outputs)
         return self._postprocess(merged_output)
 
@@ -80,14 +112,14 @@ class MultiTaskDetectorHailo(HamburgerABC):
         img, r, left, top = letter_box(image, self.input_size)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # ⚠️ 核心修复三：除以 255 并转为 FLOAT32
         tensor = (img / 255.0).astype(np.float32)
         tensor = np.expand_dims(tensor, axis=0) 
-        safe_tensor = np.ascontiguousarray(tensor)
+        safe_tensor = np.ascontiguousarray(tensor) # 确保内存连续
         
         self.tmp_pack = r, left, top
         return {self.input_vstream_info.name: safe_tensor}
 
+    # ... _decode_raw_logits 和 _postprocess 保持原有不变 ...
     def _decode_raw_logits(self, raw_outputs):
         arrays = list(raw_outputs.values())
         arrays.sort(key=lambda x: x.shape[1] * x.shape[2], reverse=True)
