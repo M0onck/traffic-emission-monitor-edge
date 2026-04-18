@@ -1,12 +1,6 @@
 import numpy as np
 import supervision as sv
 
-# 引入 Hailo 元数据解析库
-try:
-    import hailo
-except ImportError:
-    pass
-
 class VisionPipeline:
     """
     [感知层] 视觉处理流水线
@@ -15,11 +9,11 @@ class VisionPipeline:
     def __init__(self, fps: int, label_map: dict):
         self.label_map = label_map
         
-        # 初始化 Python 层的高性能 ByteTrack 追踪器
+        # 优化 1: 调整 ByteTrack 工业级参数
         self.tracker = sv.ByteTrack(
-            track_activation_threshold=0.25, 
-            lost_track_buffer=int(fps * 1.0), 
-            minimum_matching_threshold=0.8,
+            track_activation_threshold=0.45,  # 提高建轨门槛：只有高置信度(>0.45)的检测框才会生成新轨迹，防假阳性
+            lost_track_buffer=int(fps * 3.0), # 延长记忆时间：容忍长达 3 秒的重度遮挡，防止 ID 频繁跳变
+            minimum_matching_threshold=0.8,   # 保持不变，匹配 IoU 阈值
             frame_rate=fps
         )
 
@@ -30,15 +24,20 @@ class VisionPipeline:
         h, w = frame.shape[:2]
         xyxy, class_ids, confs = [], [], []
 
-        # 直接遍历上一层已经解析好的纯 Python 字典列表，无需再处理底层的 buffer 和 try-except
         for item in hailo_data:
             # 获取归一化坐标并映射到实际物理像素
             raw_x1, raw_y1 = int(item['xmin'] * w), int(item['ymin'] * h)
             raw_x2, raw_y2 = int(item['xmax'] * w), int(item['ymax'] * h)
             
-            # 安全过滤：确保坐标合理，防止下游崩溃
-            x1, x2 = min(raw_x1, raw_x2), max(raw_x1, raw_x2)
-            y1, y2 = min(raw_y1, raw_y2), max(raw_y1, raw_y2)
+            # 优化 2: 安全过滤，使用 np.clip 严格防止坐标溢出图像边界
+            x1 = np.clip(min(raw_x1, raw_x2), 0, w - 1)
+            y1 = np.clip(min(raw_y1, raw_y2), 0, h - 1)
+            x2 = np.clip(max(raw_x1, raw_x2), 0, w - 1)
+            y2 = np.clip(max(raw_y1, raw_y2), 0, h - 1)
+            
+            # 过滤面积过小的病态框 (防止 downstream OpenCV 报错)
+            if (x2 - x1) < 10 or (y2 - y1) < 10:
+                continue
             
             # 标签白名单过滤
             label = item['label']
@@ -50,7 +49,6 @@ class VisionPipeline:
             class_ids.append(cid)
             confs.append(item['conf'])
 
-        # 构建并更新追踪器 (此部分逻辑保持不变)
         if len(xyxy) > 0:
             detections = sv.Detections(
                 xyxy=np.array(xyxy, dtype=np.float32),
@@ -58,8 +56,11 @@ class VisionPipeline:
                 class_id=np.array(class_ids, dtype=int)
             )
             
-            # NMS 强力合并重叠框
-            detections = detections.with_nms(threshold=0.4, class_agnostic=True)
+            # 优化 3: 移除严格的二次 NMS 
+            # 交通场景下车辆经常部分遮挡，0.4 的阈值会大量吞噬有效目标。
+            # 如果不经常出现同一个车被识别为两个框的 BUG，直接注释掉此行；
+            # 如果必须保留，请将阈值放宽至 0.65。
+            # detections = detections.with_nms(threshold=0.65, class_agnostic=True)
             
             # 分配追踪 ID
             detections = self.tracker.update_with_detections(detections)

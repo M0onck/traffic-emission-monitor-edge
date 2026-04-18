@@ -48,6 +48,9 @@ class GstPipelineManager:
         self.meta_sink = self.pipeline.get_by_name("meta_sink")
         self.is_running = False
 
+        # 缓存上一帧的 AI 数据
+        self.last_hailo_data = []
+
     def _build_pipelines(self):
         is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
@@ -163,7 +166,9 @@ class GstPipelineManager:
         meta_sample = self.meta_sink.emit("try-pull-sample", 5000000) 
         hailo_data = []
         
+        # 只有当成功拉取到新的元数据时，才去解析并更新缓存
         if meta_sample:
+            new_hailo_data = []
             meta_buffer = meta_sample.get_buffer()
             try:
                 import hailo
@@ -171,7 +176,7 @@ class GstPipelineManager:
                 hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
                 for det in hailo_detections:
                     bbox = det.get_bbox()
-                    hailo_data.append({
+                    new_hailo_data.append({
                         'label': det.get_label(),
                         'conf': det.get_confidence(),
                         'xmin': bbox.xmin(), 'ymin': bbox.ymin(),
@@ -179,9 +184,12 @@ class GstPipelineManager:
                     })
             except Exception:
                 pass # 解析失败或在非真实设备下跳过
+            
+            # 更新缓存为最新数据
+            self.last_hailo_data = new_hailo_data
 
-        # 返回去畸变后的干净画面 和 纯 Python 字典格式的 AI 数据
-        return clean_frame, hailo_data
+        # 返回去畸变后的干净画面和缓存的 AI 数据
+        return clean_frame, self.last_hailo_data
 
     def set_record_location(self, session_id):
         rec_sink = self.pipeline.get_by_name("rec_sink")
