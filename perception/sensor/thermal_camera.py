@@ -15,6 +15,10 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
     """
     try:
         lib = ctypes.cdll.LoadLibrary(lib_path)
+        # 严格显式定义 C++ 函数的签名，防止返回值截断或指针越界
+        # C 函数签名为: int get_mlx90640_temp(float* frame)
+        lib.get_mlx90640_temp.argtypes = [ctypes.POINTER(ctypes.c_float)]
+        lib.get_mlx90640_temp.restype = ctypes.c_int
     except Exception as e:
         logger.error(f"[ThermalWorker] 库加载失败: {e}")
         return
@@ -25,12 +29,24 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
     
     while run_flag.value:
         try:
-            # 阻塞型硬件读取
-            lib.get_mlx90640_temp(ptemp)
-            # 读取成功，立刻更新心跳时间戳
-            heartbeat.value = time.time()
+            # 捕获 C++ 超时返回码
+            # 底层 C++ 如果遭遇 I2C 干扰超时，会返回 -1 (或其他非零错误码)
+            result = lib.get_mlx90640_temp(ptemp)
+            
+            if result == 0:
+                # 读取成功，更新心跳并重置错误计数
+                heartbeat.value = time.time()
+                error_count = 0
+            else:
+                # 读取失败 (例如 ioctl 超时返回 -1)
+                error_count += 1
+                if error_count % 10 == 0:
+                    logger.warning(f"[ThermalWorker] 底层 I2C 连续读取失败 {error_count} 次，总线可能受到干扰")
+                # 必须稍微休眠，防止 C++ 快速失败导致 while 循环榨干 100% CPU
+                time.sleep(0.1)
+
         except Exception as e:
-            # 过滤偶发的传输错误，防止频发刷屏
+            logger.error(f"[ThermalWorker] 致命调用异常: {e}")
             time.sleep(0.5)
 
 class ThermalCamera:
@@ -76,39 +92,35 @@ class ThermalCamera:
         logger.info(f"[ThermalCamera] 热成像工作进程已启动 (PID: {self._process.pid})")
 
     def _watchdog_loop(self):
-        """
-        看门狗守护逻辑
-        监控硬件进程状态，实现自动断线重连。
-        """
         while self.run_flag.value:
-            time.sleep(2.0) # 每2秒巡视一次
+            time.sleep(3.0) 
             
-            # 计算距离上次成功读取的时间差
             time_since_last_beat = time.time() - self.heartbeat.value
             
-            # 如果超过 5 秒没有心跳，判定为 I2C 死锁
-            if time_since_last_beat > 5.0:
+            # 超过 3 秒没有心跳（说明底层连续 3 秒都在报错返回 -1）
+            if time_since_last_beat > 3.0:
                 if self._restart_count >= self._max_restarts:
-                    logger.error("[ThermalCamera] I2C 硬件连续重启失败，已触发断路，停止热成像采集.")
-                    self.run_flag.value = False # 放弃该传感器，让系统主线继续运行
+                    logger.critical("[ThermalCamera] 连续重启达到上限，热成像硬件可能已物理断开，放弃抢救。")
+                    self.run_flag.value = False
                     break
                     
-                logger.warning(f"[ThermalCamera] 检测到 I2C 死锁 (心跳停止 {time_since_last_beat:.1f}s)。正在尝试自动重启...")
+                logger.warning(f"[ThermalCamera] 检测到 I2C 总线挂起或持续报错 (丢失心跳 {time_since_last_beat:.1f}s)。正在尝试硬重置...")
                 self._restart_count += 1
                 
-                # 1. 强制猎杀卡死的进程，释放 /dev/i2c 文件描述符
+                # 强杀挂起的子进程释放 /dev/i2c-1 的文件句柄
                 if self._process and self._process.is_alive():
                     self._process.terminate()
                     self._process.join(timeout=1.0)
+                    if self._process.is_alive():
+                        os.kill(self._process.pid, 9) # 终极猎杀
                 
-                # 2. 稍微给 Linux 内核一点时间清理底层驱动状态
-                time.sleep(1.0) 
+                # 给 Linux 内核一点时间清理 I2C 驱动状态
+                time.sleep(1.5) 
                 
-                # 3. 重新拉起进程
                 self._start_worker_process()
-                logger.info(f"[ThermalCamera] 自动重启完成，已重置 I2C 连接 (当前重试: {self._restart_count}/{self._max_restarts})")
+                logger.info(f"[ThermalCamera] 自动重启完成 (当前重试: {self._restart_count}/{self._max_restarts})")
             
-            # 如果成功读取，慢慢重置重启计数器（证明稳定下来了）
+            # 如果成功读取，慢慢重置重启计数器
             elif time_since_last_beat < 1.0 and self._restart_count > 0:
                 self._restart_count = 0
 
@@ -127,7 +139,6 @@ class ThermalCamera:
     def stop(self):
         self.run_flag.value = False
         if self._process and self._process.is_alive():
+            self._process.terminate()
             self._process.join(timeout=1.0)
-            if self._process.is_alive():
-                self._process.terminate()
         logger.info("[ThermalCamera] 热成像模块已安全停止.")

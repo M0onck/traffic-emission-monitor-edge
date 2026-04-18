@@ -5,6 +5,9 @@ from .multitask_detect import detect_pre_precessing, post_precessing, letter_box
 
 # 引入 FormatType 强制声明硬件数据流类型
 from hailo_platform import HEF, InferVStreams, InputVStreamParams, OutputVStreamParams, FormatType
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ClassificationHailo(HamburgerABC):
     """车牌属性分类模型"""
@@ -21,13 +24,24 @@ class ClassificationHailo(HamburgerABC):
         self.in_params = InputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
         self.out_params = OutputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
 
-        # ====== [核心防线一：扩大硬件异步队列深度 (容忍 CPU 饥饿)] ======
-        # 赋予底层 C++ 极大的上下文切换缓冲裕度，彻底根除队列断言崩溃
+        # 核心防线一：扩大硬件异步队列深度
         for stream_name in self.in_params.keys():
             self.in_params[stream_name].queue_size = 32
         for stream_name in self.out_params.keys():
             self.out_params[stream_name].queue_size = 32
-        # =========================================================
+
+        # 在类的生命周期内预分配一块唯一的、连续的物理内存
+        # 杜绝 hailo_vdma_buffer_map 导致的内核 VMA 碎片化死锁
+        # 兼容 3D (H, W, C) 和 4D (B, H, W, C) 的底层返回格式
+        if len(self.input_shape) == 3:
+            self.model_h, self.model_w, self.model_ch = self.input_shape
+        elif len(self.input_shape) == 4:
+            _, self.model_h, self.model_w, self.model_ch = self.input_shape
+        else:
+            raise ValueError(f"无法解析的输入形状: {self.input_shape}")
+        self.static_input_buffer = np.ascontiguousarray(
+            np.zeros((1, self.model_h, self.model_w, self.model_ch), dtype=np.float32)
+        )
         
     def get_pipeline_args(self):
         return (self.network_group, self.in_params, self.out_params)
@@ -35,28 +49,27 @@ class ClassificationHailo(HamburgerABC):
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
 
-        # ====== [核心防线二：推理隔离防洪闸] ======
         try:
             # 高阶 API infer() 会在底层走完 send -> recv
             raw_outputs = active_pipeline.infer(frame_dict)
         except Exception as e:
-            # 如果极端情况下 32 级队列依然打满或发生 DMA 超时，
-            # 这里将其拦截为 Python 标准异常，防止 C++ 段错误带走整个程序，
-            # 抛出后交由 async_recognizer_loop 销毁并重建异常管道。
             raise RuntimeError(f"Classification 管道通信发生底层断流: {e}")
-        # ========================================
 
         array_out = raw_outputs[self.output_vstream_info.name].astype(np.float32)
         return self._postprocess(array_out)
 
     def _preprocess(self, image) -> dict:
-        image_resize = cv2.resize(image, (self.input_shape[1], self.input_shape[0]))
+        # cv2.resize 接受的参数格式是 (Width, Height)
+        image_resize = cv2.resize(image, (self.model_w, self.model_h))
         image_rgb = cv2.cvtColor(image_resize, cv2.COLOR_BGR2RGB)
         
         tensor = (image_rgb / 255.0).astype(np.float32)
-        tensor = np.expand_dims(tensor, axis=0) 
-        safe_tensor = np.ascontiguousarray(tensor) # 确保内存连续，防止 DMA 拒绝服务
-        return {self.input_vstream_info.name: safe_tensor}
+        tensor = np.expand_dims(tensor, axis=0)
+        
+        # 使用 np.copyto 直接将数据刷入已映射好的物理地址，避免触发内核系统调用
+        np.copyto(self.static_input_buffer, tensor)
+
+        return {self.input_vstream_info.name: self.static_input_buffer}
 
     def _run_session(self, data: dict) -> np.ndarray: pass
     def _postprocess(self, data) -> np.ndarray: return data
@@ -74,16 +87,29 @@ class MultiTaskDetectorHailo(HamburgerABC):
         
         self.network_group = target_vdevice.configure(self.hef)[0]
         
-        # 强制声明 FLOAT32
         self.in_params = InputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
         self.out_params = OutputVStreamParams.make(self.network_group, format_type=FormatType.FLOAT32)
 
-        # ====== [核心防线一：扩大硬件异步队列深度 (容忍 CPU 饥饿)] ======
+        # 扩大硬件异步队列深度
         for stream_name in self.in_params.keys():
             self.in_params[stream_name].queue_size = 32
         for stream_name in self.out_params.keys():
             self.out_params[stream_name].queue_size = 32
-        # =========================================================
+
+        # 零分配静态内存池
+        self.input_shape = self.input_vstream_info.shape
+        if len(self.input_shape) == 3:
+            self.model_h, self.model_w, _ = self.input_shape
+        elif len(self.input_shape) == 4:
+            _, self.model_h, self.model_w, _ = self.input_shape
+        else:
+            raise ValueError(f"无法解析的输入形状: {self.input_shape}")
+            
+        self.input_size = (self.model_h, self.model_w)
+
+        self.static_input_buffer = np.ascontiguousarray(
+            np.zeros((1, self.model_h, self.model_w, 3), dtype=np.float32)
+        )
 
         self.strides = [8, 16, 32]
         self.anchors = np.array([
@@ -98,12 +124,10 @@ class MultiTaskDetectorHailo(HamburgerABC):
     def __call__(self, image, active_pipeline):
         frame_dict = self._preprocess(image)
 
-        # ====== [核心防线二：推理隔离防洪闸] ======
         try:
             raw_outputs = active_pipeline.infer(frame_dict)
         except Exception as e:
             raise RuntimeError(f"Detector 管道通信发生底层断流: {e}")
-        # ========================================
 
         merged_output = self._decode_raw_logits(raw_outputs)
         return self._postprocess(merged_output)
@@ -114,12 +138,13 @@ class MultiTaskDetectorHailo(HamburgerABC):
         
         tensor = (img / 255.0).astype(np.float32)
         tensor = np.expand_dims(tensor, axis=0) 
-        safe_tensor = np.ascontiguousarray(tensor) # 确保内存连续
+        
+        # 静态内存覆写
+        np.copyto(self.static_input_buffer, tensor)
         
         self.tmp_pack = r, left, top
-        return {self.input_vstream_info.name: safe_tensor}
+        return {self.input_vstream_info.name: self.static_input_buffer}
 
-    # ... _decode_raw_logits 和 _postprocess 保持原有不变 ...
     def _decode_raw_logits(self, raw_outputs):
         arrays = list(raw_outputs.values())
         arrays.sort(key=lambda x: x.shape[1] * x.shape[2], reverse=True)

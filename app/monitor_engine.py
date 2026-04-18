@@ -1,5 +1,5 @@
 import cv2
-cv2.setNumThreads(1) # 限制OpenCV使用线程数，防止资源争抢
+# cv2.setNumThreads(1) # 限制OpenCV使用线程数，防止资源争抢
 import numpy as np
 import supervision as sv
 import time
