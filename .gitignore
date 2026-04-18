@@ -41,3 +41,9 @@ model/*.hef
 *.log
 output/
 tests/
+
+# MLX90640 C++ Driver Build Artifacts
+perception/sensor/mlx90640_driver/*.o
+perception/sensor/mlx90640_driver/*.so
+perception/sensor/mlx90640_driver/*.a
+perception/sensor/mlx90640_driver/main

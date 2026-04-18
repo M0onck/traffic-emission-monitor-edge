@@ -15,10 +15,7 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
     """
     try:
         lib = ctypes.cdll.LoadLibrary(lib_path)
-        # 严格显式定义 C++ 函数的签名，防止返回值截断或指针越界
-        # C 函数签名为: int get_mlx90640_temp(float* frame)
         lib.get_mlx90640_temp.argtypes = [ctypes.POINTER(ctypes.c_float)]
-        lib.get_mlx90640_temp.restype = ctypes.c_int
     except Exception as e:
         logger.error(f"[ThermalWorker] 库加载失败: {e}")
         return
@@ -27,23 +24,20 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
     raw_array = shared_array.get_obj()
     ptemp = ctypes.cast(raw_array, ctypes.POINTER(ctypes.c_float))
     
+    # 显式定义 C 函数的返回值类型为整型
+    lib.get_mlx90640_temp.restype = ctypes.c_int
+
     while run_flag.value:
         try:
-            # 捕获 C++ 超时返回码
-            # 底层 C++ 如果遭遇 I2C 干扰超时，会返回 -1 (或其他非零错误码)
-            result = lib.get_mlx90640_temp(ptemp)
+            # C++ 包装层在成功时返回 0，失败时返回负数
+            status = lib.get_mlx90640_temp(ptemp)
             
-            if result == 0:
-                # 读取成功，更新心跳并重置错误计数
+            if status == 0:
+                # 只有真正拿到数据，才喂狗
                 heartbeat.value = time.time()
-                error_count = 0
             else:
-                # 读取失败 (例如 ioctl 超时返回 -1)
-                error_count += 1
-                if error_count % 10 == 0:
-                    logger.warning(f"[ThermalWorker] 底层 I2C 连续读取失败 {error_count} 次，总线可能受到干扰")
-                # 必须稍微休眠，防止 C++ 快速失败导致 while 循环榨干 100% CPU
-                time.sleep(0.1)
+                logger.error(f"[ThermalWorker] 底层 I2C 读取失败，返回码: {status}")
+                time.sleep(0.1) # 防止死循环耗尽 CPU
 
         except Exception as e:
             logger.error(f"[ThermalWorker] 致命调用异常: {e}")
@@ -53,8 +47,11 @@ class ThermalCamera:
     """
     具备自动恢复能力的热成像驱动封装
     """
-    def __init__(self, lib_path='./libmlx90640.so'):
-        self.lib_path = lib_path
+    def __init__(self):
+        # 动态解析当前 Python 脚本所在的绝对路径
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # 拼接出动态库的绝对路径
+        self.lib_path = os.path.join(current_dir, 'mlx90640_driver', 'libmlx90640.so')
         
         # 1. 开辟进程间共享内存
         self.shared_array = mp.Array(ctypes.c_float, 768)
@@ -100,7 +97,7 @@ class ThermalCamera:
             # 超过 3 秒没有心跳（说明底层连续 3 秒都在报错返回 -1）
             if time_since_last_beat > 3.0:
                 if self._restart_count >= self._max_restarts:
-                    logger.critical("[ThermalCamera] 连续重启达到上限，热成像硬件可能已物理断开，放弃抢救。")
+                    logger.critical("[ThermalCamera] 连续重启达到上限，热成像硬件可能已物理断开.")
                     self.run_flag.value = False
                     break
                     
