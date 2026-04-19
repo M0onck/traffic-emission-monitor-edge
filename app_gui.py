@@ -1,3 +1,11 @@
+import os
+# 强制约束底层 C++ 数学库的线程衍生，防止把树莓派的 CPU 抢爆
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import sys
 import logging
 import faulthandler

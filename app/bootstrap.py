@@ -48,10 +48,7 @@ class AppBootstrap:
         plate_worker = None
         if config.ENABLE_OCR:
             print(">>> [Bootstrap] 启动异步 OCR 识别引擎...")
-            plate_worker = AsyncPlateRecognizer(
-                y5fu_onnx_path=config.Y5FU_PATH,
-                litemodel_onnx_path=config.LITEMODEL_PATH
-            )
+            plate_worker = AsyncPlateRecognizer(config)
             # 注意：此处移除了 plate_worker.start()，因为在 async_recognizer.py 中
             # __init__ 已经调用了 self.worker_process.start()，避免重复启动进程报错
 
