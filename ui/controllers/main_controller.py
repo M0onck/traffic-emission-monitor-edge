@@ -652,18 +652,29 @@ class MainController:
     def update_video_frame(self, rgb_img):
         if getattr(self, 'is_headless', False):
             return
-        h, w, ch = rgb_img.shape
-        bytes_per_line = ch * w
-        qimg = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
         
-        # 利用 Qt 的机制自适应当前 Label 尺寸，自动补齐黑边并保持等比缩放
-        pixmap = QPixmap.fromImage(qimg)
-        scaled_pixmap = pixmap.scaled(
-            self.view.video_label.size(), 
-            Qt.KeepAspectRatio, 
-            Qt.FastTransformation
-        )
-        self.view.video_label.setPixmap(scaled_pixmap)
+        try:
+            h, w, ch = rgb_img.shape
+            bytes_per_line = ch * w
+            qimg = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            
+            # 利用 Qt 的机制自适应当前 Label 尺寸，自动补齐黑边并保持等比缩放
+            pixmap = QPixmap.fromImage(qimg)
+            scaled_pixmap = pixmap.scaled(
+                self.view.video_label.size(), 
+                Qt.KeepAspectRatio, 
+                Qt.FastTransformation
+            )
+            self.view.video_label.setPixmap(scaled_pixmap)
+
+            # 通知 EngineWorker 当前帧已渲染完成，允许发送下一帧
+            if self.worker:
+                self.worker.frame_consumed_callback()
+        
+        except Exception as e:
+            # 即使发生异常也要尝试释放锁，确保系统不会永久停滞
+            if self.worker:
+                self.worker.frame_consumed_callback()
 
     def update_timer_tasks(self):
         """总控定时器：分配 UI 刷新任务"""
