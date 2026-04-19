@@ -1,5 +1,6 @@
 import cv2
 cv2.setNumThreads(1)
+import queue
 import numpy as np
 import supervision as sv
 import time
@@ -66,6 +67,8 @@ class TrafficMonitorEngine:
         self.current_session_id = None
         self.profile_stats = defaultdict(float)
         self.profile_frames = 0
+        self.ocr_on = getattr(self.cfg, 'ENABLE_OCR', False)
+        self.motion_on = getattr(self.cfg, 'ENABLE_MOTION', True)
 
     def run(self):
         self._is_running = True
@@ -107,17 +110,25 @@ class TrafficMonitorEngine:
             prev_env_time = 0
             video_initialized = False
 
+            # 用于真实帧率计算的全局时钟
+            last_loop_time = time.perf_counter()
+            smoothed_fps = getattr(self.cfg, 'FPS', 30.0) # 初始预设值
+
             while self._is_running:
                 loop_start = time.perf_counter()
                 if not self.p_daemon.is_alive(): break
 
                 # --- A. 数据提取 ---
+                try:
+                    last_hailo_data = self.bbox_queue.get(timeout=0.1)
+                except queue.Empty:
+                    # 如果等了 0.1 秒都没新帧，说明底层硬件还在缓冲，直接跳过等下一轮
+                    continue
+
+                # 既然已经收到了新数据的敲门信号，立刻从共享内存深拷贝出最新画面
                 current_frame = self.shm_array.copy()
-                if not self.bbox_queue.empty():
-                    last_hailo_data = self.bbox_queue.get_nowait()
 
                 if not current_frame.any():
-                    time.sleep(0.01)
                     continue
 
                 # --- B. 动态坐标与传感器轮询 (1Hz) ---
@@ -137,15 +148,31 @@ class TrafficMonitorEngine:
 
                 # --- D. 渲染分发 ---
                 if self.frame_callback:
-                    annotated = self.visualizer.render(current_frame, detections, self._prepare_labels(detections, current_frame.shape))
+                    # 计算跨越整个生命周期的真实帧率
+                    current_loop_time = time.perf_counter()
+                    real_elapsed = current_loop_time - last_loop_time
+                    last_loop_time = current_loop_time
+
+                    # 计算瞬时真实帧率
+                    instant_fps = 1.0 / real_elapsed if real_elapsed > 0 else 30.0
+                    
+                    # 使用 EMA (指数移动平均) 算法平滑帧率，权重为 0.9/0.1
+                    # 彻底解决 UI 左上角数字疯狂闪烁乱跳的问题
+                    smoothed_fps = 0.9 * smoothed_fps + 0.1 * instant_fps
+
+                    label_data_list = self._prepare_labels(detections, current_frame.shape)
+
+                    annotated = self.visualizer.render(
+                        current_frame, 
+                        detections, 
+                        label_data_list, 
+                        fps=smoothed_fps
+                    )
+
                     self.frame_callback(annotated)
 
-                # 限速 30fps
-                elapsed = time.perf_counter() - loop_start
-                time.sleep(max(0.001, (1.0/30.0) - elapsed))
-
         finally:
-            self._cleanup()
+            self.cleanup(self.current_frame_id)
 
     def _initialize_geometry(self, frame):
         """动态坐标系适配逻辑"""
@@ -557,33 +584,63 @@ class TrafficMonitorEngine:
         return labels
 
     def cleanup(self, final_frame_id):
-        print("\n[Engine] 正在清理资源...")
-        self.camera.stop()  # 停止 GStreamer 管道
+        self._is_running = False
+        logger.info("[Engine] 开始系统资源与 IPC 内存清理...")
 
-        # 停止热成像后台线程
-        if self.thermal_cam:
+        # ==========================================
+        # 1. 多进程 IPC 资源回收 (替代原有的 camera.stop)
+        # ==========================================
+        if hasattr(self, 'stop_event'):
+            self.stop_event.set()
+            
+        if getattr(self, 'p_daemon', None):
+            self.p_daemon.join(timeout=4)
+            if self.p_daemon.is_alive():
+                logger.warning("[Engine] 感知进程未响应，执行强行回收...")
+                self.p_daemon.terminate()
+
+        if getattr(self, 'shm', None):
+            try:
+                self.shm.close()
+                self.shm.unlink()
+                logger.info(f"[Engine] 共享内存 {self.shm_name} 释放完毕。")
+            except Exception as e:
+                logger.error(f"[Engine] 共享内存释放失败: {e}")
+
+        # ==========================================
+        # 2. 硬件传感器与时钟同步器回收
+        # ==========================================
+        if getattr(self, 'thermal_cam', None):
             self.thermal_cam.stop()
 
-        # 停止 NTP 时钟同步器的后台线程
         if hasattr(self, 'time_sync'):
             self.time_sync.stop()
-            print("[Engine] 时钟同步守护线程已停止。")
+            logger.info("[Engine] 时钟同步守护线程已停止。")
         
-        print("[Engine] 保存剩余车辆数据...")
-        # 伪造一个未来的绝对时间戳 (当前时间 + 1000秒)，强制所有未结算的车辆触发超时离场
+        # ==========================================
+        # 3. 业务逻辑收尾：强制结算所有滞留车辆
+        # ==========================================
+        logger.info("[Engine] 保存剩余车辆数据...")
         import time
+        # 伪造一个未来的绝对时间戳 (当前时间 + 1000秒)，强制所有未结算的车辆触发超时离场
         force_exit_timestamp = time.time() + 1000.0
         self._handle_exits(final_frame_id + 1000, force_exit_timestamp)
 
+        # ==========================================
+        # 4. 异步 OCR 工作池回收
+        # ==========================================
         if getattr(self, 'plate_worker', None):
-            print("[Engine] 正在强制回收 OCR 子进程...")
+            logger.info("[Engine] 正在强制回收 OCR 子进程...")
             self.plate_worker.stop()
 
-        # 宣告采集任务结束
+        # ==========================================
+        # 5. 数据库断开与任务状态更新
+        # ==========================================
         if getattr(self, 'current_session_id', None):
             self.db.complete_session(self.current_session_id, time.time())
 
         self.db.close()
+        logger.info("[Engine] 引擎安全下线。")
 
     def _print_profile_stats(self):
         """打印每 30 帧的性能监控报表 (已接入 logging 模块并支持开关)"""

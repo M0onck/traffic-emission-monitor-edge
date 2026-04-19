@@ -341,12 +341,16 @@ class MainController:
     def start_engine(self):
         # 提取的是反算好的原生坐标
         source_points = self.view.canvas.get_real_points()
+
+        # 多进程架构下的硬件控制权移交
+        if self.global_camera:
+            print("[Controller] 正在释放主进程摄像头与 NPU 句柄，为感知子进程让路...")
+            self.global_camera.stop()
+            self.global_camera = None
         
         # 启动后台引擎线程
         self.worker = EngineWorker(source_points, self.view.phys_w, self.view.phys_h, weather_station=self.weather_gw)
-        # 依赖注入，将处于热机状态的全局摄像头直接传给底层引擎
-        if self.global_camera:
-            self.worker.set_prebuilt_components({'camera': self.global_camera})
+        
         self.worker.frame_ready.connect(self.update_video_frame)
         self.worker.start()
     
