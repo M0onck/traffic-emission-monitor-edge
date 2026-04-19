@@ -48,10 +48,16 @@ else
 fi
 
 # ==========================================
+# 4.3 编译 Hailo 异步桥接动态库
+# ==========================================
+
+
+# ==========================================
 
 # 强制开启底层 TRACE 级别日志，并输出到文件
 export HAILORT_LOGGER_LEVEL=TRACE
 export HAILORT_LOGGER_PATH=/home/m0onck/traffic-emission-monitor-edge/hailo_crash.log
+export GST_DEBUG="hailonet:5,hailofilter:5,queue:5"
 
 # 5. 启动主程序
-python app_gui.py
+python app_gui.py > gst_queue_debug.log 2>&1
