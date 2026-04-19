@@ -1,3 +1,0 @@
-/home/m0onck/traffic-emission-monitor-edge/perception/plate_classifier/cpp_extension/build/CMakeFiles/hailo_ocr_cpp.dir
-/home/m0onck/traffic-emission-monitor-edge/perception/plate_classifier/cpp_extension/build/CMakeFiles/edit_cache.dir
-/home/m0onck/traffic-emission-monitor-edge/perception/plate_classifier/cpp_extension/build/CMakeFiles/rebuild_cache.dir

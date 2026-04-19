@@ -2,37 +2,33 @@ import threading
 import queue
 import logging
 import numpy as np
-import sys
-import os
 
-# ==========================================
-# 1. 动态加载我们编译好的 C++ 模块
-# ==========================================
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# 推导 cpp_extension/build 的绝对路径
-cpp_build_dir = os.path.abspath(os.path.join(current_dir, '../../perception/plate_classifier/cpp_extension/build'))
-if cpp_build_dir not in sys.path:
-    sys.path.append(cpp_build_dir)
-
-try:
-    import hailo_ocr_cpp
-except ImportError as e:
-    logging.error(f"无法加载 C++ OCR 扩展，请检查编译环境: {e}")
-    raise
+# 引入原生的 Python 版 ONNX 管道及类型定义
+from perception.plate_classifier.pipeline import EdgePlateClassifierPipeline
+from perception.plate_classifier.core.multitask_detect import MultiTaskDetectorORT
+from perception.plate_classifier.core.classification import ClassificationORT
+from perception.plate_classifier.core.typedef import UNKNOWN, GREEN, BLUE, YELLOW_SINGLE
 
 logger = logging.getLogger(__name__)
 
 class RecognitionWorker(threading.Thread):
-    def __init__(self, task_queue, result_queue, stop_event, pipeline):
+    def __init__(self, task_queue, result_queue, stop_event, cfg):
         super().__init__(daemon=True)
         self.task_queue = task_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
-        # 接收主进程注入的 C++ Pipeline
-        self.pipeline = pipeline 
+        self.cfg = cfg
+        self.pipeline = None
 
     def run(self):
-        logger.info(f"[OCR Thread-{self.name}] C++ Native NPU 引擎就绪，等待任务...")
+        logger.info(f"[OCR Thread-{self.name}] 正在初始化 ONNX 模型 (独立实例以保证线程安全)...")
+        # 为每个线程单独实例化模型，完美解决 tmp_pack 导致的竞态条件
+        detector = MultiTaskDetectorORT(self.cfg.Y5FU_PATH)
+        classifier = ClassificationORT(self.cfg.LITEMODEL_PATH)
+        self.pipeline = EdgePlateClassifierPipeline(detector, classifier)
+        
+        logger.info(f"[OCR Thread-{self.name}] ONNX 引擎就绪，等待任务...")
+        
         while not self.stop_event.is_set():
             try:
                 task = self.task_queue.get(timeout=1.0)
@@ -40,15 +36,25 @@ class RecognitionWorker(threading.Thread):
                     break
                     
                 track_id, crop_img = task
+                crop_h, crop_w = crop_img.shape[:2]
                 
-                # 调用 C++ 底层，GIL 会在此处自动释放，实现真正的硬件并发
-                res = self.pipeline.process(crop_img)
+                # 调用纯 Python ONNX 管道 (此处 ONNXRuntime 底层会自动释放 GIL)
+                plate_type, conf, plate_box, plate_points = self.pipeline.process(crop_img)
                 
-                # 如果 C++ 返回了有效的识别结果
-                if res.color_type != "unknown" and len(res.landmarks) == 8:
-                    # 将 C++ 传回的 1D list 重新 reshape 为 Engine 需要的 (4, 2) 归一化坐标矩阵
-                    rel_landmarks = np.array(res.landmarks, dtype=np.float32).reshape(4, 2)
-                    self.result_queue.put((track_id, res.color_type, res.confidence, rel_landmarks))
+                # 只有识别成功才推入结果队列
+                if plate_type != UNKNOWN and plate_points is not None:
+                    # 1. 映射整数分类标志为引擎所需的字符串格式
+                    color_type = "unknown"
+                    if plate_type == GREEN: color_type = "green"
+                    elif plate_type == BLUE: color_type = "blue"
+                    elif plate_type == YELLOW_SINGLE: color_type = "yellow"
+                    
+                    # 2. 将绝对像素坐标系转换为 Engine 期待的 (0~1) 相对坐标
+                    rel_landmarks = plate_points.astype(np.float32)
+                    rel_landmarks[:, 0] /= float(crop_w)
+                    rel_landmarks[:, 1] /= float(crop_h)
+                    
+                    self.result_queue.put((track_id, color_type, float(conf), rel_landmarks))
                     
                 self.task_queue.task_done()
                 
@@ -56,7 +62,6 @@ class RecognitionWorker(threading.Thread):
                 continue
             except Exception as e:
                 logger.error(f"[OCR Thread-{self.name}] 运行异常: {e}")
-
 
 class AsyncPlateRecognizer:
     def __init__(self, config, num_workers=2):
@@ -66,13 +71,11 @@ class AsyncPlateRecognizer:
         self.stop_event = threading.Event()
         self.workers = []
         
-        logger.info("[Async OCR] 正在初始化 C++ Hailo NPU Pipeline...")
-        # 不再实例化 Python 的 Pipeline，而是直接实例化 C++ 硬件接管类
-        self.pipeline = hailo_ocr_cpp.HailoPlateRecognizer(self.cfg.Y5FU_PATH, self.cfg.LITEMODEL_PATH)
+        logger.info("[Async OCR] 启动基于 ONNXRuntime 的异步车牌识别池...")
         
         for _ in range(num_workers):
-            # 将 C++ pipeline 当作共享资源塞给所有的 Worker 线程
-            w = RecognitionWorker(self.task_queue, self.result_queue, self.stop_event, self.pipeline)
+            # 将 cfg 直接传入 Worker，由 Worker 自己内部创建 Pipeline
+            w = RecognitionWorker(self.task_queue, self.result_queue, self.stop_event, self.cfg)
             w.start()
             self.workers.append(w)
 
@@ -104,7 +107,3 @@ class AsyncPlateRecognizer:
                 
         for w in self.workers:
             w.join(timeout=2.0)
-            
-        # 注意：在 C++ 版本中，我们不需要手动调 self.pipeline.release()
-        # 因为当 AsyncPlateRecognizer 被销毁时，self.pipeline 会被 Python 的垃圾回收处理
-        # 从而触发 C++ 端的 ~HailoPlateRecognizer() 析构函数，安全、干净地释放 NPU 资源。
