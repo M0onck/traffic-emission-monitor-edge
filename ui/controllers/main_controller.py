@@ -365,6 +365,13 @@ class MainController:
             if not self.worker.wait(4000):
                 print("[Warning] 后台引擎清理超时，可能导致最后一段录像损坏.")
 
+        # 显式叫停全局摄像头对象，防止 NPU 句柄泄漏
+        if self.global_camera:
+            try:
+                self.global_camera.stop()
+            except Exception as e:
+                print(f"[Warning] 全局摄像头停止时发生异常: {e}")
+        
         # 清空摄像机实例状态，让下次点击采集时重新拉起管线
         self.global_camera = None
         
@@ -654,7 +661,7 @@ class MainController:
         scaled_pixmap = pixmap.scaled(
             self.view.video_label.size(), 
             Qt.KeepAspectRatio, 
-            Qt.SmoothTransformation
+            Qt.FastTransformation
         )
         self.view.video_label.setPixmap(scaled_pixmap)
 
