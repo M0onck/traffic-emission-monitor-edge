@@ -57,11 +57,14 @@ class ThermalCamera:
             return
             
         self.lib = ctypes.cdll.LoadLibrary(lib_path)
+
+        # 获取 'spawn' 上下文，彻底隔离底层硬件文件句柄
+        self.ctx = mp.get_context('spawn')
         
         # 1. 开辟进程间共享内存
-        self.shared_array = mp.Array(ctypes.c_float, 768, lock=False)
-        self.heartbeat = mp.Value('d', time.time(), lock=False) # 双精度浮点型时间戳
-        self.run_flag = mp.Value(ctypes.c_bool, False, lock=False)
+        self.shared_array = self.ctx.Array(ctypes.c_float, 768, lock=False)
+        self.heartbeat = self.ctx.Value('d', time.time(), lock=False) # 双精度浮点型时间戳
+        self.run_flag = self.ctx.Value(ctypes.c_bool, False, lock=False)
         
         self._process = None
         self._watchdog_thread = None
@@ -85,7 +88,8 @@ class ThermalCamera:
     def _start_worker_process(self):
         """拉起硬件工作进程"""
         self.heartbeat.value = time.time() # 启动前刷新心跳
-        self._process = mp.Process(
+        # 使用 spawn context 创建子进程
+        self._process = self.ctx.Process(
             target=_thermal_worker, 
             args=(self.lib_path, self.shared_array, self.heartbeat, self.run_flag),
             daemon=True

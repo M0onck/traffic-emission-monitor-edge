@@ -98,6 +98,11 @@ class MultiTaskDetectorORT(HamburgerABC):
         sess_options = ort.SessionOptions()
         sess_options.log_severity_level = 3  # 屏蔽 Warning 日志
 
+        # 严格限制 ONNX 线程数，防止把树莓派 CPU 吃满
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
         # 将 sess_options 传入 InferenceSession
         self.session = ort.InferenceSession(onnx_path, sess_options, providers=['CPUExecutionProvider'])
         self.inputs_option = self.session.get_inputs()

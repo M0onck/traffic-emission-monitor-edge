@@ -38,8 +38,14 @@ class RecognitionWorker(threading.Thread):
                 track_id, crop_img = task
                 crop_h, crop_w = crop_img.shape[:2]
                 
-                # 调用纯 Python ONNX 管道 (此处 ONNXRuntime 底层会自动释放 GIL)
-                plate_type, conf, plate_box, plate_points = self.pipeline.process(crop_img)
+                # 调用纯 Python ONNX 管道
+                result = self.pipeline.process(crop_img)
+                
+                # 修复解包异常：兼容未检测到车牌时返回 3 个值的情况
+                if len(result) == 3:
+                    plate_type, conf, plate_points = result
+                else:
+                    plate_type, conf, plate_box, plate_points = result
                 
                 # 只有识别成功才推入结果队列
                 if plate_type != UNKNOWN and plate_points is not None:
