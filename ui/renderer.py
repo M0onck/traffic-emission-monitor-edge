@@ -108,8 +108,8 @@ class Visualizer:
                 # 计算 4 个点的几何中心 (cx, cy)
                 center = np.mean(absolute_points, axis=0)
                 
-                # 以中心点为基准，向外辐射放大 2 倍 (这个系数可根据视觉效果微调)
-                scale_factor = 2
+                # 以中心点为基准，向外辐射放大 1.2 倍 (这个系数可根据视觉效果微调)
+                scale_factor = 1.2
                 expanded_points = center + (absolute_points - center) * scale_factor
                 
                 # 转换回整型，重塑维度给 OpenCV 绘制

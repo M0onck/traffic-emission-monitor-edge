@@ -384,7 +384,7 @@ class TrafficMonitorEngine:
         return annotated_frame
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):
-        """派发任务给子进程：基于清晰度评估与预处理的动态抽帧"""
+        """派发车牌识别任务给子进程"""
         img_h, img_w = frame.shape[:2]
 
         for tid, box in zip(detections.tracker_id, detections.xyxy):
@@ -411,30 +411,11 @@ class TrafficMonitorEngine:
             if vehicle_crop.size == 0:
                 continue
 
-            # 3. 拉普拉斯方差图像清晰度评估
-            gray_crop = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2GRAY)
-            blur_score = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
-            
-            # 从配置中读取模糊阈值（提供默认兜底值 100.0）
-            blur_threshold = getattr(self.cfg, 'BLUR_THRESHOLD', 100.0)
-            
-            if blur_score < blur_threshold:
-                # 直接 continue 丢弃这一帧，把识别机会留给车辆驶近后更清晰的下一帧
-                continue
-
-            # 4. 亮度与对比度增强预处理 (CLAHE)
-            lab = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            cl = clahe.apply(l)
-            limg = cv2.merge((cl,a,b))
-            enhanced_crop = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-
             # 5. 投递最终的优质任务
-            if self.plate_worker.push_task(tid, enhanced_crop):
+            if self.plate_worker.push_task(tid, vehicle_crop):
                 self.plate_retry[tid] = frame_id
 
-                logger.debug(f"[DEBUG] 成功向子进程投递 TID={tid} 的车牌识别任务 (拉普拉斯方差: {blur_score:.1f})")
+                logger.debug(f"[DEBUG] 成功向子进程投递 TID={tid} 的车牌识别任务")
 
     def _collect_plate_results(self):
         """非阻塞地从子进程收取计算结果并入库"""
