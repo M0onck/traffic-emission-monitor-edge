@@ -30,5 +30,9 @@ else
     exit 1
 fi
 
+# 强制开启底层 TRACE 级别日志，并输出到文件
+export HAILORT_LOGGER_LEVEL=TRACE
+export HAILORT_LOGGER_PATH=/home/m0onck/traffic-emission-monitor-edge/hailo_crash.log
+
 # 5. 启动主程序
 python app_gui.py

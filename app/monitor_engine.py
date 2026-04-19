@@ -391,7 +391,7 @@ class TrafficMonitorEngine:
             # 1. 冷却检查防爆栈：防止对同一辆车频繁提交识别请求
             if frame_id - self.plate_retry.get(tid, -999) < self.cfg.OCR_RETRY_COOLDOWN:
                 continue
-            
+
             x1, y1, x2, y2 = map(int, box)
             
             # 2. 动态 Padding (保护低位悬挂的车牌)
