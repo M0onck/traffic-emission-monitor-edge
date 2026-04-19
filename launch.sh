@@ -1,6 +1,13 @@
 #!/bin/bash
 # launch.sh
 
+# 强杀所有之前的 Python 实例
+pkill -9 -f app_gui.py
+pkill -9 -f monitor_engine.py
+
+# 稍微等一等，让 Linux 内核释放 /dev/i2c-1 和 /dev/hailo0 的硬件句柄
+sleep 1.5
+
 # 1. 切换工作目录到项目根目录，确保相对路径资源加载正常
 cd /home/m0onck/traffic-emission-monitor-edge
 

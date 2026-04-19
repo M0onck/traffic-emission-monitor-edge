@@ -93,7 +93,7 @@ class ThermalCamera:
 
     def _start_worker_process(self):
         """拉起硬件工作进程"""
-        self.heartbeat.value = time.time() # 启动前刷新心跳
+        self.heartbeat.value = time.time() + 10.0 # 启动前刷新心跳，一开始给予 10 秒启动预热容忍期
         # 使用 spawn context 创建子进程
         self._process = self.ctx.Process(
             target=_thermal_worker, 
