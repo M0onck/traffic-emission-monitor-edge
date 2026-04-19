@@ -7,13 +7,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def perception_worker(config, shm_name, shape, bbox_queue, stop_event):
+def perception_worker(shm_name, shape, bbox_queue, stop_event):
     """
     独立的系统级感知进程。
     拥有完全独立的 Python 解释器状态和 GC，绝不被主进程的 UI 渲染阻塞。
     """
     # [非常重要] 必须在子进程内部导入 GStreamer 相关库！
     # 否则 fork 进程时会引发 GObject 信号系统的底层崩溃
+    import infra.config.loader as config
     from perception.gst_pipeline import GstPipelineManager
     
     pipeline = None

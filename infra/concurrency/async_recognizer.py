@@ -17,15 +17,17 @@ logger = logging.getLogger(__name__)
 # 核心修改 1：继承 mp.Process 而不是 threading.Thread
 # ==========================================
 class RecognitionWorker(mp.Process):
-    def __init__(self, task_queue, result_queue, stop_event, cfg, worker_id):
+    def __init__(self, task_queue, result_queue, stop_event, worker_id):
         super().__init__(daemon=True)
         self.task_queue = task_queue
         self.result_queue = result_queue
         self.stop_event = stop_event
-        self.cfg = cfg
         self.worker_id = worker_id
 
     def run(self):
+        # 在子进程的内存空间里局部导入模块
+        import infra.config.loader as cfg
+
         from infra.sys.process_optimizer import ProcessOptimizer
         ProcessOptimizer.optimize_classifier_process()
             
@@ -35,13 +37,13 @@ class RecognitionWorker(mp.Process):
 
         logger.info(f"[OCR Worker-{self.worker_id}] 正在初始化 ONNX 模型...")
         # 为每个进程单独实例化模型，完美避开多进程/多线程竞态条件
-        detector = MultiTaskDetectorORT(self.cfg.Y5FU_PATH)
-        classifier = ClassificationORT(self.cfg.LITEMODEL_PATH)
+        detector = MultiTaskDetectorORT(cfg.Y5FU_PATH)
+        classifier = ClassificationORT(cfg.LITEMODEL_PATH)
         pipeline = EdgePlateClassifierPipeline(detector, classifier)
         
         logger.info(f"[OCR Worker-{self.worker_id}] ONNX 引擎就绪，等待任务...")
         
-        BLUR_THRESHOLD = getattr(self.cfg, 'BLUR_THRESHOLD', 100.0)
+        BLUR_THRESHOLD = getattr(cfg, 'BLUR_THRESHOLD', 100.0)
         
         while not self.stop_event.is_set():
             try:
@@ -106,12 +108,7 @@ class RecognitionWorker(mp.Process):
 
 
 class AsyncPlateRecognizer:
-    def __init__(self, config, num_workers=1):
-        self.cfg = config
-        
-        # ==========================================
-        # 核心修改 3：使用 spawn 上下文创建跨进程安全的队列和事件
-        # ==========================================
+    def __init__(self, num_workers=1):
         ctx = mp.get_context('spawn')
         self.task_queue = ctx.Queue(maxsize=3)
         self.result_queue = ctx.Queue()
@@ -121,7 +118,7 @@ class AsyncPlateRecognizer:
         logger.info(f"[Async OCR] 启动 {num_workers} 个独立 Spawn 进程的异步车牌识别池...")
         
         for i in range(num_workers):
-            w = RecognitionWorker(self.task_queue, self.result_queue, self.stop_event, self.cfg, worker_id=i)
+            w = RecognitionWorker(self.task_queue, self.result_queue, self.stop_event, worker_id=i)
             w.start()
             self.workers.append(w)
 
