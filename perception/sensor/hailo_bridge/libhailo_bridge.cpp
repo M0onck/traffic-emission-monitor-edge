@@ -24,16 +24,18 @@ extern "C" {
 std::vector<DetectionBox> global_detections;
 std::mutex det_mutex;
 
-static GstFlowReturn on_new_sample_c(GstElement *appsink, gpointer user_data) {
-    // 增加内部静态心跳计数器
-    static int frame_count = 0;
-    frame_count++;
-
-    GstSample *sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
+// 原生 C 回调函数 (在 GStreamer 串流线程中同步执行)
+static GstFlowReturn on_new_sample_c(GstAppSink *appsink, gpointer user_data) {
+    // 如果流水线正在切换状态，立刻放弃本帧
+    if (GST_STATE(GST_ELEMENT(appsink)) < GST_STATE_PAUSED) {
+        return GST_FLOW_OK;
+    }
+    
+    GstSample *sample = gst_app_sink_pull_sample(appsink);
     if (!sample) return GST_FLOW_OK;
 
     GstBuffer *buffer = gst_sample_get_buffer(sample);
-    if (!buffer) {
+    if (!buffer || GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_CORRUPTED)) {
         gst_sample_unref(sample);
         return GST_FLOW_OK;
     }
@@ -44,12 +46,6 @@ static GstFlowReturn on_new_sample_c(GstElement *appsink, gpointer user_data) {
     if (roi) {
         auto detections = roi->get_objects_typed(HAILO_DETECTION);
         
-        // 每隔 30 帧 (约 1-3 秒) 在终端打印一次底层心跳
-        if (frame_count % 30 == 0) {
-            std::cout << "[Hailo Bridge] Frame " << frame_count 
-                      << " | Detected Cars: " << detections.size() << std::endl;
-        }
-
         for (const auto& obj : detections) {
             HailoDetectionPtr det = std::dynamic_pointer_cast<HailoDetection>(obj);
             if (det) {
@@ -67,33 +63,42 @@ static GstFlowReturn on_new_sample_c(GstElement *appsink, gpointer user_data) {
                 temp_dets.push_back(box);
             }
         }
-    } else {
-        if (frame_count % 30 == 0) {
-            std::cout << "[Hailo Bridge] Frame " << frame_count << " | WARNING: NO ROI FOUND!" << std::endl;
-        }
     }
 
+    // 极速覆盖全局缓存
     {
         std::lock_guard<std::mutex> lock(det_mutex);
         global_detections = std::move(temp_dets);
     }
 
+    // 瞬间放行内存，归还 NPU 缓冲池
     gst_sample_unref(sample);
     return GST_FLOW_OK;
 }
 
 extern "C" {
+    // 挂载回调（Start时调用）
     void attach_hailo_sink(void* appsink_ptr) {
-        if (!appsink_ptr || !G_IS_OBJECT(appsink_ptr)) {
-            std::cerr << "[Hailo Bridge] FATAL: Python passed an invalid memory pointer!" << std::endl;
-            return;
-        }
+        if (!appsink_ptr || !G_IS_OBJECT(appsink_ptr)) return;
+        GstAppSink* appsink = GST_APP_SINK(appsink_ptr);
         
-        GstElement* appsink = GST_ELEMENT(appsink_ptr);
-        g_object_set(G_OBJECT(appsink), "emit-signals", TRUE, "sync", FALSE, NULL);
-        g_signal_connect(appsink, "new-sample", G_CALLBACK(on_new_sample_c), NULL);
+        GstAppSinkCallbacks callbacks = { nullptr };
+        callbacks.new_sample = on_new_sample_c;
         
-        std::cout << "[Hailo Bridge] SUCCESS: C++ Callbacks Attached! GIL is now bypassed." << std::endl;
+        // 彻底抛弃 GObject 信号，使用最高优先级的 C 原生 Callbacks
+        gst_app_sink_set_callbacks(appsink, &callbacks, nullptr, nullptr);
+        std::cout << "[Hailo Bridge] SUCCESS: Native C API Callbacks Attached!" << std::endl;
+    }
+
+    // 卸载回调（Stop时调用，绝对防止销毁崩溃）
+    void detach_hailo_sink(void* appsink_ptr) {
+        if (!appsink_ptr || !G_IS_OBJECT(appsink_ptr)) return;
+        GstAppSink* appsink = GST_APP_SINK(appsink_ptr);
+        
+        GstAppSinkCallbacks callbacks = { nullptr };
+        // 传入空指针即卸载回调，确保后续流水线销毁时绝对安全
+        gst_app_sink_set_callbacks(appsink, &callbacks, nullptr, nullptr);
+        std::cout << "[Hailo Bridge] SUCCESS: Callbacks Safely Detached." << std::endl;
     }
 
     int get_detection_count() {
