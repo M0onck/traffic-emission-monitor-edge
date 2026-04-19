@@ -156,7 +156,7 @@ class TrafficMonitorEngine:
 
                 # 拉取底层已经处理好的数据
                 t_read = time.perf_counter() # 性能探针开始
-                frame, buffer = self.camera.read()
+                frame, hailo_data = self.camera.read()
                 self.profile_stats['01_camera_read'] += (time.perf_counter() - t_read) # 性能探针结束
 
                 # 异步握手与终止判定
@@ -167,7 +167,7 @@ class TrafficMonitorEngine:
                 # 无论视频还是摄像头，统一打上当前的真实物理时间
                 frame_timestamp = self.time_sync.get_precise_timestamp()
                 
-                if frame is None or buffer is None:
+                if frame is None or hailo_data is None:
                     # 如果流未就绪，稍微休眠防止 CPU 空转
                     time.sleep(0.005)
                     continue
@@ -253,7 +253,7 @@ class TrafficMonitorEngine:
                 try:
                     # 提前呼叫感知层，剥离提取纯粹的 Python 数据字典
                     t_vision = time.perf_counter() # 性能探针开始
-                    detections = self.vision.process(frame, buffer)
+                    detections = self.vision.process(frame, hailo_data)
 
                     self.profile_stats['02_vision_extract'] += (time.perf_counter() - t_vision) # 性能探针结束
                     

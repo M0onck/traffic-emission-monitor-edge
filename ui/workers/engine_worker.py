@@ -17,6 +17,7 @@ class EngineWorker(QThread):
         self.phys_h = phys_h
         self.weather_station = weather_station
         self.engine = None
+        self._can_emit = True # 帧锁标志位
 
     def set_prebuilt_components(self, components):
         """接收从外部（Controller）注入的已实例化组件，如摄像头"""
@@ -69,8 +70,15 @@ class EngineWorker(QThread):
         self.engine.run()
 
     def emit_frame(self, frame):
-        rgb_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self.frame_ready.emit(rgb_img)
+        # 只有在 UI 消费完上一帧后，才允许发送下一帧
+        if self._can_emit:
+            self._can_emit = False # 上锁
+            rgb_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self.frame_ready.emit(rgb_img)
+
+    def frame_consumed_callback(self):
+        """由 UI 线程在画面渲染(update)完毕后调用，解锁下一帧"""
+        self._can_emit = True
         
     def stop(self):
         if self.engine:

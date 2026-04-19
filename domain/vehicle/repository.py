@@ -142,6 +142,7 @@ class VehicleRegistry:
                 'pixel_y': pixel_y,
                 'timestamp': timestamp  # 保存精确时间戳
             })
+
             rec['valid_samples_count'] = rec.get('valid_samples_count', 0) + 1
 
             # --- 动态 dt 距离估算 (用于静止车辆过滤) ---
