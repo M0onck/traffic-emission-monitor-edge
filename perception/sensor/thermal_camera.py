@@ -34,6 +34,12 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
             if status == 0:
                 # 只有真正拿到数据，才喂狗
                 heartbeat.value = time.time()
+
+            elif status == -8:
+                # 静默处理频差。不打报错日志，短暂休眠等待硬件准备好
+                # 0.05秒 (50ms) 是一个极佳的缓冲值，不会引发死锁，也能快速衔接下一帧
+                time.sleep(0.05)
+
             else:
                 logger.error(f"[ThermalWorker] 底层 I2C 读取失败，返回码: {status}")
                 time.sleep(0.1) # 防止死循环耗尽 CPU
@@ -136,7 +142,7 @@ class ThermalCamera:
             return None
             
         # 如果心跳严重超时，返回 None 避免主引擎拿到陈旧的冻结画面
-        if time.time() - self.heartbeat.value > 2.0:
+        if time.time() - self.heartbeat.value > 5.0:
             return None
             
         # 极速零拷贝：直接从原生无锁共享内存映射出 24x32 矩阵
