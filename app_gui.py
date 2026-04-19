@@ -6,6 +6,7 @@ import logging
 import faulthandler
 faulthandler.enable()
 from PyQt5.QtWidgets import QApplication
+import multiprocessing as mp
 from multiprocessing import Process, Event
 import infra.config.loader as cfg
 
@@ -37,6 +38,7 @@ def start_daemon(stop_event):
     daemon.run()
 
 def main():
+    mp.set_start_method('spawn', force=True)
     app = QApplication(sys.argv)
     
     daemon_process = None
