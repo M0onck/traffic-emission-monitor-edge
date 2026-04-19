@@ -41,8 +41,8 @@ class AppBootstrap:
         }
         classifier = VehicleClassifier(yolo_classes=yolo_classes_dict)
 
-        # 3. 感知层：GStreamer 视频流硬件管道
-        camera = GstPipelineManager(config)
+        # 3. 感知层：GStreamer 视频流硬件管道 (交给子进程初始化)
+        camera = None
 
         # 4. 异步处理：OCR 车牌识别工人 (传入具体的模型路径)
         plate_worker = None
@@ -70,7 +70,7 @@ class AppBootstrap:
         components = {
             'db': db,
             'registry': registry,
-            'camera': camera,
+            'camera': None,
             'classifier': classifier,
             'plate_worker': plate_worker,
             'visualizer': visualizer,

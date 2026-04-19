@@ -7,7 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def perception_worker(shm_name, shape, bbox_queue, stop_event):
+def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
     """
     独立的系统级感知进程。
     拥有完全独立的 Python 解释器状态和 GC，绝不被主进程的 UI 渲染阻塞。
@@ -17,12 +17,18 @@ def perception_worker(shm_name, shape, bbox_queue, stop_event):
     import infra.config.loader as config
     from perception.gst_pipeline import GstPipelineManager
     
+    class ConfigWrapper:
+        def __init__(self, d):
+            for k, v in d.items(): setattr(self, k, v)
+
+    runtime_config = ConfigWrapper(config_dict)
+
     pipeline = None
     existing_shm = None
     
     try:
         logger.info("-> [感知进程] 初始化 NPU 与流水线...")
-        pipeline = GstPipelineManager(config)
+        pipeline = GstPipelineManager(runtime_config)
         pipeline.start()
         
         # 接入主进程开辟好的操作系统级共享内存

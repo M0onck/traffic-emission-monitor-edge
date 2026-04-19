@@ -57,7 +57,7 @@ fi
 # 强制开启底层 TRACE 级别日志，并输出到文件
 export HAILORT_LOGGER_LEVEL=TRACE
 export HAILORT_LOGGER_PATH=/home/m0onck/traffic-emission-monitor-edge/hailo_crash.log
-export GST_DEBUG="hailonet:6,hailofilter:6,appsink:5"
+# export GST_DEBUG="hailonet:6,hailofilter:6,appsink:5"
 
 # 5. 启动主程序
-python app_gui.py 2>&1 | tee hardware_leak.log
+python app_gui.py # 2>&1 | tee hardware_leak.log

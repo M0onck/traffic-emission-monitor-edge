@@ -71,16 +71,26 @@ class TrafficMonitorEngine:
         self._is_running = True
         logger.info("[Engine] 启动多进程解耦引擎...")
 
+        # 准备可序列化的配置字典，确保 UI 的动态修改能传给子进程
+        config_dict = {
+            'VIDEO_PATH': self.cfg.VIDEO_PATH,
+            'HEF_PATH': self.cfg.HEF_PATH,
+            'POST_SO_PATH': self.cfg.POST_SO_PATH,
+            'FRAME_WIDTH': self.cfg.FRAME_WIDTH,
+            'FRAME_HEIGHT': self.cfg.FRAME_HEIGHT,
+            'USE_CAMERA': self.cfg.USE_CAMERA
+        }
+
         try:
             # 1. 初始化共享内存
             self.shm = shared_memory.SharedMemory(create=True, size=self.frame_size, name=self.shm_name)
             self.shm_array = np.ndarray(self.frame_shape, dtype=np.uint8, buffer=self.shm.buf)
             self.shm_array[:] = 0
 
-            # 2. 启动感知子进程 (不再传递 self.cfg 模块)
+            # 2. 启动感知子进程
             self.p_daemon = mp.Process(
                 target=perception_worker,
-                args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event)
+                args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict)
             )
             self.p_daemon.daemon = True
             self.p_daemon.start()
@@ -123,7 +133,7 @@ class TrafficMonitorEngine:
                 # --- C. 核心处理 ---
                 self.current_frame_id += 1
                 detections = self.vision_pipeline.process(current_frame, last_hailo_data)
-                self.process_frame(current_frame, detections, now)
+                self.process_frame(current_frame, detections, self.current_frame_id, frame_timestamp=now)
 
                 # --- D. 渲染分发 ---
                 if self.frame_callback:
