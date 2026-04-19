@@ -26,14 +26,8 @@ class RecognitionWorker(mp.Process):
         self.worker_id = worker_id
 
     def run(self):
-        # ========================================================
-        # 终极物理隔离：强制将 OCR 进程锁死在树莓派的 Core 3 上
-        # 它永远无法跨越物理边界去抢占主引擎(Core 2)或底层驱动(Core 0/1)的算力
-        # ========================================================
-        if hasattr(os, 'sched_setaffinity'):
-            core_id = 3
-            os.sched_setaffinity(0, {core_id})
-            logger.info(f"[OCR Worker-{self.worker_id}] 物理隔离生效，已成功锁定至 CPU 核心 {core_id}")
+        from infra.sys.process_optimizer import ProcessOptimizer
+        ProcessOptimizer.optimize_classifier_process()
             
         # 限制底层的隐式多线程抢占
         cv2.setNumThreads(1)
@@ -55,7 +49,11 @@ class RecognitionWorker(mp.Process):
                 if task is None: 
                     break
                     
-                track_id, vehicle_img = task
+                track_id, img_bytes = task
+                # ==========================================================
+                # 将接收到的 JPEG 二进制流极速解压还原为 BGR 图像矩阵
+                # ==========================================================
+                vehicle_img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
                 crop_h, crop_w = vehicle_img.shape[:2]
                 
                 # ==========================================================
@@ -115,7 +113,7 @@ class AsyncPlateRecognizer:
         # 核心修改 3：使用 spawn 上下文创建跨进程安全的队列和事件
         # ==========================================
         ctx = mp.get_context('spawn')
-        self.task_queue = ctx.Queue(maxsize=10) # 稍微加大缓冲池，防止主线程塞满阻塞
+        self.task_queue = ctx.Queue(maxsize=3)
         self.result_queue = ctx.Queue()
         self.stop_event = ctx.Event()
         self.workers = []
@@ -129,8 +127,11 @@ class AsyncPlateRecognizer:
 
     def push_task(self, track_id: int, image: np.ndarray) -> bool:
         try:
-            # np.ascontiguousarray 确保图像内存连续，防止跨进程 Pickle 序列化时崩溃
-            self.task_queue.put_nowait((track_id, np.ascontiguousarray(image)))
+            # 在放入队列前压缩
+            _, encoded_img = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+            # 此时投递的是极小的 bytes 对象，Pickle 序列化开销几乎为零
+            self.task_queue.put_nowait((track_id, encoded_img.tobytes()))
             return True
         except queue.Full:
             return False

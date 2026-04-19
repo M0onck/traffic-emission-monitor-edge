@@ -38,6 +38,7 @@ def _thermal_worker(lib_path, shared_array, heartbeat, run_flag):
             elif status == -8:
                 # 静默处理频差。不打报错日志，短暂休眠等待硬件准备好
                 # 0.05秒 (50ms) 是一个极佳的缓冲值，不会引发死锁，也能快速衔接下一帧
+                logger.info(f"[ThermalWorker] 暂时无法读取 I2C，返回码: {status}")
                 time.sleep(0.05)
 
             else:
