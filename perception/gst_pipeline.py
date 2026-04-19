@@ -146,29 +146,36 @@ class GstPipelineManager:
         if not self.is_running:
             return None, None
 
-        # 1. 从预览分支拉取已经过 GPU 去畸变的干净画面
-        # 此时的画面已经在 GStreamer 底层完成了解码、GPU 去畸变和色彩转换
+        clean_frame = None
+        
+        # ==========================================
+        # 1. 提取画面分支 (必须极其严苛地管理 PyGObject 引用)
+        # ==========================================
         clean_sample = self.clean_sink.emit("try-pull-sample", 5000000) # 5毫秒超时
-        if not clean_sample:
-            return None, None
-
-        clean_buffer = clean_sample.get_buffer()
+        if clean_sample:
+            clean_buffer = clean_sample.get_buffer()
+            success, map_info = clean_buffer.map(Gst.MapFlags.READ)
+            if success:
+                # 极速拷贝底层内存到 Python 空间 (完全切断物理联系)
+                clean_frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
+                clean_buffer.unmap(map_info)
+            
+            # 立刻强杀 Python 到 C 的代理对象，强迫 GStreamer 引用计数 -1
+            del map_info
+            del clean_buffer
         
-        # 极速拷贝底层内存到 Python 空间，供下游视觉追踪和 UI 渲染使用
-        success, map_info = clean_buffer.map(Gst.MapFlags.READ)
-        if success:
-            clean_frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
-            clean_buffer.unmap(map_info)
-        else:
+        # 无论成功与否，必须释放 Sample 归还给上游池！
+        del clean_sample 
+        
+        # 如果连基础画面都没拿到，直接返回，跳过 AI 解析
+        if clean_frame is None:
             return None, None
 
-        # 2. 从 AI 分支拉取 Hailo 推理结果
-        # 注意：由于现在是底层的 tee 分配器并行处理，不再需要等待 Python 层推回数据，
-        # 这里的超时时间可以从 15ms 缩短到 5ms，进一步降低 CPU 轮询等待的开销。
+        # ==========================================
+        # 2. 提取 AI 元数据分支
+        # ==========================================
         meta_sample = self.meta_sink.emit("try-pull-sample", 5000000) 
-        hailo_data = []
         
-        # 只有当成功拉取到新的元数据时，才去解析并更新缓存
         if meta_sample:
             new_hailo_data = []
             meta_buffer = meta_sample.get_buffer()
@@ -176,6 +183,7 @@ class GstPipelineManager:
                 import hailo
                 roi = hailo.get_roi_from_buffer(meta_buffer)
                 hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+                
                 for det in hailo_detections:
                     bbox = det.get_bbox()
                     new_hailo_data.append({
@@ -184,13 +192,24 @@ class GstPipelineManager:
                         'xmin': bbox.xmin(), 'ymin': bbox.ymin(),
                         'xmax': bbox.xmax(), 'ymax': bbox.ymax()
                     })
+                    # 循环内释放临时底层对象的引用
+                    del bbox
+                    del det
+                
+                # 析构 Hailo NPU 结构体引用
+                del hailo_detections
+                del roi
             except Exception:
-                pass # 解析失败或在非真实设备下跳过
+                pass 
             
-            # 更新缓存为最新数据
             self.last_hailo_data = new_hailo_data
 
-        # 返回去畸变后的干净画面和缓存的 AI 数据
+            # 释放 Hailo 的 Meta GstBuffer
+            del meta_buffer
+            
+        # 无论成功与否，必须释放 Meta Sample 归还给 HailoRT 插件
+        del meta_sample
+
         return clean_frame, self.last_hailo_data
 
     def set_record_location(self, session_id):

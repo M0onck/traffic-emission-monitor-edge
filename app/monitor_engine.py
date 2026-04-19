@@ -70,6 +70,14 @@ class TrafficMonitorEngine:
 
         # 从组件字典中获取多源传感器实例
         self.thermal_cam = components.get('thermal_cam')
+
+        # ==========================================
+        # [DEBUG 隔离测试] 强制切断热成像模块的引用
+        if self.thermal_cam is not None:
+            print("[DEBUG] 正在隔离热成像模块：忽略实例化对象")
+            self.thermal_cam = None
+        # ==========================================
+
         self.weather_station = components.get('weather_station')
 
         # 初始化 VSP 和 工况计算器
@@ -246,9 +254,6 @@ class TrafficMonitorEngine:
                     # 提前呼叫感知层，剥离提取纯粹的 Python 数据字典
                     t_vision = time.perf_counter() # 性能探针开始
                     detections = self.vision.process(frame, buffer)
-                    
-                    # 立刻斩断底层 GStreamer 内存锁！绝不将其带入后续耗时环节
-                    # del buffer
 
                     self.profile_stats['02_vision_extract'] += (time.perf_counter() - t_vision) # 性能探针结束
                     
