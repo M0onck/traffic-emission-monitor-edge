@@ -751,11 +751,12 @@ class MainWindow(QMainWindow):
         tab_video = QWidget()
         v_layout = QVBoxLayout(tab_video)
         v_layout.setContentsMargins(0,0,0,0)
-        self.video_label = QLabel("正在启动边缘端硬件加速推理，请稍候...")
-        self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setFont(QFont("Arial", 14))
-        self.video_label.setStyleSheet("background-color: black; color: white;")
-        v_layout.addWidget(self.video_label)
+        
+        # 使用 VideoCanvas
+        self.video_canvas = VideoCanvas()
+        # 默认文字在 VideoCanvas 的 __init__ 中已被设定
+        v_layout.addWidget(self.video_canvas)
+        
         self.tabs.addTab(tab_video, "目标追踪预览")
         
         # --- Tab 2: 单车抽样 Dashboard ---

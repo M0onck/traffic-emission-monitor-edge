@@ -266,12 +266,11 @@ class MainController:
         if self.is_headless:
             self.view.btn_headless.setText("显示画面")
             self.view.btn_headless.setStyleSheet(self.view.style_hollow_red)
-            # 替换视频画布为纯文本提示
-            self.view.video_label.setText("画面渲染已关闭，推理引擎仍在后端运行.")
+            self.view.video_canvas.show_message("画面渲染已关闭，推理引擎仍在后端运行.")
         else:
             self.view.btn_headless.setText("隐藏画面")
             self.view.btn_headless.setStyleSheet(self.view.style_hollow_green)
-            self.view.video_label.setText("正在恢复渲染通道...")
+            self.view.video_canvas.show_message("正在恢复渲染通道...")
         
         # 将状态同步给底层的引擎
         if getattr(self, 'worker', None) and getattr(self.worker, 'engine', None):
@@ -774,18 +773,8 @@ class MainController:
             return
         
         try:
-            h, w, ch = rgb_img.shape
-            bytes_per_line = ch * w
-            qimg = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            
-            # 利用 Qt 的机制自适应当前 Label 尺寸，自动补齐黑边并保持等比缩放
-            pixmap = QPixmap.fromImage(qimg)
-            scaled_pixmap = pixmap.scaled(
-                self.view.video_label.size(), 
-                Qt.KeepAspectRatio, 
-                Qt.FastTransformation
-            )
-            self.view.video_label.setPixmap(scaled_pixmap)
+            # 直接调用 View 层组件封装好的渲染接口
+            self.view.video_canvas.update_image(rgb_img)
 
             # 通知 EngineWorker 当前帧已渲染完成，允许发送下一帧
             if self.worker:
