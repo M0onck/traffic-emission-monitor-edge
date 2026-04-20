@@ -91,21 +91,32 @@ class MainController:
 
     def start_monitoring(self):
         """!
-        @brief 启动监控流程：实例化引擎 -> 封装线程 -> 绑定信号。
+        @brief 启动监控流程（已取代旧版 start_engine）：装配物理参数 -> 释放硬件 -> 启动引擎。
         """
         if self.is_collecting: return
+
+        # --- 1. 物理先验参数同步 ---
+        # 从 UI 层获取透视标定点和物理尺寸，同步到全局配置中，供后端的对齐引擎(AlignmentEngine)使用
+        self.cfg.CALIBRATION_POINTS = self.view.canvas.get_real_points()
+        self.cfg.PHYS_W = self.view.phys_w
+        self.cfg.PHYS_H = self.view.phys_h
+
+        # --- 2. 硬件控制权移交 ---
+        # 释放主界面标定画布占用的摄像头流，为感知子进程或后台推理让路
+        if getattr(self, 'global_camera', None):
+            print("[Controller] 正在释放主进程摄像头管线，为后端推理引擎让路...")
+            self.global_camera.stop()
+            self.global_camera = None
 
         from app.monitor_engine import TrafficMonitorEngine
         from ui.workers.engine_worker import EngineWorker
 
-        # 1. 实例化 Worker
+        # --- 3. 实例化 Worker 并绑定 UI 刷新回调 ---
         self.worker = EngineWorker()
-        
-        # 2. 绑定“接线”：Worker 发出画面 -> Controller 接收刷新
         self.worker.frame_ready.connect(self.on_frame_received)
 
-        # 3. 实例化 Engine，并将 Worker 的方法作为回调注入
-        # 这样 Engine 产生的每一帧都会自动经过 Worker 的 emit_frame 处理
+        # --- 4. 实例化后端核心引擎 ---
+        # 使用依赖注入(DI)的方式，将所需的所有资源一次性传给引擎
         self.engine = TrafficMonitorEngine(
             config=self.cfg,
             components=self.components,
@@ -113,12 +124,16 @@ class MainController:
             frame_callback=self.worker.emit_frame 
         )
 
-        # 4. 启动后台线程
+        # --- 5. 启动后台守护线程 ---
         self.worker.set_engine(self.engine)
         self.worker.start()
         
         self.is_collecting = True
-        self.view.btn_start.setText("停止监控")
+        
+        # --- 6. 刷新界面状态 ---
+        self.update_nav_buttons()
+        self.update_main_menu_btn_style()
+        print(">>> [Controller] 监控引擎已全面启动。")
 
     def stop_monitoring(self):
         """!
@@ -149,18 +164,25 @@ class MainController:
 
     def on_frame_received(self, rgb_frame):
         """!
-        @brief UI 线程回调：渲染图像并释放 Worker 锁。
+        @brief UI 线程回调：渲染图像、刷新数据面板并释放 Worker 锁。
         """
-        # 1. 调用 View 层的接口展示画面
-        if hasattr(self.view, 'video_canvas'):
-            self.view.video_canvas.update_image(rgb_frame)
-        
-        # 2. 驱动 Dashboard 数据更新
-        self._update_dashboard()
-        
-        # 3. 解锁 Worker，允许发送下一帧，实现 1:1 的生产消费平衡
-        if self.worker:
-            self.worker.unlock_frame()
+        try:
+            # 1. 无头模式拦截：如果开启了隐藏画面，则跳过 UI 图像的转换与渲染，节省 CPU
+            if not getattr(self, 'is_headless', False):
+                if hasattr(self.view, 'video_canvas'):
+                    self.view.video_canvas.update_image(rgb_frame)
+            
+            # 2. 驱动 Dashboard 数据更新（保持与帧率同步）
+            self._update_dashboard()
+            
+        except Exception as e:
+            print(f"[UI异常] 视频帧渲染失败: {e}")
+            
+        finally:
+            # 3. 核心安全机制：无论是否无头模式，无论渲染是否报错，
+            # 必须调用新版 Worker 的 unlock_frame 释放锁，否则后台引擎会被永久挂起
+            if self.worker:
+                self.worker.unlock_frame()
 
     def on_engine_finished(self):
         """!
@@ -360,7 +382,7 @@ class MainController:
                 
                 # --- 进入新页面的处理逻辑 ---
                 if next_page_widget == self.view.page_monitor and not self.is_collecting:
-                    self.start_engine()
+                    self.start_monitoring()
                     self.dash_timer.start(100) 
                     self.is_collecting = True
                     
@@ -453,21 +475,6 @@ class MainController:
             self.view.btn_app1.setStyleSheet(self.view.style_hollow_white)
     
     # --- 任务启停控制 ---
-    def start_engine(self):
-        # 提取的是反算好的原生坐标
-        source_points = self.view.canvas.get_real_points()
-
-        # 多进程架构下的硬件控制权移交
-        if self.global_camera:
-            print("[Controller] 正在释放主进程摄像头与 NPU 句柄，为感知子进程让路...")
-            self.global_camera.stop()
-            self.global_camera = None
-        
-        # 启动后台引擎线程
-        self.worker = EngineWorker(source_points, self.view.phys_w, self.view.phys_h, weather_station=self.weather_gw)
-        
-        self.worker.frame_ready.connect(self.update_video_frame)
-        self.worker.start()
     
     def stop_collection_trigger(self):
         """触发结束采集：弹出确认窗口"""
@@ -767,23 +774,6 @@ class MainController:
                 
         btn_confirm.clicked.connect(execute_delete)
         dialog.exec_()
-
-    def update_video_frame(self, rgb_img):
-        if getattr(self, 'is_headless', False):
-            return
-        
-        try:
-            # 直接调用 View 层组件封装好的渲染接口
-            self.view.video_canvas.update_image(rgb_img)
-
-            # 通知 EngineWorker 当前帧已渲染完成，允许发送下一帧
-            if self.worker:
-                self.worker.frame_consumed_callback()
-        
-        except Exception as e:
-            # 即使发生异常也要尝试释放锁，确保系统不会永久停滞
-            if self.worker:
-                self.worker.frame_consumed_callback()
 
     def update_timer_tasks(self):
         """总控定时器：分配 UI 刷新任务"""
