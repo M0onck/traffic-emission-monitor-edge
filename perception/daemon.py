@@ -16,27 +16,37 @@ from hailo_platform import (
 
 logger = logging.getLogger(__name__)
 
-def parse_hailo_ragged_list(raw_list, orig_img_shape=(720, 1280), conf_threshold=0.5):
-    """提取 Hailo 硬件 NMS 输出的嵌套列表"""
-    orig_h, orig_w = orig_img_shape[:2]
+def parse_hailo_ragged_list(raw_list, conf_threshold=0.45):
+    """提取 Hailo 硬件 NMS 输出，保持归一化坐标供 VisionPipeline 消费"""
     results = []
     batch_0_data = raw_list[0] 
     
+    # YOLOv8 官方 COCO 数据集类别映射
+    # 2: car (小汽车), 5: bus (公交车), 7: truck (卡车)
+    coco_map = {2: "car", 5: "bus", 7: "truck"}
+    
     for class_id, boxes in enumerate(batch_0_data):
+        # 仅放行字典中我们关心的车辆类别
+        if class_id not in coco_map:
+            continue
+            
+        label_str = coco_map[class_id]
+        
         for box in boxes:
             ymin, xmin, ymax, xmax, score = box
-            if score < conf_threshold: continue
+            if score < conf_threshold: 
+                continue
             
-            # 还原到 UI 共享内存画面的绝对坐标 (请根据你实际的 UI 画面尺寸修改 orig_img_shape)
-            xmin_px = max(0, min(int(xmin * orig_w), orig_w))
-            ymin_px = max(0, min(int(ymin * orig_h), orig_h))
-            xmax_px = max(0, min(int(xmax * orig_w), orig_w))
-            ymax_px = max(0, min(int(ymax * orig_h), orig_h))
-            
+            # 原封不动地返回 0.0~1.0 的归一化坐标
             results.append({
-                "xmin": xmin_px, "ymin": ymin_px, "xmax": xmax_px, "ymax": ymax_px,
-                "conf": float(score), "label": "car" # 此处可加字典映射真实 label
+                "xmin": float(xmin), 
+                "ymin": float(ymin), 
+                "xmax": float(xmax), 
+                "ymax": float(ymax),
+                "conf": float(score), 
+                "label": label_str  # 正确传递分类字符串
             })
+            
     return results
 
 def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
@@ -99,8 +109,8 @@ def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
                         # C. 提取与压铸
                         raw_output = infer_results[output_name]
                         
-                        # D. 极速后处理 (传入 shape，通常与 shm_array 的形状一致，比如 720x1280)
-                        hailo_data = parse_hailo_ragged_list(raw_output, orig_img_shape=shape[:2], conf_threshold=0.5)
+                        # D. 极速后处理
+                        hailo_data = parse_hailo_ragged_list(raw_output, conf_threshold=0.45)
                         
                         # E. IPC 推送给主引擎
                         while not bbox_queue.empty():
