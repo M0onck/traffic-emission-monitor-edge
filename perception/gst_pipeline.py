@@ -8,34 +8,6 @@ import logging
 import infra.config.loader as cfg
 
 # ==========================================
-# 1. C++ 桥接层数据结构定义
-# 必须与 libhailo_bridge.cpp 中的 struct 精确对齐
-# ==========================================
-class DetectionBox(ctypes.Structure):
-    _fields_ = [
-        ("xmin", ctypes.c_float),
-        ("ymin", ctypes.c_float),
-        ("xmax", ctypes.c_float),
-        ("ymax", ctypes.c_float),
-        ("conf", ctypes.c_float),
-        ("label", ctypes.c_char * 64)
-    ]
-
-# ==========================================
-# 2. 动态库加载与接口约束
-# ==========================================
-hailo_bridge = ctypes.CDLL("./bin/libhailo_bridge.so")
-
-# 装载钩子：接管底层的 C++ 信号，绕过 Python GIL
-hailo_bridge.attach_hailo_sink.argtypes = [ctypes.c_void_p]
-
-# 卸载钩子：在停止录制时极其关键，防止底层流水线撕裂导致崩溃
-hailo_bridge.detach_hailo_sink.argtypes = [ctypes.c_void_p] 
-
-hailo_bridge.get_detection_count.restype = ctypes.c_int
-hailo_bridge.get_detections.argtypes = [ctypes.POINTER(DetectionBox), ctypes.c_int]
-
-# ==========================================
 # 3. GStreamer 初始化
 # ==========================================
 gi.require_version('Gst', '1.0')
@@ -138,8 +110,6 @@ class GstPipelineManager:
                     if self._shm_array is not None:
                         # [模式 A] 守护进程：极速穿透写共享内存
                         np.copyto(self._shm_array, frame_view)
-                        if self._frame_ready_event:
-                            self._frame_ready_event.set()
                     else:
                         # [模式 B] UI 标定：深拷贝保存至本地缓存
                         self._latest_frame = frame_view.copy()
@@ -221,61 +191,26 @@ class GstPipelineManager:
         return final_pipeline_str
 
     def start(self):
-        logger.info("正在启动 GStreamer 管道 (C++ 零拷贝桥接模式)...")
-        
-        # 获取底层对象并挂载至类的生命周期中，绝对防止 GC 销毁
-        self.meta_sink = self.pipeline.get_by_name("meta_sink")
-        
-        if self.meta_sink:
-            # 安全将内存地址转换为 64 位无符号正数，防止 ARM 64 位截断导致负数指针传入 C++
-            sink_ptr = hash(self.meta_sink) & 0xFFFFFFFFFFFFFFFF
-            # 委托 C++ 库接管管脚，彻底绕过 Python GIL
-            hailo_bridge.attach_hailo_sink(ctypes.c_void_p(sink_ptr))
-            
+        logger.info("正在启动 GStreamer 管道 (原生 PyHailoRT 抓图模式)...")
         self.pipeline.set_state(Gst.State.PLAYING)
         self.is_running = True
 
     def stop(self):
         """安全停止流水线。顺序极其严格，防止底层撕裂。"""
         if self.is_running:
-            # 1. 拆除 C++ 钩子：必须在拔管之前卸载，否则仍在极速运转的 C++ 线程访问野指针会瞬间断言崩溃
-            if getattr(self, 'meta_sink', None):
-                sink_ptr = hash(self.meta_sink) & 0xFFFFFFFFFFFFFFFF
-                hailo_bridge.detach_hailo_sink(ctypes.c_void_p(sink_ptr))
-                logger.info("已安全卸载底层 C++ 钩子。")
 
-            # 2. 发送 EOS 信号：保证所有缓冲数据落盘，mp4 文件拥有合法的 moov 尾部头
+            # 发送 EOS 信号：保证所有缓冲数据落盘，mp4 文件拥有合法的 moov 尾部头
             self.pipeline.send_event(Gst.Event.new_eos())
             
-            # 3. 总线等待：给予系统最多 2 秒处理完结帧
+            # 总线等待：给予系统最多 2 秒处理完结帧
             bus = self.pipeline.get_bus()
             if bus:
                 bus.timed_pop_filtered(2 * Gst.SECOND, Gst.MessageType.EOS)
                 
-            # 4. 彻底物理释放
+            # 彻底物理释放
             self.pipeline.set_state(Gst.State.NULL)
             self.is_running = False
             logger.info("GStreamer 流水线已安全关闭，录像封装完毕。")
-
-    def read_metadata(self):
-        """
-        仅负责从 C++ 桥接层提取 AI 检测数据。
-        """
-        count = hailo_bridge.get_detection_count()
-        new_hailo_data = []
-        if count > 0:
-            buffer_array = (DetectionBox * count)()
-            hailo_bridge.get_detections(buffer_array, count)
-            for i in range(count):
-                box = buffer_array[i]
-                new_hailo_data.append({
-                    'label': box.label.decode('utf-8', errors='ignore').rstrip('\x00'),
-                    'conf': float(box.conf),
-                    'xmin': float(box.xmin), 'ymin': float(box.ymin),
-                    'xmax': float(box.xmax), 'ymax': float(box.ymax)
-                })
-        self.last_hailo_data = new_hailo_data
-        return new_hailo_data
 
     def read(self):
         """
@@ -285,9 +220,9 @@ class GstPipelineManager:
         """
         # 如果还没收到第一帧，返回 None
         if self._latest_frame is None:
-            return None, self.read_metadata()
+            return None
             
-        return self._latest_frame, self.read_metadata()
+        return self._latest_frame
 
     def release_frame(self):
         """

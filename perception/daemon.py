@@ -42,6 +42,12 @@ def parse_hailo_ragged_list(raw_list, orig_img_shape=(720, 1280), conf_threshold
 def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
     gc.disable()
     logger.info("-> [感知进程] 启动，准备挂载 GStreamer 与 PyHailoRT...")
+
+    class ConfigWrapper:
+        def __init__(self, d):
+            for k, v in d.items(): setattr(self, k, v)
+
+    runtime_config = ConfigWrapper(config_dict)
     
     pipeline = None
     target = None
@@ -51,7 +57,7 @@ def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
         existing_shm = shared_memory.SharedMemory(name=shm_name)
         shm_array = np.ndarray(shape, dtype=np.uint8, buffer=existing_shm.buf)
         
-        pipeline = GstPipelineManager(config_dict, shm_array=shm_array, frame_ready_event=frame_ready_event)
+        pipeline = GstPipelineManager(runtime_config, shm_array=shm_array, frame_ready_event=frame_ready_event)
         pipeline.start()
 
         # 2. 初始化 PyHailoRT (提供算力)

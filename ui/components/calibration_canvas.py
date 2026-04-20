@@ -34,8 +34,8 @@ class CalibrationCanvas(QLabel):
         print(">>> [DEBUG] 正在通过全局 GstPipelineManager 拉取预处理画面...")
         frame_received = False
         for _ in range(100):  # 最长容忍等待 10 秒
-            # 解构返回的元组 (clean_frame, buffer_meta)，标定只要干净画面
-            frame, _ = self.shared_camera.read()
+            # 解构返回的元组，标定只要干净画面
+            frame = self.shared_camera.read()
             if frame is not None:
                 self._start_preview(frame)
                 frame_received = True
@@ -75,7 +75,7 @@ class CalibrationCanvas(QLabel):
         定时器回调：直接向统一的 camera 接口索要画面
         """
         if self.shared_camera and self.shared_camera.is_running:
-            frame, _ = self.shared_camera.read()
+            frame = self.shared_camera.read()
             if frame is not None:
                 self.orig_frame = frame
                 self.update_display()
