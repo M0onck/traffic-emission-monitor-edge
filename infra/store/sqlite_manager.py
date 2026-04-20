@@ -23,10 +23,16 @@ class DatabaseManager:
     改进：完全剥离 SQL 语句（DDL 在 schema.sql, DML 在 queries.sql）。
     """
     def __init__(self, db_path: str = "data/traffic_data.db", fps: float = 30.0):
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        
+        self.db_path = db_path
         self.fps = fps
-        self.conn = sqlite3.connect(db_path)
+
+        # 允许后台线程读写
+        self.conn = sqlite3.connect(
+            self.db_path, 
+            timeout=10.0, 
+            check_same_thread=False  
+        )
+        
         self.cursor = self.conn.cursor()
         
         self.cursor.execute("PRAGMA journal_mode=WAL;")

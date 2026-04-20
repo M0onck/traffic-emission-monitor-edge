@@ -1,5 +1,4 @@
 import cv2
-cv2.setNumThreads(1)
 import queue
 import numpy as np
 import supervision as sv

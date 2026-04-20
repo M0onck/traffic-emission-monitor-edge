@@ -105,6 +105,10 @@ class MainController:
         self.cfg.PHYS_WIDTH = self.view.phys_w
         self.cfg.PHYS_HEIGHT = self.view.phys_h
 
+        # 同步更新字典里的 numpy 数组，供底层引擎使用
+        import numpy as np
+        self.components['norm_source_points'] = np.array(self.cfg.SOURCE_POINTS, dtype=np.float32)
+
         # --- 2. 硬件控制权移交 ---
         # 释放主界面标定画布占用的摄像头流，为感知子进程或后台推理让路
         if getattr(self, 'global_camera', None):
