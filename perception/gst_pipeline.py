@@ -60,9 +60,11 @@ def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
     )
 
 class GstPipelineManager:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, shm_array=None):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
         Gst.init(None)
+
+        self._shm_array = shm_array  # 直接持有共享内存引用
 
         self.video_path = config.VIDEO_PATH
         self.hef_path = config.HEF_PATH
@@ -75,14 +77,52 @@ class GstPipelineManager:
         self.pipeline_str = self._build_pipelines()
         self.pipeline = Gst.parse_launch(self.pipeline_str)
 
-        # 获取干净画面的拉取句柄
+        # 配置 clean_sink 的信号模式
         self.clean_sink = self.pipeline.get_by_name("clean_sink")
+        if self.clean_sink:
+            self.clean_sink.set_property("emit-signals", True)
+            # 关键：当底层 GStreamer 线程收到新帧，立刻触发 _on_new_sample
+            self.clean_sink.connect("new-sample", self._on_new_sample)
         
         # 必须作为类的全局属性进行初始化，抵抗 Python 惰性 GC 的销毁
         self.meta_sink = None 
         
         self.is_running = False
         self.last_hailo_data = []
+        self._latest_frame = None
+
+    def _on_new_sample(self, sink):
+        """
+        [极速回调] 由 GStreamer 内部线程直接触发。
+        """
+        sample = sink.emit("pull-sample")
+        if not sample:
+            return gi.repository.Gst.FlowReturn.OK
+
+        try:
+            buffer = sample.get_buffer()
+            success, map_info = buffer.map(gi.repository.Gst.MapFlags.READ)
+            if success:
+                frame_view = np.ndarray(
+                    shape=(self.out_h, self.out_w, 3),
+                    dtype=np.uint8,
+                    buffer=map_info.data
+                )
+                
+                # 【核心修改】：双模分发
+                if self._shm_array is not None:
+                    # [模式 A] 守护进程：极速穿透写共享内存 (零拷贝)
+                    np.copyto(self._shm_array, frame_view)
+                else:
+                    # [模式 B] UI 标定：深拷贝保存至本地缓存，供 read() 接口拉取
+                    # 必须深拷贝 (.copy())，因为 unmap 后 frame_view 的内存会被 GStreamer 收回
+                    self._latest_frame = frame_view.copy()
+                
+                buffer.unmap(map_info)
+        finally:
+            sample = None
+            
+        return gi.repository.Gst.FlowReturn.OK
 
     def _build_pipelines(self):
         """
@@ -187,56 +227,47 @@ class GstPipelineManager:
             self.is_running = False
             logger.info("GStreamer 流水线已安全关闭，录像封装完毕。")
 
-    def read(self):
+    def read_metadata(self):
         """
-        单管道双轨并行拉取机制。
-        画面流由 Python GObject 拉取，AI 元数据流由 C++ 全局内存池提供。
+        仅负责从 C++ 桥接层提取 AI 检测数据。
         """
-        if not self.is_running:
-            return None, None
-
-        clean_frame = None
-        
-        # === 1. 提取高清纯净原画 ===
-        clean_sample = self.clean_sink.emit("try-pull-sample", 5000000) # 5 毫秒超时
-        if clean_sample:
-            clean_buffer = clean_sample.get_buffer()
-            success, map_info = clean_buffer.map(Gst.MapFlags.READ)
-            if success:
-                # 执行硬拷贝，让 GStreamer 可以立刻回收该帧内存
-                clean_frame = np.ndarray((self.out_h, self.out_w, 3), buffer=map_info.data, dtype=np.uint8).copy()
-                clean_buffer.unmap(map_info)
-            
-            del map_info
-            del clean_buffer
-        del clean_sample 
-        
-        if clean_frame is None:
-            return None, None
-
-        # === 2. 高速穿透获取 C++ AI 热数据 ===
         count = hailo_bridge.get_detection_count()
-        new_hailo_data = [] # 如果 count=0，直接清空上一帧缓存（消除残影 Bug）
-        
+        new_hailo_data = []
         if count > 0:
-            # 预申请连续内存块
             buffer_array = (DetectionBox * count)()
             hailo_bridge.get_detections(buffer_array, count)
-            
             for i in range(count):
                 box = buffer_array[i]
                 new_hailo_data.append({
-                    # 暴力切除 C 语言字符串背后的尾随空字符 (\x00)，防止 OpenCV 解析乱码
                     'label': box.label.decode('utf-8', errors='ignore').rstrip('\x00'),
                     'conf': float(box.conf),
                     'xmin': float(box.xmin), 'ymin': float(box.ymin),
                     'xmax': float(box.xmax), 'ymax': float(box.ymax)
                 })
-                
-        # 原子替换，无需加锁
         self.last_hailo_data = new_hailo_data
+        return new_hailo_data
 
-        return clean_frame, getattr(self, 'last_hailo_data', [])
+    def read(self):
+        """
+        [向下兼容接口] 供主进程 UI 标定界面使用。
+        返回最新缓存的画面和 AI 元数据。
+        注意：在多进程引擎正式启动后，系统不应再调用此接口，而是通过共享内存读取。
+        """
+        # 如果还没收到第一帧，返回 None
+        if self._latest_frame is None:
+            return None, self.read_metadata()
+            
+        return self._latest_frame, self.read_metadata()
+
+    def release_frame(self):
+        """
+        由外部显式调用，立即归还硬件缓冲区。
+        """
+        if hasattr(self, '_last_buffer') and hasattr(self, '_last_map_info'):
+            self._last_buffer.unmap(self._last_map_info)
+            # 显式删除引用，加速 GStreamer 内部的 unref
+            del self._last_buffer
+            del self._last_map_info
 
     def set_record_location(self, session_id):
         """动态更新录制路径。"""
