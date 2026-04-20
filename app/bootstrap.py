@@ -7,6 +7,7 @@ from domain.vehicle.repository import VehicleRegistry
 from domain.vehicle.classifier import VehicleClassifier
 from perception.gst_pipeline import GstPipelineManager
 from perception.sensor.thermal_camera import ThermalCamera
+from perception.sensor.weather_station import WeatherGateway
 from ui.renderer import Visualizer
 
 # 引入对齐守护进程
@@ -36,7 +37,16 @@ class AppBootstrap:
         db = DatabaseManager(db_path=config.DB_PATH, fps=config.FPS)
         force_delay = config.ALIGNMENT_DELAY_SEC if config.RUN_MODE == 'inference' else float('inf')
 
-        # 2. 领域层
+        # 2. 气象站实例
+        try:
+            weather_gw = WeatherGateway()
+            weather_gw.start()
+            print(">>> [Bootstrap] 气象站驱动已拉起。")
+        except Exception as e:
+            print(f">>> [Bootstrap] 气象驱动加载失败: {e}")
+            weather_gw = None
+
+        # 3. 领域层
         registry = VehicleRegistry(
             target_fps=config.FPS,
             min_survival_sec=config.MIN_SURVIVAL_SEC,
@@ -49,12 +59,12 @@ class AppBootstrap:
             'car': config.YOLO_CLASS_CAR, 'bus': config.YOLO_CLASS_BUS, 'truck': config.YOLO_CLASS_TRUCK
         })
 
-        # 3. 异步处理与传感器
+        # 4. 异步处理与传感器
         plate_worker = AsyncPlateRecognizer() if getattr(config, 'ENABLE_OCR', False) else None
         lib_path = getattr(config, 'THERMAL_LIB_PATH', 'bin/libmlx90640.so')
         thermal_cam = ThermalCamera(lib_path)
 
-        # 4. 渲染层
+        # 5. 渲染层
         target_pts_raw = getattr(config, 'TARGET_POINTS', [[0,0], [1,0], [1,1], [0,1]])
         target_points = np.array(target_pts_raw, dtype=np.float32)
         norm_source_points = np.array(config.SOURCE_POINTS, dtype=np.float32) if getattr(config, 'SOURCE_POINTS', None) else None
@@ -71,8 +81,10 @@ class AppBootstrap:
             alignment_proc.start() # 在此处启动，由于是阻塞队列，它会安静地等待
             print(">>> [Bootstrap] 延迟对齐后台进程已挂载。")
 
-        # 5. 封装最终字典
+        # 6. 封装最终字典
         components = {
+            'config': config,
+            'weather_station': weather_gw,
             'db': db,
             'registry': registry,
             'classifier': classifier,

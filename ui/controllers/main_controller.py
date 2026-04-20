@@ -57,16 +57,19 @@ class MainController:
             self.view.page_calibration,       # 步骤 1: 视觉标定
             self.view.page_size_settings,     # 步骤 2: 道路 ROI 尺寸设置
             self.view.page_pos_settings,      # 步骤 3: 仪器与道路方位设置
-            self.view.page_run                # 步骤 4: 实时监控大屏
+            self.view.page_monitor            # 步骤 4: 实时监控屏
         ]
-        self._init_wizard_flow()
-        self._setup_connections()
+        self.bind_signals()
 
         # ==========================================
         # 4. 后台守护任务 (Background Timers)
         # ==========================================
         # 统一管理需要定时执行的轻量级 UI 刷新任务
         self._init_timers()
+
+        # 在刷新状态前，显式将页面设置为主菜单
+        self.view.stack.setCurrentWidget(self.view.page_main_menu)
+        self.update_nav_buttons()
 
     def _unpack_components(self, components: dict):
         """!
@@ -76,10 +79,11 @@ class MainController:
         self.components = components
         
         # 提取业务领域模型与数据库
-        self.cfg = components.get('config') # 建议将 cfg 也通过 bootstrap 传入，避免全局 import
+        self.cfg = components.get('config')
         self.db = components.get('db')
         self.registry = components.get('registry')
         self.visualizer = components.get('visualizer')
+        self.weather_gw = components.get('weather_station')
         
         # 提取跨进程通信的核心基础设施
         self.sync_queue = components.get('sync_queue')
@@ -97,9 +101,9 @@ class MainController:
 
         # --- 1. 物理先验参数同步 ---
         # 从 UI 层获取透视标定点和物理尺寸，同步到全局配置中，供后端的对齐引擎(AlignmentEngine)使用
-        self.cfg.CALIBRATION_POINTS = self.view.canvas.get_real_points()
-        self.cfg.PHYS_W = self.view.phys_w
-        self.cfg.PHYS_H = self.view.phys_h
+        self.cfg.SOURCE_POINTS = self.view.canvas.get_real_points().tolist()
+        self.cfg.PHYS_WIDTH = self.view.phys_w
+        self.cfg.PHYS_HEIGHT = self.view.phys_h
 
         # --- 2. 硬件控制权移交 ---
         # 释放主界面标定画布占用的摄像头流，为感知子进程或后台推理让路
@@ -135,33 +139,6 @@ class MainController:
         self.update_main_menu_btn_style()
         print(">>> [Controller] 监控引擎已全面启动。")
 
-    def stop_monitoring(self):
-        """!
-        @brief 安全停止视觉监控引擎。
-        @details 
-        触发引擎的 cleanup 流程，强制结算当前画面中所有的滞留车辆，
-        并等待后台 QThread 安全退出。
-        """
-        if not self.is_collecting or not self.worker:
-            return
-
-        print(">>> [Controller] 正在安全停止视觉引擎...")
-        
-        # 1. 通知前端 UI 进入等待状态，防止用户重复点击
-        self.view.btn_start.setText("正在停止...")
-        self.view.btn_start.setEnabled(False)
-
-        # 2. 通知引擎执行内部资源清理与强制数据结算
-        # 传入一个极大的 frame_id 强制触发所有追踪目标超时
-        if hasattr(self, 'engine') and self.engine:
-            self.engine.cleanup(final_frame_id=999999)
-
-        # 3. 阻塞等待线程安全退出 (设置超时时间防死锁)
-        self.worker.quit()
-        self.worker.wait(2000) 
-
-        # 4. 状态重置在 on_engine_finished 槽函数中完成，保持逻辑闭环
-
     def on_frame_received(self, rgb_frame):
         """!
         @brief UI 线程回调：渲染图像、刷新数据面板并释放 Worker 锁。
@@ -186,28 +163,52 @@ class MainController:
 
     def on_engine_finished(self):
         """!
-        @brief 引擎线程结束的信号槽。
-        @details 负责重置控制器的运行状态，并恢复界面按钮的初始样式。
+        @brief 引擎结束的收尾工作。
+        @details 负责彻底清空内存对象引用、重置控制器状态机，并恢复 UI 界面。
         """
-        self.is_collecting = False
-        self.engine = None
+        # 1. 彻底断开与销毁底层对象引用
         self.worker = None
+        self.engine = None
+        self.global_camera = None
+
+        # 2. 重置控制器的核心状态机
+        self.is_collecting = False
+
+        # 3. 恢复 UI 组件的初始状态 (为下次采集做准备)
+        self.view.btn_stop.setText("结束采集")
+        self.view.btn_stop.setEnabled(True)
+        self.view.btn_stop.setStyleSheet(self.view.style_hollow_red) # 恢复红色镂空
         
-        # 恢复 UI 初始状态
-        self.view.btn_start.setText("开始监控")
-        self.view.btn_start.setEnabled(True)
-        self.view.btn_start.setStyleSheet("") # 恢复默认样式
-        print(">>> [Controller] 监控任务已完全终止。")
+        # 4. 刷新主菜单样式并路由回主页
+        self.update_main_menu_btn_style()
+        self.return_to_home()
+        
+        print(">>> [Controller] 监控任务已完全终止并回收所有资源。")
 
     def _init_timers(self):
-        """!
-        @brief 初始化 UI 层的定时刷新器。
-        """
-        # 状态栏监控定时器 (例如：系统 CPU、温度监控)
-        self.status_timer = QTimer()
-        # 假设有一个 _update_status_bar 方法处理底部状态栏刷新
-        # self.status_timer.timeout.connect(self._update_status_bar) 
-        self.status_timer.start(2000) # 2秒刷新一次
+        """初始化 UI 层的定时刷新器与守护任务"""
+        # 1. 恢复系统硬件看板监控定时器 (1Hz)
+        self.sys_timer = QTimer(self.view)
+        self.sys_timer.timeout.connect(self.update_sys_board) 
+        self.sys_timer.start(1000) 
+
+        # 2. 恢复低频磁盘空间清理守护定时器 (每分钟检查)
+        self.disk_monitor_timer = QTimer(self.view)
+        self.disk_monitor_timer.timeout.connect(self.check_and_cleanup_disk_space)
+        self.disk_monitor_timer.start(60000)
+
+        # 3. 恢复“录制界面”的初始化显示（从配置文件读取并反显到 UI）
+        self.view.btn_record_switch.setChecked(self.cfg.ENABLE_RECORD)
+        self.handle_record_switch_toggled(self.cfg.ENABLE_RECORD)
+        
+        segment_map = {5: 0, 10: 1, 15: 2, 30: 3}
+        self.view.combo_segment_time.setCurrentIndex(segment_map.get(self.cfg.RECORD_SEGMENT_MIN, 1))
+        self.view.lbl_record_save_path.setText(self.cfg.RECORD_SAVE_PATH)
+
+        # 每分钟检查 SSD 剩余空间并清理旧视频
+        self.disk_monitor_timer = QTimer(self.view)
+        self.disk_monitor_timer.timeout.connect(self.check_and_cleanup_disk_space)
+        self.disk_monitor_timer.start(60000) # 每分钟检查一次
 
     def bind_signals(self):
         """将视图组件的事件绑定到控制器的逻辑上"""
@@ -383,7 +384,6 @@ class MainController:
                 # --- 进入新页面的处理逻辑 ---
                 if next_page_widget == self.view.page_monitor and not self.is_collecting:
                     self.start_monitoring()
-                    self.dash_timer.start(100) 
                     self.is_collecting = True
                     
         self.update_nav_buttons()
@@ -480,58 +480,57 @@ class MainController:
         """触发结束采集：弹出确认窗口"""
         dialog = EdgeMessageBox(self.view, "结束任务确认", "确定要结束当前的采集任务并关闭引擎吗？", "未保存的缓冲区数据可能会丢失。", is_warning=True)
         if dialog.exec_() == EdgeMessageBox.Accepted:
-            self.final_stop_process()
+            self.stop_monitoring()
     
-    def final_stop_process(self):
-        """正式执行退出逻辑"""
-        if hasattr(self, 'dash_timer'): self.dash_timer.stop()
-        if hasattr(self, 'worker'):
+    def stop_monitoring(self):
+        """安全停止视觉监控引擎，执行数据结算与资源清理"""
+        if not self.is_collecting: return
+        
+        print(">>> [Controller] 正在安全停止视觉引擎...")
+        # 禁用按钮防止用户在停止期间重复点击
+        self.view.btn_stop.setText("正在停止...")
+        self.view.btn_stop.setEnabled(False)
+
+        # 1. 触发引擎内部数据强制结算 (极其重要，防止最后一批车辆数据丢失)
+        if hasattr(self, 'engine') and self.engine:
+            self.engine.cleanup(final_frame_id=999999)
+
+        # 2. 阻塞等待后台 Worker 线程安全退出并写入视频
+        if hasattr(self, 'worker') and self.worker:
             print("[Controller] 正在等待后台引擎清理数据并写入视频...")
-            self.worker.stop()
+            self.worker.quit()
             if not self.worker.wait(4000):
                 print("[Warning] 后台引擎清理超时，可能导致最后一段录像损坏.")
 
-        # 显式叫停全局摄像头对象，防止 NPU 句柄泄漏
-        if self.global_camera:
+        # 3. 显式叫停全局摄像头对象，防止 NPU 句柄泄漏
+        if getattr(self, 'global_camera', None):
             try:
                 self.global_camera.stop()
             except Exception as e:
                 print(f"[Warning] 全局摄像头停止时发生异常: {e}")
-        
-        # 清空摄像机实例状态，让下次点击采集时重新拉起管线
-        self.global_camera = None
-        
-        self.is_collecting = False
-        self.update_main_menu_btn_style()
-        self.return_to_home()
+
+        # 4. 调用独立的收尾回调，完成状态重置与 UI 跳转
+        self.on_engine_finished()
     
     def handle_exit_request(self):
         """主界面退出系统拦截"""
-        dialog = EdgeMessageBox(
-            self.view, 
-            "退出系统确认", 
-            "确定要关闭应用程序吗？", 
-            "若有运行中的任务，系统将安全停机并保存数据。", 
-            is_warning=True # 警告样式，按钮描红
-        )
+        dialog = EdgeMessageBox(self.view, "退出系统确认", "确定要关闭应用程序吗？", "若有运行中的任务，系统将安全停机并保存数据。", is_warning=True)
         if dialog.exec_() == EdgeMessageBox.Accepted:
-            # 调用界面的 close 方法。
-            # 这将触发 MainWindow 中的 closeEvent，进而执行清理回调，保证安全！
-            self.view.close()
+            self.view.close() # 触发 MainWindow closeEvent -> 执行 cleanup
 
     def cleanup(self):
-        """处理整个应用的关闭回收"""
+        """处理整个应用的关闭回收 (由窗口 closeEvent 触发)"""
         if self.is_collecting:
-            self.final_stop_process()
+            self.stop_monitoring()
 
-        # 如果在未收集状态下退出（例如停留在标定页、设置页），手动释放全局摄像头
+        # 如果在未收集状态下退出，手动释放全局摄像头
         if self.global_camera and not self.is_collecting:
             self.global_camera.stop()
             self.global_camera = None
             print("前端控制器：已清理全局摄像头后台管线。")
         
-        # 安全关闭气象网关 C++ 后台线程，防止内存或串口泄漏
-        if self.weather_gw:
+        # 安全关闭气象网关 C++ 后台线程
+        if hasattr(self, 'weather_gw') and self.weather_gw:
             self.weather_gw.stop()
     
     # --- 界面渲染更新 ---
