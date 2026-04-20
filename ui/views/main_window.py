@@ -10,6 +10,7 @@ from PyQt5.QtGui import QFont, QPixmap
 import infra.config.loader as cfg
 from ui.components.speed_curve import SpeedCurveWidget
 from ui.components.calibration_canvas import CalibrationCanvas
+from ui.components.video_canvas import VideoCanvas
 
 class MainWindow(QMainWindow):
     """纯粹的 View 层：只负责界面布局，不处理业务逻辑"""
