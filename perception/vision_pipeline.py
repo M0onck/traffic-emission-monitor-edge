@@ -56,12 +56,6 @@ class VisionPipeline:
                 class_id=np.array(class_ids, dtype=int)
             )
             
-            # 优化 3: 移除严格的二次 NMS 
-            # 交通场景下车辆经常部分遮挡，0.4 的阈值会大量吞噬有效目标。
-            # 如果不经常出现同一个车被识别为两个框的 BUG，直接注释掉此行；
-            # 如果必须保留，请将阈值放宽至 0.65。
-            # detections = detections.with_nms(threshold=0.65, class_agnostic=True)
-            
             # 分配追踪 ID
             detections = self.tracker.update_with_detections(detections)
         else:

@@ -23,9 +23,10 @@ from perception.daemon import perception_worker
 logger = logging.getLogger(__name__)
 
 class TrafficMonitorEngine:
-    def __init__(self, config, components, frame_callback=None):
+    def __init__(self, config, components, sync_queue, frame_callback=None):
         self.cfg = config
         self.comps = components
+        self.sync_queue = sync_queue
         self.frame_callback = frame_callback
         self._is_running = False
         self.time_sync = TimeSynchronizer()
@@ -151,6 +152,14 @@ class TrafficMonitorEngine:
                 if now - prev_env_time >= 1.0:
                     self._poll_environmental_sensors(now)
                     prev_env_time = now
+                    
+                    # 主动推送通知对齐进程：系统物理时间已经推进到了 now
+                    if self.current_session_id:
+                        try:
+                            # 放进队列，由对齐进程去取
+                            self.sync_queue.put_nowait((self.current_session_id, now))
+                        except queue.Full:
+                            pass # 队列满了说明对齐进程卡住了，直接丢弃，对齐引擎本身有追赶机制
 
                 # --- C. 核心处理 ---
                 self.current_frame_id += 1
