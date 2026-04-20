@@ -220,6 +220,7 @@ class TrafficMonitorEngine:
             from perception.math.geometry import ViewTransformer
             transformer = ViewTransformer(pts, self.comps['target_points'])
             self.spatial.set_transformer(transformer)
+            self.comps['transformer'] = transformer
             logger.info(f"[Engine] 几何坐标系适配完成: {w}x{h}")
 
     def _poll_environmental_sensors(self, timestamp):
@@ -292,7 +293,7 @@ class TrafficMonitorEngine:
                     if trajectory:
                         last_phys_y = trajectory[-1].get('raw_y', curr_phys[1])
                         # 根据预期的 FPS 动态分配备用时间跨度
-                        fallback_dt = 1.0 / self.native_fps
+                        fallback_dt = 1.0 / getattr(self.cfg, 'FPS', 30.0)
                         last_time = trajectory[-1].get('timestamp', frame_timestamp - fallback_dt)
                         
                         if abs(curr_phys[1] - last_phys_y) < max(0.2, dynamic_tolerance):
@@ -491,7 +492,7 @@ class TrafficMonitorEngine:
         timestamps = np.array([p.get('timestamp', 0.0) for p in trajectory])
 
         # 直接调用领域服务，一行代码完成所有降维、平滑与求导逻辑 (运动学职责)
-        sm_x, sm_y, speeds, accels = self.smoother.process_1d(timestamps, raw_x, raw_y)
+        sm_x, sm_y, speeds, accels = self.kinematics.process_1d(timestamps, raw_x, raw_y)
 
         pts_phys_clean = [] # 用于收集平滑过滤后的物理坐标
         vsp_data_for_mapper = []  # 用于收集 OpModeMapper 需要的时序数据
