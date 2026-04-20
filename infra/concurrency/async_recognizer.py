@@ -27,9 +27,6 @@ class RecognitionWorker(mp.Process):
     def run(self):
         # 在子进程的内存空间里局部导入模块
         import infra.config.loader as cfg
-
-        from infra.sys.process_optimizer import ProcessOptimizer
-        ProcessOptimizer.optimize_classifier_process()
             
         # 限制底层的隐式多线程抢占
         cv2.setNumThreads(1)

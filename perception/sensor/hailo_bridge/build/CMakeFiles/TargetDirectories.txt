@@ -1,3 +1,0 @@
-/home/m0onck/traffic-emission-monitor-edge/perception/sensor/hailo_bridge/build/CMakeFiles/hailo_bridge.dir
-/home/m0onck/traffic-emission-monitor-edge/perception/sensor/hailo_bridge/build/CMakeFiles/edit_cache.dir
-/home/m0onck/traffic-emission-monitor-edge/perception/sensor/hailo_bridge/build/CMakeFiles/rebuild_cache.dir

@@ -1,5 +1,3 @@
-from infra.sys.process_optimizer import ProcessOptimizer
-ProcessOptimizer.optimize_main_process()
 import os
 import sys
 import logging
