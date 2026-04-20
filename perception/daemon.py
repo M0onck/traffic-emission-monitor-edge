@@ -3,7 +3,6 @@ from multiprocessing import shared_memory
 import numpy as np
 import time
 import logging
-import gc
 import threading
 from perception.gst_pipeline import GstPipelineManager
 
@@ -50,7 +49,6 @@ def parse_hailo_ragged_list(raw_list, conf_threshold=0.45):
     return results
 
 def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
-    gc.disable()
     logger.info("-> [感知进程] 启动，准备挂载 GStreamer 与 PyHailoRT...")
 
     class ConfigWrapper:

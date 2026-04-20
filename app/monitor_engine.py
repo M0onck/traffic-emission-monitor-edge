@@ -114,15 +114,27 @@ class TrafficMonitorEngine:
             last_loop_time = time.perf_counter()
             smoothed_fps = getattr(self.cfg, 'FPS', 30.0) # 初始预设值
 
+            # 看门狗计数器
+            empty_queue_streak = 0  
+            MAX_STREAK = 30  # 30次超时(每次0.1s) = 约3秒钟无响应
+
             while self._is_running:
-                if not self.p_daemon.is_alive(): break
+                # 看门狗机制：检查存活状态与心跳超时
+                if not self.p_daemon.is_alive() or empty_queue_streak > MAX_STREAK:
+                    logger.error("[Watchdog] 警报！感知进程崩溃或已无响应.正在尝试重启...")
+                    self._restart_daemon(config_dict)
+                    empty_queue_streak = 0
+                    last_hailo_data = [] # 清空过期的框
+                    time.sleep(1.0) # 给新进程一点初始化硬件的时间
+                    continue
 
                 # --- A. 数据提取 ---
                 try:
-                    last_hailo_data = self.bbox_queue.get(timeout=0.1)
+                    hailo_data = self.bbox_queue.get(timeout=0.1)
+                    last_hailo_data = hailo_data
+                    empty_queue_streak = 0 # 收到心跳，重置看门狗
                 except queue.Empty:
-                    # 如果等了 0.1 秒都没新帧，说明底层硬件还在缓冲，直接跳过等下一轮
-                    continue
+                    empty_queue_streak += 1
 
                 # 既然已经收到了新数据的敲门信号，立刻从共享内存深拷贝出最新画面
                 current_frame = self.shm_array.copy()
@@ -172,6 +184,30 @@ class TrafficMonitorEngine:
 
         finally:
             self.cleanup(self.current_frame_id)
+
+    def _restart_daemon(self, config_dict):
+        """看门狗：热重启感知进程"""
+        logger.warning("[Watchdog] 正在强制终结异常的感知进程...")
+        if getattr(self, 'p_daemon', None):
+            self.p_daemon.terminate()
+            self.p_daemon.join(timeout=2)
+            if self.p_daemon.is_alive():
+                self.p_daemon.kill() # 强杀僵尸进程
+                
+        # 清空拥堵的队列，防止残留脏数据毒害新进程
+        while not self.bbox_queue.empty():
+            try: self.bbox_queue.get_nowait()
+            except: pass
+
+        logger.info("[Watchdog] 重新初始化 GStreamer 与 PyHailoRT...")
+        self.stop_event.clear() # 确保事件锁为放行状态
+        self.p_daemon = mp.Process(
+            target=perception_worker,
+            args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict)
+        )
+        self.p_daemon.daemon = True
+        self.p_daemon.start()
+        logger.info("[Watchdog] 感知进程重启完成，已恢复监控.")
 
     def _initialize_geometry(self, frame):
         """动态坐标系适配逻辑"""
