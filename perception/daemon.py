@@ -36,12 +36,9 @@ def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
 
     pipeline = None
     existing_shm = None
-    frame_counter = 0  # 帧计数器，用于调度手动受控清理
     
     try:
         logger.info("-> [感知进程] 初始化 NPU 与流水线...")
-        pipeline = GstPipelineManager(runtime_config)
-        pipeline.start()
         
         # 接入主进程开辟好的操作系统级共享内存
         existing_shm = shared_memory.SharedMemory(name=shm_name)

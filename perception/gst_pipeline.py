@@ -103,23 +103,29 @@ class GstPipelineManager:
             buffer = sample.get_buffer()
             success, map_info = buffer.map(gi.repository.Gst.MapFlags.READ)
             if success:
-                frame_view = np.ndarray(
-                    shape=(self.out_h, self.out_w, 3),
-                    dtype=np.uint8,
-                    buffer=map_info.data
-                )
-                
-                # 【核心修改】：双模分发
-                if self._shm_array is not None:
-                    # [模式 A] 守护进程：极速穿透写共享内存 (零拷贝)
-                    np.copyto(self._shm_array, frame_view)
-                else:
-                    # [模式 B] UI 标定：深拷贝保存至本地缓存，供 read() 接口拉取
-                    # 必须深拷贝 (.copy())，因为 unmap 后 frame_view 的内存会被 GStreamer 收回
-                    self._latest_frame = frame_view.copy()
-                
-                buffer.unmap(map_info)
+                try:
+                    # 尝试映射并拷贝
+                    frame_view = np.ndarray(
+                        shape=(self.out_h, self.out_w, 3),
+                        dtype=np.uint8,
+                        buffer=map_info.data
+                    )
+                    
+                    if self._shm_array is not None:
+                        # [模式 A] 守护进程：极速穿透写共享内存
+                        np.copyto(self._shm_array, frame_view)
+                    else:
+                        # [模式 B] UI 标定：深拷贝保存至本地缓存
+                        self._latest_frame = frame_view.copy()
+                        
+                except Exception as e:
+                    # 万一拷贝发生异常，记录下来，绝不能让程序静默死锁
+                    logger.error(f"[GstPipeline] 内存搬运回调发生异常: {e}")
+                finally:
+                    # 只要 map 成功了，无论中间报什么错，都必须在此 unmap 归还内存！
+                    buffer.unmap(map_info)
         finally:
+            # 销毁 sample，触发 GStreamer 内部的 unref
             sample = None
             
         return gi.repository.Gst.FlowReturn.OK
@@ -182,8 +188,8 @@ class GstPipelineManager:
 
         # --- 5. UI 渲染业务提取分支 ---
         preview_branch = (
-            f" t. ! queue name=ui_q max-size-buffers=3 leaky=downstream ! " # 为 Python 逻辑泄压
-            f"appsink name=clean_sink emit-signals=false max-buffers=1 drop=false sync=false async=false "
+            f" t. ! queue name=ui_q max-size-buffers=1 leaky=downstream ! "
+            f"appsink name=clean_sink emit-signals=false max-buffers=1 drop=true sync=false async=false "
         )
 
         final_pipeline_str = f"{source_section}{ai_branch}{preview_branch}{record_branch}"
