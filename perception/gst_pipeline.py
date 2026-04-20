@@ -92,6 +92,29 @@ class GstPipelineManager:
         self.last_hailo_data = []
         self._latest_frame = None
 
+        self.ai_frame = None # 用于缓存给 NPU 的最新帧
+        ai_sink = self.pipeline.get_by_name("ai_sink")
+        if ai_sink:
+            ai_sink.connect("new-sample", self._on_ai_sample)
+
+    def _on_ai_sample(self, sink):
+        sample = sink.emit("pull-sample")
+        if not sample: return gi.repository.Gst.FlowReturn.OK
+        try:
+            buffer = sample.get_buffer()
+            success, map_info = buffer.map(gi.repository.Gst.MapFlags.READ)
+            if success:
+                try:
+                    frame = np.ndarray(shape=(640, 640, 3), dtype=np.uint8, buffer=map_info.data)
+                    self.ai_frame = frame.copy() # 拷贝一帧用于 AI
+                    if self._frame_ready_event:
+                        self._frame_ready_event.set() # 敲响唤醒铜锣
+                finally:
+                    buffer.unmap(map_info)
+        finally:
+            sample = None
+        return gi.repository.Gst.FlowReturn.OK
+
     def _on_new_sample(self, sink):
         """
         [极速回调] 由 GStreamer 内部线程直接触发。
@@ -178,33 +201,13 @@ class GstPipelineManager:
         )
 
         # ==========================================
-        # 4. AI 推理分支
+        # 4. 专供原生 HailoRT 调用的 640x640 分支
         # ==========================================
         ai_branch = (
-            # 1. 预处理队列 (官方建议: 大量使用QUEUE)
-            f"t. ! queue name=preproc_q leaky=downstream max-size-buffers=3 ! "
-            # 2. 帧率控制
-            f"videorate ! video/x-raw, framerate=10/1 ! "
-            # 3. 缩放与转换
-            f"videoscale ! video/x-raw, width=640, height=640 ! "
-            # 4. 色彩格式转换
-            f"videoconvert ! video/x-raw, format=RGB ! "
-            # 5. 推理前队列
-            f"queue name=inference_q leaky=downstream max-size-buffers=3 ! "
-            # 6. Hailo推理
-            f"hailonet hef-path={self.hef_path} "
-            f"batch-size=1 "
-            f"nms-score-threshold=0.3 "
-            f"nms-iou-threshold=0.45 "
-            f"output-format-type=HAILO_FORMAT_TYPE_FLOAT32 " # 使用原生量化格式
-            f"! "
-            # 7. 推理后队列
-            f"queue name=postproc_q leaky=downstream max-size-buffers=3 ! "
-            # 8. 后处理
-            f"hailofilter so-path={self.post_so_path} "
-            f"function-name=filter_letterbox qos=false ! "
-            # 9. 最终输出 (同步属性设为false)
-            f"appsink name=meta_sink emit-signals=false max-buffers=3 drop=true sync=false async=false "
+            f" t. ! queue name=ai_q max-size-buffers=2 leaky=downstream ! "
+            f"videoscale qos=false ! video/x-raw, width=640, height=640 ! "
+            f"videoconvert qos=false ! video/x-raw, format=RGB ! "
+            f"appsink name=ai_sink emit-signals=true max-buffers=1 drop=true sync=false async=false "
         )
 
         # --- 5. UI 渲染业务提取分支 ---
