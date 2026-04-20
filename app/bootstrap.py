@@ -1,5 +1,6 @@
 # app/bootstrap.py
 import numpy as np
+import multiprocessing as mp
 from infra.store.sqlite_manager import DatabaseManager
 from infra.concurrency.async_recognizer import AsyncPlateRecognizer
 from domain.vehicle.repository import VehicleRegistry
@@ -8,75 +9,83 @@ from perception.gst_pipeline import GstPipelineManager
 from perception.sensor.thermal_camera import ThermalCamera
 from ui.renderer import Visualizer
 
+# 引入对齐守护进程
+from app.alignment_daemon import AlignmentDaemon
+
 class AppBootstrap:
     """
-    [应用引导程序] 负责系统组件的实例化与依赖注入装配。
+    [应用引导程序] 负责系统组件的实例化、依赖注入与多进程 IPC 通道建立。
     """
+    
+    @staticmethod
+    def _run_alignment_worker(config, sync_queue, stop_event):
+        """对齐守护进程的入口隔离函数"""
+        daemon = AlignmentDaemon(config, sync_queue, stop_event)
+        daemon.run()
+
     @staticmethod
     def setup_components(config):
-        print(">>> [Bootstrap] 正在组装系统组件...")
+        print(">>> [Bootstrap] 正在组装系统组件与 IPC 通道...")
+        
+        # --- 核心新增：全局通信管道与控制信号 ---
+        ctx = mp.get_context('spawn')
+        sync_queue = ctx.Queue(maxsize=10) # 限制容量防内存溢出
+        stop_event = ctx.Event()
 
-        # 1. 基础设施层：数据库 (补充缺失的 fps 参数)
+        # 1. 基础设施层
         db = DatabaseManager(db_path=config.DB_PATH, fps=config.FPS)
-
-        # 动态切片逻辑
-        # inference: 切断滞留车辆防爆内存；collection: 获取车辆的完整生命周期
         force_delay = config.ALIGNMENT_DELAY_SEC if config.RUN_MODE == 'inference' else float('inf')
 
-        # 2. 领域层：注册表 (注入配置文件中的核心业务阈值)
+        # 2. 领域层
         registry = VehicleRegistry(
-            target_fps=config.FPS,  # 默认固定帧率，仅作为参考或备用回退使用
+            target_fps=config.FPS,
             min_survival_sec=config.MIN_SURVIVAL_SEC,
             exit_timeout_sec=config.EXIT_TIMEOUT_SEC,
             min_valid_pts=config.MIN_VALID_POINTS,
             min_moving_dist=config.MIN_MOVING_DIST,
             force_delay_sec=force_delay
         )
-        
-        # 组装分类器所需的 yolo_classes 字典
-        yolo_classes_dict = {
-            'car': config.YOLO_CLASS_CAR,
-            'bus': config.YOLO_CLASS_BUS,
-            'truck': config.YOLO_CLASS_TRUCK
-        }
-        classifier = VehicleClassifier(yolo_classes=yolo_classes_dict)
+        classifier = VehicleClassifier(yolo_classes={
+            'car': config.YOLO_CLASS_CAR, 'bus': config.YOLO_CLASS_BUS, 'truck': config.YOLO_CLASS_TRUCK
+        })
 
-        # 3. 感知层：GStreamer 视频流硬件管道 (交给子进程初始化)
-        camera = None
-
-        # 4. 异步处理：OCR 车牌识别工人 (传入具体的模型路径)
-        plate_worker = None
-        if config.ENABLE_OCR:
-            print(">>> [Bootstrap] 启动异步 OCR 识别引擎...")
-            plate_worker = AsyncPlateRecognizer()
-
-        # 5. 空间坐标标定数据加载 (必须在 Visualizer 初始化之前解析)
-        # 注意：此处增加安全获取，防止 TARGET_POINTS 在某些精简配置下不存在
-        target_pts_raw = getattr(config, 'TARGET_POINTS', [[0,0], [1,0], [1,1], [0,1]])
-        target_points = np.array(target_pts_raw, dtype=np.float32)
-        
-        norm_source_points = None
-        if hasattr(config, 'SOURCE_POINTS') and config.SOURCE_POINTS:
-            norm_source_points = np.array(config.SOURCE_POINTS, dtype=np.float32)
-
-        # 6. 表示层：可视化渲染器 (传入解析好的 numpy 数组)
-        visualizer = Visualizer(calibration_points=target_points, target_fps=config.FPS)
-
-        # 7. 初始化热成像模块
+        # 3. 异步处理与传感器
+        plate_worker = AsyncPlateRecognizer() if getattr(config, 'ENABLE_OCR', False) else None
         lib_path = getattr(config, 'THERMAL_LIB_PATH', 'bin/libmlx90640.so')
         thermal_cam = ThermalCamera(lib_path)
 
-        # 8. 封装组件字典
+        # 4. 渲染层
+        target_pts_raw = getattr(config, 'TARGET_POINTS', [[0,0], [1,0], [1,1], [0,1]])
+        target_points = np.array(target_pts_raw, dtype=np.float32)
+        norm_source_points = np.array(config.SOURCE_POINTS, dtype=np.float32) if getattr(config, 'SOURCE_POINTS', None) else None
+        visualizer = Visualizer(calibration_points=target_points, target_fps=config.FPS)
+
+        # --- 核心新增：按需启动后台对齐进程 ---
+        alignment_proc = None
+        if config.RUN_MODE == 'inference':
+            alignment_proc = ctx.Process(
+                target=AppBootstrap._run_alignment_worker,
+                args=(config, sync_queue, stop_event),
+                daemon=True
+            )
+            alignment_proc.start() # 在此处启动，由于是阻塞队列，它会安静地等待
+            print(">>> [Bootstrap] 延迟对齐后台进程已挂载。")
+
+        # 5. 封装最终字典
         components = {
             'db': db,
             'registry': registry,
-            'camera': None,
             'classifier': classifier,
             'plate_worker': plate_worker,
             'visualizer': visualizer,
             'target_points': target_points,
             'norm_source_points': norm_source_points,
-            'thermal_cam': thermal_cam
+            'thermal_cam': thermal_cam,
+            
+            # 注入 IPC 通信与控制对象
+            'sync_queue': sync_queue,
+            'stop_event': stop_event,
+            'alignment_proc': alignment_proc
         }
 
         print(">>> [Bootstrap] 组件组装完成。")

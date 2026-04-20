@@ -1,77 +1,50 @@
+# app_gui.py
 import os
 import sys
 import logging
 import faulthandler
 faulthandler.enable()
+
 from PyQt5.QtWidgets import QApplication
 import multiprocessing as mp
-from multiprocessing import Process, Event
 import infra.config.loader as cfg
 
+from app.bootstrap import AppBootstrap
 from ui.views.main_window import MainWindow
 from ui.controllers.main_controller import MainController
-from app.alignment_daemon import AlignmentDaemon
 
 # 配置全局日志基础设置
 logging.basicConfig(
-    level=logging.INFO,  # 默认级别设为 INFO，这样 DEBUG 级别的信息默认不会打印
+    level=logging.INFO,
     format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.StreamHandler(sys.stdout) # 输出到控制台
-        # 如果需要输出到文件，可以加上：logging.FileHandler("edge_monitor.log")
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# 车牌识别链路调试日志
-# logging.getLogger("app.monitor_engine").setLevel(logging.DEBUG)
-
-# GStreamer 硬件流媒体层调试日志
-# logging.getLogger("perception.gst_pipeline").setLevel(logging.DEBUG)
-
-def start_daemon(stop_event):
-    """将事件对象传入守护进程"""
-    from app.alignment_daemon import AlignmentDaemon
-    daemon = AlignmentDaemon(cfg, stop_event) # 传入 stop_event
-    daemon.run()
-
 def main():
+    # 强制使用 spawn 模式，避免 Linux 下 GUI 与多进程的资源死锁
     mp.set_start_method('spawn', force=True)
     app = QApplication(sys.argv)
     
-    daemon_process = None
-    stop_event = Event()
-    # 仅在 inference 模式下，于边缘端并行启动特征对齐守护进程
-    if cfg.RUN_MODE == 'inference':
-        daemon_process = Process(target=start_daemon, args=(stop_event,), daemon=True)
-        daemon_process.start()
-    else:
-        print(">>> [System] 当前为 collection 采集模式，后台对齐引擎已关闭。")
+    # 1. 调用工厂：一次性组装好所有的底层组件、队列和守护进程
+    components = AppBootstrap.setup_components(cfg)
 
-    # 1. 实例化 View (视图)
+    # 2. 实例化 MVC 架构
     view = MainWindow()
+    controller = MainController(view, components) 
     
-    # 2. 实例化 Controller (控制器)
-    controller = MainController(view)
-    
-    # 3. 显示界面
+    # 3. 显示界面并阻塞运行
     view.showFullScreen()
-    
-    # 阻塞运行 GUI
     exit_code = app.exec_()
     
-    # 安全退出守护进程
-    if daemon_process and daemon_process.is_alive():
-        print(">>> [System] 正在发送守护进程退出信号...")
-        stop_event.set() # 发送安全停止信号
-        daemon_process.join(timeout=3.0) # 留给它 3 秒时间完成最后的数据库事务
+    # 4. 安全退出与资源回收 (非常重要)
+    print(">>> [System] 正在关闭系统并回收后台进程...")
+    components['stop_event'].set() # 触发全局停止信号
+    
+    if components.get('alignment_proc') and components['alignment_proc'].is_alive():
+        components['alignment_proc'].join(timeout=3)
         
-        # 兜底：如果 3 秒还没退出（发生死锁），才使用 terminate
-        if daemon_process.is_alive():
-            print(">>> [Warning] 守护进程超时未退出，已强制退出.")
-            daemon_process.terminate()
-
     sys.exit(exit_code)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -17,59 +17,175 @@ from infra.store.sqlite_manager import DatabaseManager
 from perception.sensor.weather_station import WeatherGateway
 from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
-from domain.physics.alignment_engine import DelayedAlignmentEngine
 
 class MainController:
-    """Controller 层：负责状态管理、页面路由、信号绑定与定时更新"""
-    def __init__(self, view):
+    """!
+    @brief 主控制器类，遵循标准的 MVC 架构模式。
+    @details 负责统筹前端视图与后端视觉/物理计算引擎的交互，管理系统状态机并处理组件间的信号分发。
+    控制器不负责具体的物理计算、数据库连接或硬件控制，所有底层设施均通过依赖注入(DI)方式接入。
+    """
+    def __init__(self, view, components: dict):
+        """!
+        @brief 初始化控制器实例并装配系统。
+        @param view 绑定的主窗口视图实例 (MainWindow)。
+        @param components 由 Bootstrap 工厂组装的系统组件与服务字典。
+        """
         self.view = view
+        
+        # ==========================================
+        # 1. 依赖解包 (Dependency Injection Unpacking)
+        # ==========================================
+        # 将传入的黑盒字典拆解为控制器直接需要的具体组件
+        self._unpack_components(components)
+
+        # ==========================================
+        # 2. 状态机管理 (State Management)
+        # ==========================================
+        # 记录当前业务的运行状态
         self.is_collecting = False
         self.sampled_tid = None
+        
+        # 多线程/跨进程控制句柄
         self.worker = None
         self.global_camera = None
 
-        # 定义显式的页面向导流
-        # 只要在这里修改顺序，整个向导流就会自动适应，不需要改其他逻辑
+        # ==========================================
+        # 3. UI 路由与信号绑定 (View Routing & Binding)
+        # ==========================================
+        # 定义显式的页面向导流，严格控制步骤流转
         self.wizard_flow = [
             self.view.page_calibration,       # 步骤 1: 视觉标定
-            self.view.page_size_settings,     # 步骤 2: 道路ROI尺寸设置
+            self.view.page_size_settings,     # 步骤 2: 道路 ROI 尺寸设置
             self.view.page_pos_settings,      # 步骤 3: 仪器与道路方位设置
-            self.view.page_monitor            # 运行: 监控面板
+            self.view.page_run                # 步骤 4: 实时监控大屏
         ]
+        self._init_wizard_flow()
+        self._setup_connections()
+
+        # ==========================================
+        # 4. 后台守护任务 (Background Timers)
+        # ==========================================
+        # 统一管理需要定时执行的轻量级 UI 刷新任务
+        self._init_timers()
+
+    def _unpack_components(self, components: dict):
+        """!
+        @brief 解析并挂载底层组件，包含防御性校验。
+        """
+        # 保存原始字典以备不时之需
+        self.components = components
         
-        self.dash_timer = QTimer(self.view)
-        self.dash_timer.timeout.connect(self.update_timer_tasks)
-
-        # 实例化并启动气象网关
-        try:
-            self.weather_gw = WeatherGateway()
-            self.weather_gw.start()
-        except Exception as e:
-            print(f"气象驱动加载失败: {e}")
-            self.weather_gw = None
-
-        self.bind_signals()
-        self.view.close_callback = self.cleanup  # 注入关闭事件钩子
-        self.update_nav_buttons()
-        self.update_main_menu_btn_style()
-
-        # 用于慢速轮询硬件状态的定时器 (1Hz)
-        self.sys_timer = QTimer(self.view)
-        self.sys_timer.timeout.connect(self.update_sys_board)
-        self.sys_timer.start(1000) # 每 1000 毫秒刷新一次系统看板
-
-        # 录制界面初始化显示（从配置文件读取）
-        self.view.btn_record_switch.setChecked(cfg.ENABLE_RECORD)
-        self.handle_record_switch_toggled(cfg.ENABLE_RECORD)
+        # 提取业务领域模型与数据库
+        self.cfg = components.get('config') # 建议将 cfg 也通过 bootstrap 传入，避免全局 import
+        self.db = components.get('db')
+        self.registry = components.get('registry')
+        self.visualizer = components.get('visualizer')
         
-        segment_map = {5: 0, 10: 1, 15: 2, 30: 3}
-        self.view.combo_segment_time.setCurrentIndex(segment_map.get(cfg.RECORD_SEGMENT_MIN, 1))
-        self.view.lbl_record_save_path.setText(cfg.RECORD_SAVE_PATH)
+        # 提取跨进程通信的核心基础设施
+        self.sync_queue = components.get('sync_queue')
+        self.stop_event = components.get('stop_event')
+
+        # 防御性断言：确保关键 IPC 组件不可或缺
+        if not self.sync_queue or not self.stop_event:
+            raise ValueError("[Controller] 致命错误：缺失必要的跨进程通信管道 (Queue) 或控制信号 (Event)。")
+
+    def start_monitoring(self):
+        """!
+        @brief 启动监控流程：实例化引擎 -> 封装线程 -> 绑定信号。
+        """
+        if self.is_collecting: return
+
+        from app.monitor_engine import TrafficMonitorEngine
+        from ui.workers.engine_worker import EngineWorker
+
+        # 1. 实例化 Worker
+        self.worker = EngineWorker()
         
-        # 启动一个低频的磁盘空间清理守护定时器 (每分钟检查一次)
-        self.disk_monitor_timer = QTimer(self.view)
-        self.disk_monitor_timer.timeout.connect(self.check_and_cleanup_disk_space)
-        self.disk_monitor_timer.start(60000)
+        # 2. 绑定“接线”：Worker 发出画面 -> Controller 接收刷新
+        self.worker.frame_ready.connect(self.on_frame_received)
+
+        # 3. 实例化 Engine，并将 Worker 的方法作为回调注入
+        # 这样 Engine 产生的每一帧都会自动经过 Worker 的 emit_frame 处理
+        self.engine = TrafficMonitorEngine(
+            config=self.cfg,
+            components=self.components,
+            sync_queue=self.sync_queue,
+            frame_callback=self.worker.emit_frame 
+        )
+
+        # 4. 启动后台线程
+        self.worker.set_engine(self.engine)
+        self.worker.start()
+        
+        self.is_collecting = True
+        self.view.btn_start.setText("停止监控")
+
+    def stop_monitoring(self):
+        """!
+        @brief 安全停止视觉监控引擎。
+        @details 
+        触发引擎的 cleanup 流程，强制结算当前画面中所有的滞留车辆，
+        并等待后台 QThread 安全退出。
+        """
+        if not self.is_collecting or not self.worker:
+            return
+
+        print(">>> [Controller] 正在安全停止视觉引擎...")
+        
+        # 1. 通知前端 UI 进入等待状态，防止用户重复点击
+        self.view.btn_start.setText("正在停止...")
+        self.view.btn_start.setEnabled(False)
+
+        # 2. 通知引擎执行内部资源清理与强制数据结算
+        # 传入一个极大的 frame_id 强制触发所有追踪目标超时
+        if hasattr(self, 'engine') and self.engine:
+            self.engine.cleanup(final_frame_id=999999)
+
+        # 3. 阻塞等待线程安全退出 (设置超时时间防死锁)
+        self.worker.quit()
+        self.worker.wait(2000) 
+
+        # 4. 状态重置在 on_engine_finished 槽函数中完成，保持逻辑闭环
+
+    def on_frame_received(self, rgb_frame):
+        """!
+        @brief UI 线程回调：渲染图像并释放 Worker 锁。
+        """
+        # 1. 调用 View 层的接口展示画面
+        if hasattr(self.view, 'video_canvas'):
+            self.view.video_canvas.update_image(rgb_frame)
+        
+        # 2. 驱动 Dashboard 数据更新
+        self._update_dashboard()
+        
+        # 3. 解锁 Worker，允许发送下一帧，实现 1:1 的生产消费平衡
+        if self.worker:
+            self.worker.unlock_frame()
+
+    def on_engine_finished(self):
+        """!
+        @brief 引擎线程结束的信号槽。
+        @details 负责重置控制器的运行状态，并恢复界面按钮的初始样式。
+        """
+        self.is_collecting = False
+        self.engine = None
+        self.worker = None
+        
+        # 恢复 UI 初始状态
+        self.view.btn_start.setText("开始监控")
+        self.view.btn_start.setEnabled(True)
+        self.view.btn_start.setStyleSheet("") # 恢复默认样式
+        print(">>> [Controller] 监控任务已完全终止。")
+
+    def _init_timers(self):
+        """!
+        @brief 初始化 UI 层的定时刷新器。
+        """
+        # 状态栏监控定时器 (例如：系统 CPU、温度监控)
+        self.status_timer = QTimer()
+        # 假设有一个 _update_status_bar 方法处理底部状态栏刷新
+        # self.status_timer.timeout.connect(self._update_status_bar) 
+        self.status_timer.start(2000) # 2秒刷新一次
 
     def bind_signals(self):
         """将视图组件的事件绑定到控制器的逻辑上"""

@@ -119,6 +119,9 @@ class TrafficMonitorEngine:
             empty_queue_streak = 0  
             MAX_STREAK = 30  # 30次超时(每次0.1s) = 约3秒钟无响应
 
+            # 用于标记是否已进行坐标轴初始化
+            video_initialized = False
+
             while self._is_running:
                 # 看门狗机制：检查存活状态与心跳超时
                 if not self.p_daemon.is_alive() or empty_queue_streak > MAX_STREAK:
@@ -136,12 +139,17 @@ class TrafficMonitorEngine:
                     empty_queue_streak = 0 # 收到心跳，重置看门狗
                 except queue.Empty:
                     empty_queue_streak += 1
+                    # 只有在没有新数据时才 continue，有新数据必然有新画面
 
-                # 既然已经收到了新数据的敲门信号，立刻从共享内存深拷贝出最新画面
+                # 从共享内存深拷贝出最新画面
                 current_frame = self.shm_array.copy()
 
-                if not current_frame.any():
-                    continue
+                # 初始化检查
+                if not video_initialized:
+                    if current_frame[0, 0].sum() == 0:
+                        continue # 第一帧可能还是纯黑的，跳过
+                    self._initialize_geometry(current_frame)
+                    video_initialized = True
 
                 # --- B. 动态坐标与传感器轮询 (1Hz) ---
                 now = time.time()
@@ -153,13 +161,12 @@ class TrafficMonitorEngine:
                     self._poll_environmental_sensors(now)
                     prev_env_time = now
                     
-                    # 主动推送通知对齐进程：系统物理时间已经推进到了 now
-                    if self.current_session_id:
+                    # 摒弃 SQLite 轮询，主动将系统时间推给对齐守护进程！
+                    if self.current_session_id and 'sync_queue' in self.comps:
                         try:
-                            # 放进队列，由对齐进程去取
-                            self.sync_queue.put_nowait((self.current_session_id, now))
+                            self.comps['sync_queue'].put_nowait((self.current_session_id, now))
                         except queue.Full:
-                            pass # 队列满了说明对齐进程卡住了，直接丢弃，对齐引擎本身有追赶机制
+                            pass # 队列满直接丢弃，不阻塞主线程
 
                 # --- C. 核心处理 ---
                 self.current_frame_id += 1
