@@ -115,7 +115,6 @@ class TrafficMonitorEngine:
             smoothed_fps = getattr(self.cfg, 'FPS', 30.0) # 初始预设值
 
             while self._is_running:
-                loop_start = time.perf_counter()
                 if not self.p_daemon.is_alive(): break
 
                 # --- A. 数据提取 ---
