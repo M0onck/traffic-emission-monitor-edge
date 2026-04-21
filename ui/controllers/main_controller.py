@@ -782,7 +782,8 @@ class MainController:
 
     def update_timer_tasks(self):
         """总控定时器：分配 UI 刷新任务"""
-        if not hasattr(self, 'worker') or not self.worker.engine: return
+        if not self.worker or not getattr(self.worker, 'engine', None): 
+            return
         
         self._update_thermal_view()  # 1. 实时刷新热成像
         self._update_dashboard()     # 2. 刷新车辆抽样看板
