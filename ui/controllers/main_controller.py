@@ -561,6 +561,10 @@ class MainController:
         # 安全关闭气象网关 C++ 后台线程
         if hasattr(self, 'weather_gw') and self.weather_gw:
             self.weather_gw.stop()
+
+        # 安全关闭数据库连接，触发数据落盘合并
+        if hasattr(self, 'db') and self.db:
+            self.db.close()
     
     # --- 界面渲染更新 ---
     def update_sys_board(self):

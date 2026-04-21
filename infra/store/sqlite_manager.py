@@ -294,5 +294,9 @@ class DatabaseManager:
             print("[Database Error] SQL模板 'insert_aligned_dataset' 未定义")
 
     def close(self):
-        self.conn.close()
-        print("[Database] Connection closed.")
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            self.conn.close()
+            print("[Database] 数据库连接已安全关闭，WAL 缓存已全部落盘。")
+        except Exception as e:
+            print(f"[Database Error] 关闭数据库时发生异常: {e}")
