@@ -2,7 +2,6 @@ import os
 import psutil
 import socket
 from datetime import datetime
-import subprocess
 
 class SysMonitor:
     """边缘端硬件与系统状态监视器"""
