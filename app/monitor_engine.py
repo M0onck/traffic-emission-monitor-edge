@@ -244,7 +244,14 @@ class TrafficMonitorEngine:
         if self.weather_station:
             ws = self.weather_station.get_data()
             if ws.get('isOnline'):
-                env_data.update({'air_temp': ws['temp'], 'humidity': ws['humidity'], 'pm25_raw': ws['pm25']})
+                env_data.update({
+                    'air_temp': ws['temp'], 
+                    'humidity': ws['humidity'], 
+                    'pm25_raw': ws['pm25'],
+                    'pm10_raw': ws['pm10'],
+                    'wind_speed': ws['windSpeed'],
+                    'wind_dir': ws['windDir']
+                })
         if self.thermal_cam:
             tf = self.thermal_cam.read()
             if tf is not None:

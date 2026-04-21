@@ -153,9 +153,6 @@ class MainController:
                 if hasattr(self.view, 'video_canvas'):
                     self.view.video_canvas.update_image(rgb_frame)
             
-            # 2. 驱动 Dashboard 数据更新（保持与帧率同步）
-            self._update_dashboard()
-            
         except Exception as e:
             print(f"[UI异常] 视频帧渲染失败: {e}")
             
@@ -213,6 +210,11 @@ class MainController:
         self.disk_monitor_timer = QTimer(self.view)
         self.disk_monitor_timer.timeout.connect(self.check_and_cleanup_disk_space)
         self.disk_monitor_timer.start(60000) # 每分钟检查一次
+
+        # UI 刷新定时器，专门负责热成像预览与车辆数据看板
+        self.dash_timer = QTimer(self.view)
+        self.dash_timer.timeout.connect(self.update_timer_tasks)
+        self.dash_timer.start(100) # 10 Hz 刷新率
 
     def bind_signals(self):
         """将视图组件的事件绑定到控制器的逻辑上"""

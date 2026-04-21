@@ -33,10 +33,8 @@ class DatabaseManager:
             check_same_thread=False  
         )
         
-        self.cursor = self.conn.cursor()
-        
-        self.cursor.execute("PRAGMA journal_mode=WAL;")
-        self.cursor.execute("PRAGMA synchronous=NORMAL;")
+        self.conn.execute("PRAGMA journal_mode=WAL;")
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
         
         # 1. 初始化表结构 (DDL)
         self._init_schema()
@@ -52,7 +50,7 @@ class DatabaseManager:
         if os.path.exists(schema_path):
             try:
                 with open(schema_path, 'r', encoding='utf-8') as f:
-                    self.cursor.executescript(f.read())
+                    self.conn.executescript(f.read())
                 self.conn.commit()
             except sqlite3.Error as e:
                 print(f"[Database Error] Schema 初始化失败: {e}")
@@ -102,7 +100,7 @@ class DatabaseManager:
         sql = self.queries.get('insert_session')
         if sql:
             try:
-                self.cursor.execute(sql, (session_id, start_time, location_desc))
+                self.conn.execute(sql, (session_id, start_time, location_desc))
                 self.conn.commit()
                 print(f">>> [Database] 成功创建新采集任务: {session_id}")
             except Exception as e:
@@ -117,7 +115,7 @@ class DatabaseManager:
         sql = self.queries.get('complete_session')
         if sql:
             try:
-                self.cursor.execute(sql, (end_time, session_id))
+                self.conn.execute(sql, (end_time, session_id))
                 self.conn.commit()
                 print(f">>> [Database] 采集任务已结束并归档: {session_id}")
             except Exception as e:
@@ -129,8 +127,8 @@ class DatabaseManager:
         """查询所有历史采集任务，用于填充下拉菜单"""
         query = "SELECT session_id, start_time, location_desc FROM Session_Task ORDER BY start_time DESC"
         try:
-            self.cursor.execute(query)
-            return self.cursor.fetchall()
+            self.conn.execute(query)
+            return self.conn.fetchall()
         except sqlite3.Error as e:
             print(f"[Database Error] 查询 Session_Task 失败: {e}")
             return []
@@ -146,8 +144,8 @@ class DatabaseManager:
             LIMIT ?
         """
         try:
-            self.cursor.execute(query, (session_id, limit))
-            return self.cursor.fetchall()
+            self.conn.execute(query, (session_id, limit))
+            return self.conn.fetchall()
         except sqlite3.Error as e:
             print(f"[Database Error] 查询 Veh_Sum 数据失败: {e}")
             return []
@@ -155,11 +153,11 @@ class DatabaseManager:
     def delete_session(self, session_id: str) -> bool:
         """删除指定采集任务的所有关联数据"""
         try:
-            self.cursor.execute("DELETE FROM Env_Raw WHERE session_id = ?", (session_id,))
-            self.cursor.execute("DELETE FROM Veh_Raw WHERE session_id = ?", (session_id,))
-            self.cursor.execute("DELETE FROM Veh_Sum WHERE session_id = ?", (session_id,))
-            self.cursor.execute("DELETE FROM Aligned_Dataset WHERE session_id = ?", (session_id,))
-            self.cursor.execute("DELETE FROM Session_Task WHERE session_id = ?", (session_id,))
+            self.conn.execute("DELETE FROM Env_Raw WHERE session_id = ?", (session_id,))
+            self.conn.execute("DELETE FROM Veh_Raw WHERE session_id = ?", (session_id,))
+            self.conn.execute("DELETE FROM Veh_Sum WHERE session_id = ?", (session_id,))
+            self.conn.execute("DELETE FROM Aligned_Dataset WHERE session_id = ?", (session_id,))
+            self.conn.execute("DELETE FROM Session_Task WHERE session_id = ?", (session_id,))
             self.conn.commit()
             print(f">>> [Database] 任务 {session_id} 数据已被彻底删除。")
             return True
@@ -170,11 +168,11 @@ class DatabaseManager:
     def delete_all_data(self) -> bool:
         """清空数据库中的所有任务数据"""
         try:
-            self.cursor.execute("DELETE FROM Env_Raw")
-            self.cursor.execute("DELETE FROM Veh_Raw")
-            self.cursor.execute("DELETE FROM Veh_Sum")
-            self.cursor.execute("DELETE FROM Aligned_Dataset")
-            self.cursor.execute("DELETE FROM Session_Task")
+            self.conn.execute("DELETE FROM Env_Raw")
+            self.conn.execute("DELETE FROM Veh_Raw")
+            self.conn.execute("DELETE FROM Veh_Sum")
+            self.conn.execute("DELETE FROM Aligned_Dataset")
+            self.conn.execute("DELETE FROM Session_Task")
             self.conn.commit()
             print(">>> [Database] 所有历史数据已被清空。")
             return True
@@ -201,7 +199,7 @@ class DatabaseManager:
                 float(env_data.get('ground_temp', 0.0))
             )
             try:
-                self.cursor.execute(sql, params)
+                self.conn.execute(sql, params)
                 self.conn.commit() # 1Hz的写入频率较低，由于开启了WAL模式，直接commit保证实时性无压力
             except Exception as e:
                 print(f"[Database Error] 插入 Env_Raw 失败: {e}")
@@ -226,7 +224,7 @@ class DatabaseManager:
                     float(exit_time),
                     trajectory_blob
                 )
-                self.cursor.execute(sql, params)
+                self.conn.execute(sql, params)
                 self.conn.commit() 
             except Exception as e:
                 print(f"[Database Error] 插入 Veh_Raw 失败: {e}")
@@ -257,7 +255,7 @@ class DatabaseManager:
         sql = self.queries.get('insert_veh_sum')
         if sql:
             try:
-                self.cursor.execute(sql, params)
+                self.conn.execute(sql, params)
                 self.conn.commit()
             except Exception as e:
                 print(f"[Database Error] insert_veh_sum 失败: {e}")
@@ -276,7 +274,7 @@ class DatabaseManager:
                       float(pmc_raw), float(pmc_baseline), float(delta_c_flux), 
                       float(e_traffic), float(d_trans), float(w_cross), float(delta_tv))
             try:
-                self.cursor.execute(sql, params)
+                self.conn.execute(sql, params)
                 self.conn.commit()
             except Exception as e:
                 print(f"[Database Error] 插入 Aligned_Dataset 失败: {e}")
