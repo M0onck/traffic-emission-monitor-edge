@@ -514,6 +514,10 @@ class MainController:
         self.view.btn_stop.setEnabled(False)
         self.view.btn_stop.setText("正在结算...")
 
+        # 停止主引擎内部 while 循环
+        if getattr(self, 'worker', None) and getattr(self.worker, 'engine', None):
+            self.worker.engine.stop()
+
         # 1. 设置停止信号
         # 底层 monitor_engine.py 的 run() 循环检测到它后，会自己调用 cleanup()
         if hasattr(self, 'stop_event') and self.stop_event:

@@ -70,6 +70,12 @@ class TrafficMonitorEngine:
         self.ocr_on = getattr(self.cfg, 'ENABLE_OCR', False)
         self.motion_on = getattr(self.cfg, 'ENABLE_MOTION', True)
 
+    def stop(self):
+        """主动阻断主循环，并触发子进程退出事件"""
+        self._is_running = False
+        if hasattr(self, 'stop_event'):
+            self.stop_event.set()
+
     def run(self):
         self._is_running = True
         logger.info("[Engine] 启动多进程解耦引擎...")
@@ -144,6 +150,7 @@ class TrafficMonitorEngine:
                 except queue.Empty:
                     empty_queue_streak += 1
                     # 只有在没有新数据时才 continue，有新数据必然有新画面
+                    continue
 
                 # 从共享内存深拷贝出最新画面
                 current_frame = self.shm_array.copy()
