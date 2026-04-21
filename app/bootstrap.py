@@ -1,4 +1,8 @@
 # app/bootstrap.py
+import os
+import sys
+import subprocess
+import logging
 import numpy as np
 import multiprocessing as mp
 from infra.store.sqlite_manager import DatabaseManager
@@ -9,9 +13,52 @@ from perception.gst_pipeline import GstPipelineManager
 from perception.sensor.thermal_camera import ThermalCamera
 from perception.sensor.weather_station import WeatherGateway
 from ui.renderer import Visualizer
-
-# 引入对齐守护进程
 from app.alignment_daemon import AlignmentDaemon
+
+logger = logging.getLogger(__name__)
+
+def sync_native_extensions():
+    """
+    统一管理并按需编译项目中所有的 C++ 扩展 (传感器驱动、GStreamer 插件)
+    """
+    # 动态获取项目根目录 (根据 app/bootstrap.py 向上推两级)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    build_dir = os.path.join(project_root, "build")
+    lib_dir = os.path.join(build_dir, "bin")
+    
+    logger.info("[Bootstrap] 正在检查并同步 C++ 扩展模块...")
+    
+    try:
+        os.makedirs(build_dir, exist_ok=True)
+        
+        # 1. 运行 CMake 配置 (CMake 会自动处理缓存和依赖关系)
+        subprocess.run(
+            ["cmake", ".."], 
+            cwd=build_dir, 
+            check=True, 
+            capture_output=True
+        )
+        
+        # 2. 运行 Make 并发编译 (树莓派 5 推荐使用 -j4)
+        subprocess.run(
+            ["make", "-j4"], 
+            cwd=build_dir, 
+            check=True,
+            capture_output=False # 如果不想看满屏编译日志可屏蔽，想看可设为 False
+        )
+        
+        # 3. 注入 GStreamer 环境变量，使其能够发现刚刚编译的 dewarp 插件
+        current_gst_path = os.environ.get("GST_PLUGIN_PATH", "")
+        os.environ["GST_PLUGIN_PATH"] = f"{lib_dir}:{current_gst_path}"
+        
+        logger.info(f"[Bootstrap] C++ 扩展同步就绪。共享库目录: {lib_dir}")
+        return lib_dir
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"[Bootstrap] C++ 模块编译失败！返回码: {e.returncode}")
+        if e.stderr:
+            logger.error(f"编译错误详情: {e.stderr.decode('utf-8')}")
+        sys.exit(1)
 
 class AppBootstrap:
     """
@@ -61,7 +108,7 @@ class AppBootstrap:
 
         # 4. 异步处理与传感器
         plate_worker = AsyncPlateRecognizer() if getattr(config, 'ENABLE_OCR', False) else None
-        lib_path = getattr(config, 'THERMAL_LIB_PATH', 'bin/libmlx90640.so')
+        lib_path = getattr(config, 'THERMAL_LIB_PATH', 'lib/libmlx90640.so')
         thermal_cam = ThermalCamera(lib_path)
 
         # 5. 渲染层

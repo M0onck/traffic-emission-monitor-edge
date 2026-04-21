@@ -53,7 +53,7 @@ class ThermalCamera:
     """
     具备自动恢复能力的热成像驱动封装
     """
-    def __init__(self, lib_path="bin/libmlx90640.so"):
+    def __init__(self, lib_path="lib/libmlx90640.so"):
         # 将传入的路径转换为绝对路径，并绑定到 self.lib_path
         self.lib_path = os.path.abspath(lib_path)
         

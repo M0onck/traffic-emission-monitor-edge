@@ -1,18 +1,9 @@
 # main.py
-import os
-import sys
-import logging
 import faulthandler
 faulthandler.enable()
 
-from PyQt5.QtWidgets import QApplication
-import multiprocessing as mp
-import infra.config.loader as cfg
-
-from app.bootstrap import AppBootstrap
-from ui.views.main_window import MainWindow
-from ui.controllers.main_controller import MainController
-
+import sys
+import logging
 # 配置全局日志基础设置
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +11,22 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
+
+from app.bootstrap import sync_native_extensions
+# 确保底层 C++ 库编译并注入环境变量
+native_lib_path = sync_native_extensions()
+
+# 对于传感器驱动，这里可以动态添加到加载路径，方便后面的 ctypes 调用
+sys.path.append(native_lib_path)
+
+# 导入其他组件
+from PyQt5.QtWidgets import QApplication
+import multiprocessing as mp
+import infra.config.loader as cfg
+
+from app.bootstrap import AppBootstrap
+from ui.views.main_window import MainWindow
+from ui.controllers.main_controller import MainController
 
 def main():
     # 强制使用 spawn 模式，避免 Linux 下 GUI 与多进程的资源死锁
