@@ -16,7 +16,7 @@ class WeatherDataC(ctypes.Structure):
     ]
 
 class WeatherGateway:
-    def __init__(self, lib_path="lib/libweather.so"):
+    def __init__(self, lib_path="build/lib/libweather_driver.so"):
         if not os.path.exists(lib_path):
             raise FileNotFoundError(f"找不到气象站驱动库: {lib_path}")
             

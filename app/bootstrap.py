@@ -108,7 +108,7 @@ class AppBootstrap:
 
         # 4. 异步处理与传感器
         plate_worker = AsyncPlateRecognizer() if getattr(config, 'ENABLE_OCR', False) else None
-        lib_path = getattr(config, 'THERMAL_LIB_PATH', 'lib/libmlx90640.so')
+        lib_path = getattr(config, 'THERMAL_LIB_PATH', 'build/lib/libmlx90640_driver.so')
         thermal_cam = ThermalCamera(lib_path)
 
         # 5. 渲染层

@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .env
 venv/
 env/
@@ -42,8 +41,20 @@ model/*.hef
 output/
 tests/
 
-# MLX90640 C++ Driver Build Artifacts
-perception/sensor/mlx90640_driver/*.o
-perception/sensor/mlx90640_driver/*.so
-perception/sensor/mlx90640_driver/*.a
-perception/sensor/mlx90640_driver/main
+# 忽略整个集中式构建目录
+build/
+
+# 防止有人意外在根目录执行 cmake . 产生的污染文件
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# 忽略所有平台下可能散落的编译动态库和对象文件
+*.so
+*.o
+*.a
+*.dylib
+*.dll

@@ -10,11 +10,9 @@ from PyQt5.QtWidgets import (QTableWidgetItem, QVBoxLayout,
                              QFileDialog)
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from datetime import datetime
-from ui.workers.engine_worker import EngineWorker
 from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
-from perception.sensor.weather_station import WeatherGateway
 from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
 
