@@ -86,7 +86,7 @@ class AppBootstrap:
 
         # 2. 气象站实例
         try:
-            weather_gw = WeatherGateway()
+            weather_gw = WeatherGateway(getattr(config, 'WS_PATH', 'build/lib/libmlx90640_driver.so'))
             weather_gw.start()
             print(">>> [Bootstrap] 气象站驱动已拉起。")
         except Exception as e:
@@ -108,8 +108,7 @@ class AppBootstrap:
 
         # 4. 异步处理与传感器
         plate_worker = AsyncPlateRecognizer() if getattr(config, 'ENABLE_OCR', False) else None
-        lib_path = getattr(config, 'THERMAL_LIB_PATH', 'build/lib/libmlx90640_driver.so')
-        thermal_cam = ThermalCamera(lib_path)
+        thermal_cam = ThermalCamera(getattr(config, 'TC_PATH', 'build/lib/libmlx90640_driver.so'))
 
         # 5. 渲染层
         target_pts_raw = getattr(config, 'TARGET_POINTS', [[0,0], [1,0], [1,1], [0,1]])

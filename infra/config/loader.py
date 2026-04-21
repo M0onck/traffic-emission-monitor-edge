@@ -30,6 +30,10 @@ FPS = max(1.0, float(_sys.get("fps", 30.0))) # [防御性编程] 防止ZeroDivis
 DEBUG_MODE = _sys["debug_mode"]
 USE_CAMERA = _sys.get("use_camera", False)
 
+_lib = _cfg["lib_paths"]
+WS_PATH = _lib.get("libweather_path", "build/lib/libweather_driver.so")
+TC_PATH = _lib.get("libthermal_path", "build/lib/libmlx90640_driver.so")
+
 _rec = _cfg.get("record_options", {})
 ENABLE_RECORD = _rec.get("enable_record", False)
 RECORD_SEGMENT_MIN = _rec.get("segment_length_min", 10)
