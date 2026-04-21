@@ -124,6 +124,14 @@ class MainController:
         import numpy as np
         self.components['norm_source_points'] = np.array(self.cfg.SOURCE_POINTS, dtype=np.float32)
 
+        # 计算真实的物理目标点矩阵
+        self.components['target_points'] = np.array([
+            [0, self.cfg.PHYS_HEIGHT],
+            [self.cfg.PHYS_WIDTH, self.cfg.PHYS_HEIGHT],
+            [self.cfg.PHYS_WIDTH, 0],
+            [0, 0]
+        ], dtype=np.float32)
+
         # --- 2. 硬件控制权移交 ---
         # 释放主界面标定画布占用的摄像头流，为感知子进程或后台推理让路
         if getattr(self, 'global_camera', None):

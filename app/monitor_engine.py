@@ -331,7 +331,6 @@ class TrafficMonitorEngine:
                         last_time = trajectory[-1].get('timestamp', frame_timestamp - fallback_dt)
                         
                         if abs(curr_phys[1] - last_phys_y) < max(0.2, dynamic_tolerance):
-                            curr_phys[1] = last_phys_y 
                             pseudo_speed = 0.0
                         else:
                             pseudo_speed = abs(curr_phys[1] - last_phys_y) / max(0.001, frame_timestamp - last_time)
