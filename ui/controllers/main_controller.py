@@ -106,13 +106,13 @@ class MainController:
         # 生成基于时间戳的唯一 Session ID
         self.current_session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         
+        # 将 Session ID 同步给全局配置，底层引擎将依赖它进行落盘
+        self.cfg.CURRENT_SESSION_ID = self.current_session_id
+
         # 在数据库中注册这条主任务记录
         if hasattr(self, 'db') and self.db:
             location_desc = getattr(self.cfg, 'LOCATION_DESC', "默认监控点")
             self.db.create_session(self.current_session_id, time.time(), location_desc)
-            
-        # 将 Session ID 同步给全局配置，底层引擎将依赖它进行落盘
-        self.cfg.CURRENT_SESSION_ID = self.current_session_id
 
         # --- 1. 物理先验参数同步 ---
         # 从 UI 层获取透视标定点和物理尺寸，同步到全局配置中，供后端的对齐引擎(AlignmentEngine)使用
@@ -505,34 +505,28 @@ class MainController:
         if dialog.exec_() == EdgeMessageBox.Accepted:
             self.stop_monitoring()
     
+    # ui/controllers/main_controller.py
+
     def stop_monitoring(self):
-        """安全停止视觉监控引擎，执行数据结算与资源清理"""
         if not self.is_collecting: return
         
-        print(">>> [Controller] 正在安全停止视觉引擎...")
-        # 禁用按钮防止用户在停止期间重复点击
-        self.view.btn_stop.setText("正在停止...")
+        print(">>> [Controller] 正在请求引擎停止...")
         self.view.btn_stop.setEnabled(False)
+        self.view.btn_stop.setText("正在结算...")
 
-        # 1. 触发引擎内部数据强制结算 (极其重要，防止最后一批车辆数据丢失)
-        if hasattr(self, 'engine') and self.engine:
-            self.engine.cleanup(final_frame_id=999999)
+        # 1. 设置停止信号
+        # 底层 monitor_engine.py 的 run() 循环检测到它后，会自己调用 cleanup()
+        if hasattr(self, 'stop_event') and self.stop_event:
+            self.stop_event.set() 
 
-        # 2. 阻塞等待后台 Worker 线程安全退出并写入视频
-        if hasattr(self, 'worker') and self.worker:
-            print("[Controller] 正在等待后台引擎清理数据并写入视频...")
+        # 2. 等待线程安全退出
+        if self.worker:
             self.worker.quit()
+            # 给引擎 4 秒钟时间完成最后的数据库落盘
             if not self.worker.wait(4000):
-                print("[Warning] 后台引擎清理超时，可能导致最后一段录像损坏.")
-
-        # 3. 显式叫停全局摄像头对象，防止 NPU 句柄泄漏
-        if getattr(self, 'global_camera', None):
-            try:
-                self.global_camera.stop()
-            except Exception as e:
-                print(f"[Warning] 全局摄像头停止时发生异常: {e}")
-
-        # 4. 调用独立的收尾回调，完成状态重置与 UI 跳转
+                print("[Warning] 引擎响应超时。")
+        
+        # 3. 线程退出后，再执行 UI 的收尾工作
         self.on_engine_finished()
     
     def handle_exit_request(self):
