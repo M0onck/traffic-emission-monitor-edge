@@ -101,10 +101,15 @@ class TrafficMonitorEngine:
             # 3. 启动传感器
             if self.thermal_cam: self.thermal_cam.start()
 
-            # 4. 创建 Session
+            # 4. 挂载 Session
             start_timestamp = time.time()
-            self.current_session_id = f"Task_{time.strftime('%Y%m%d_%H%M%S')}"
-            self.db.create_session(self.current_session_id, start_timestamp, "MainRoad")
+            # 读取前端控制器已创建并传入配置的 Session ID
+            self.current_session_id = getattr(self.cfg, 'CURRENT_SESSION_ID', None)
+            
+            # 兜底逻辑：如果是独立脱离 UI 测试，则自己创建
+            if not self.current_session_id:
+                self.current_session_id = f"Task_{time.strftime('%Y%m%d_%H%M%S')}"
+                self.db.create_session(self.current_session_id, start_timestamp, "MainRoad")
 
             last_hailo_data = []
             prev_env_time = 0
@@ -304,7 +309,7 @@ class TrafficMonitorEngine:
                 if self.spatial.is_in_roi(raw_point):
                     
                     # 1. 空间组件获取物理坐标与宽容度
-                    curr_phys = self.spatial.get_physical_point(raw_point)
+                    curr_phys = list(self.spatial.get_physical_point(raw_point))
                     dynamic_tolerance = self.spatial.get_dynamic_tolerance(raw_point)
 
                     # 2. 运动学逻辑
@@ -692,12 +697,11 @@ class TrafficMonitorEngine:
             self.plate_worker.stop()
 
         # ==========================================
-        # 5. 数据库断开与任务状态更新
+        # 5. 任务状态更新
         # ==========================================
         if getattr(self, 'current_session_id', None):
             self.db.complete_session(self.current_session_id, time.time())
 
-        self.db.close()
         logger.info("[Engine] 引擎安全下线。")
 
     def _print_profile_stats(self):
