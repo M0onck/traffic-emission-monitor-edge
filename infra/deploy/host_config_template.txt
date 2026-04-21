@@ -1,0 +1,99 @@
+# For more options and information see
+# http://rptl.io/configtxt
+# Some settings may impact device functionality. See link above for details
+
+# =======================================================================
+# [ Base System & Audio ]
+# =======================================================================
+# Enable audio (loads snd_bcm2835)
+dtparam=audio=on
+
+# Automatically load initramfs files, if found
+auto_initramfs=1
+
+# Run in 64-bit mode
+arm_64bit=1
+
+# Run as fast as firmware / board allows
+arm_boost=1
+
+# =======================================================================
+# [ Memory & IPC Management ]
+# =======================================================================
+# Enable DRM VC4 V3D driver.
+# CMA is explicitly allocated to 512MB to maintain a robust shared memory 
+# pool for Inter-Process Communication (IPC) services, preventing severe 
+# memory fragmentation during continuous, long-term edge monitoring.
+dtoverlay=vc4-kms-v3d,cma=512
+max_framebuffers=2
+
+# =======================================================================
+# [ PCIe & Hailo-8 NPU Topology ]
+# =======================================================================
+[all]
+# The hardware topology utilizes a PCIe switch board carrying both the 
+# Hailo-8 AI accelerator and an NVMe SSD, connected via a ribbon cable.
+# The switch chip does not support PCIe Gen 3, so we downgrade to Gen 2 
+# to ensure stable communication and maximize hardware compatibility.
+dtparam=pciex1_gen=2
+
+# Disable Active State Power Management (ASPM). 
+# This prevents the Raspberry Pi from dynamically dropping voltage to save 
+# power, which can destabilize the Hailo-8 NPU during heavy inference loads.
+pcie_aspm=off
+
+# =======================================================================
+# [ Custom Display Configuration ]
+# =======================================================================
+# Disable compensation for displays with overscan
+disable_overscan=1
+
+# Manufacturer recommended parameters for the custom screen.
+max_usb_current=1
+hdmi_force_hotplug=1
+config_hdmi_boost=7
+hdmi_group=2
+hdmi_mode=87
+hdmi_drive=2
+hdmi_cvt 800 480 60 6 0 0 0
+
+# =======================================================================
+# [ IMX296 Vision Pipeline ]
+# =======================================================================
+# Disable auto-detection as per camera manufacturer recommendations.
+camera_auto_detect=0
+
+# Load specific overlay for the IMX296 global shutter sensor.
+dtoverlay=imx296
+
+# CRITICAL: Force 3.3V PWM regulation. 
+# Without this configuration, ripple from the 5V power supply severely 
+# interferes with the IMX296 sensor, resulting in visible wave artifacts 
+# across the captured image frames.
+power_force_3v3_pwm=1
+
+# =======================================================================
+# [ I2C Sensors & UART ]
+# =======================================================================
+# Enable I2C bus and set baud rate to 400kHz (Fast Mode) for high-speed 
+# communication with the thermal imaging sensor.
+dtparam=i2c_arm=on
+i2c_arm_baudrate=400000
+
+# Configure Real-Time Clock (RTC) battery charging voltage.
+dtparam=rtc_bbat_vchg=3000000
+
+# Enable Universal Asynchronous Receiver-Transmitter (UART).
+enable_uart=1
+
+# =======================================================================
+# [ Compute Module Defaults ]
+# =======================================================================
+[cm4]
+# Enable host mode on the 2711 built-in XHCI USB controller.
+# This line should be removed if the legacy DWC2 controller is required
+# (e.g. for USB device mode) or if USB support is not required.
+otg_mode=1
+
+[cm5]
+dtoverlay=dwc2,dr_mode=host
