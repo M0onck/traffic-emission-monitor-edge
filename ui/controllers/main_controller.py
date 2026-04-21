@@ -99,6 +99,21 @@ class MainController:
         """
         if self.is_collecting: return
 
+        # 任务会话 (Session) 创建
+        import time
+        from datetime import datetime
+        
+        # 生成基于时间戳的唯一 Session ID
+        self.current_session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 在数据库中注册这条主任务记录
+        if hasattr(self, 'db') and self.db:
+            location_desc = getattr(self.cfg, 'LOCATION_DESC', "默认监控点")
+            self.db.create_session(self.current_session_id, time.time(), location_desc)
+            
+        # 将 Session ID 同步给全局配置，底层引擎将依赖它进行落盘
+        self.cfg.CURRENT_SESSION_ID = self.current_session_id
+
         # --- 1. 物理先验参数同步 ---
         # 从 UI 层获取透视标定点和物理尺寸，同步到全局配置中，供后端的对齐引擎(AlignmentEngine)使用
         self.cfg.SOURCE_POINTS = self.view.canvas.get_real_points().tolist()
@@ -174,6 +189,8 @@ class MainController:
 
         # 2. 重置控制器的核心状态机
         self.is_collecting = False
+        self.sampled_tid = None
+        self.current_session_id = None
 
         # 3. 恢复 UI 组件的初始状态 (为下次采集做准备)
         self.view.btn_stop.setText("结束采集")
@@ -988,25 +1005,46 @@ class MainController:
     
     def _update_dashboard(self):
         """Dashboard 数据抽样更新逻辑 (离场后结算展示)"""
-        # 确保后台引擎已经初始化
-        if not hasattr(self, 'worker') or not self.worker.engine: return
-        engine = self.worker.engine
+        # --- 会话安全检查 ---
+        # 如果当前没有 session_id，说明任务尚未通过 start_monitoring 正式启动
+        # 此时不应进行任何数据库查询或 UI 刷新
+        if not getattr(self, 'current_session_id', None):
+            return
+
+        # --- 线程与引擎安全检查 ---
+        # 使用“短路逻辑”防御：如果 worker 是 None，或者其引用的 engine 尚未挂载，立刻退出
+        if not self.worker or not getattr(self.worker, 'engine', None): 
+            return
         
-        # 检查引擎是否产出了最新结算完毕的离场数据
-        if not hasattr(engine, 'latest_exit_record') or not engine.latest_exit_record:
+        engine = self.worker.engine
+
+        # --- 数据库读取与表格刷新 ---
+        # 确保数据库可用，并实时刷新下方的大表格
+        if self.db:
+            try:
+                # 拿着当前的 session_id 去拉取最新的 50 条结算记录
+                records = self.db.fetch_macro_records_by_session(self.current_session_id, limit=50)
+                # 调用同步方法更新表格 UI
+                self._sync_table_records(records)
+            except Exception as e:
+                print(f"[UI] 刷新结算表格失败: {e}")
+
+        # --- 单车抽样数据检查 ---
+        # 检查引擎是否产出了最新结算完毕的离场数据，使用 getattr 更加安全
+        latest_data = getattr(engine, 'latest_exit_record', None)
+        if not latest_data:
             return
             
-        latest_data = engine.latest_exit_record
-        tid = latest_data['tid']
+        tid = latest_data.get('tid')
 
-        # 如果这辆车已经在 Dashboard 上展示过了，就不重复刷新，避免闪烁
+        # 如果这辆车已经在 Dashboard 上展示过了，就不重复刷新，避免 UI 闪烁
         if getattr(self, 'sampled_tid', None) == tid:
             return
             
-        # 捕获到了新的离场车辆
+        # --- 更新单车详细数据面板 ---
         self.sampled_tid = tid
-        record = latest_data['record']
-        type_str = latest_data['type_str']
+        record = latest_data.get('record', {})
+        type_str = latest_data.get('type_str')
         
         # 读取引擎层结算好的投票结果，保持与落盘数据 100% 一致
         plate_color = record.get('final_plate_color', 'Unknown')
@@ -1034,3 +1072,57 @@ class MainController:
         self.view.lbl_dash_dist.setText(f"行驶距离: {record.get('total_distance_m', 0.0):.1f} m")
         
         self.view.curve_widget.update_curve(speeds, accels)
+
+    def _sync_table_records(self, records):
+        """
+        @brief 将数据库查询出的最新车辆记录同步渲染到 UI 的结算表格中
+        @param records: List[tuple] 从 SQLite 拉取的记录列表
+        """
+        if not hasattr(self.view, 'db_table'):
+            return
+
+        # 1. 动态设置表格总行数
+        self.view.db_table.setRowCount(len(records))
+        
+        # 车型与状态的中文化映射字典
+        type_zh_map = {
+            "LDV-Gasoline": "轻型燃油",
+            "LDV-Electric": "轻型新能源",
+            "HDV-Diesel": "重型柴油",
+            "HDV-Electric": "重型新能源"
+        }
+        status_map = {
+            "Completed": "正常离场", 
+            "Timeout": "超时清理", 
+            "Border": "边缘截断"
+        }
+
+        # 2. 遍历数据并逐行填充
+        for row_idx, record in enumerate(records):
+            # record 对应 SQL: tracker_id, vehicle_type, energy_type, entry_time, exit_time, average_speed, dominant_opmodes, settlement_status
+            tid, v_type, e_type, en_time, ex_time, speed, opmodes, status = record
+            
+            # 格式化时间戳为可读时间 (时:分:秒)
+            en_str = datetime.fromtimestamp(en_time).strftime('%H:%M:%S') if en_time else "--:--"
+            ex_str = datetime.fromtimestamp(ex_time).strftime('%H:%M:%S') if ex_time else "--:--"
+            
+            # 格式化车型与状态
+            display_type = type_zh_map.get(v_type, v_type) if v_type else "未知"
+            display_status = status_map.get(status, status) if status else "未知"
+
+            # 创建表格 Item (注意字段顺序需要与 main_window.py 中的表头定义一致)
+            items = [
+                QTableWidgetItem(f"#{tid}"),                 # 列 0: 目标 ID
+                QTableWidgetItem(display_type),              # 列 1: 车型
+                QTableWidgetItem(e_type if e_type else "-"), # 列 2: 能源类型
+                QTableWidgetItem(en_str),                    # 列 3: 入场时间
+                QTableWidgetItem(ex_str),                    # 列 4: 离场时间
+                QTableWidgetItem(f"{speed:.1f}" if speed else "0.0"), # 列 5: 均速
+                QTableWidgetItem(str(opmodes).strip('[]')),  # 列 6: 主导工况 (剥除JSON数组符号)
+                QTableWidgetItem(display_status)             # 列 7: 结算状态
+            ]
+            
+            # 3. 统一设置居中对齐，并塞入 Table
+            for col_idx, item in enumerate(items):
+                item.setTextAlignment(Qt.AlignCenter)
+                self.view.db_table.setItem(row_idx, col_idx, item)

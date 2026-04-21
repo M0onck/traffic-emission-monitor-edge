@@ -127,8 +127,14 @@ class DatabaseManager:
         """查询所有历史采集任务，用于填充下拉菜单"""
         query = "SELECT session_id, start_time, location_desc FROM Session_Task ORDER BY start_time DESC"
         try:
-            self.conn.execute(query)
-            return self.conn.fetchall()
+            # 显式创建局部游标
+            cursor = self.conn.cursor()
+            cursor.execute(query)
+            # 从游标中获取数据
+            res = cursor.fetchall()
+            # 及时关闭局部游标释放资源
+            cursor.close()
+            return res
         except sqlite3.Error as e:
             print(f"[Database Error] 查询 Session_Task 失败: {e}")
             return []
@@ -144,8 +150,14 @@ class DatabaseManager:
             LIMIT ?
         """
         try:
-            self.conn.execute(query, (session_id, limit))
-            return self.conn.fetchall()
+            # 显式创建局部游标
+            cursor = self.conn.cursor()
+            cursor.execute(query, (session_id, limit))
+            # 从游标中获取数据
+            res = cursor.fetchall()
+            # 及时关闭局部游标
+            cursor.close()
+            return res
         except sqlite3.Error as e:
             print(f"[Database Error] 查询 Veh_Sum 数据失败: {e}")
             return []
