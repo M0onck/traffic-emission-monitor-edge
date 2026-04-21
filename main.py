@@ -1,4 +1,4 @@
-# app_gui.py
+# main.py
 import os
 import sys
 import logging

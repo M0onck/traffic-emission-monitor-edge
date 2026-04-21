@@ -51,7 +51,7 @@ class TrafficMonitorEngine:
 
         # --- 业务模型 ---
         self.spatial = SpatialAnalyzer()
-        self.kinematics = KinematicsSmoother(max_window=15)
+        self.kinematics = KinematicsSmoother()
         self.box_filter = PhysicalVehicleFilter(self.cfg)
         self.vsp_calc = VSPCalculator(getattr(config, 'physics_params', {}))
         self.opmode_mapper = OpModeMapper(duration_threshold=1.0)

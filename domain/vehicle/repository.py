@@ -142,14 +142,14 @@ class VehicleRegistry:
             # ==========================================
             # 第一阶段：统计数据累加 (绝对保证与旧版逻辑 100% 一致)
             # ==========================================
-            # 无论是否静止，只要人在画面里，有效帧数必须 +1，防止被 check_exits 误杀
+            # 无论是否静止，只要车在画面里，有效帧数必须 +1，防止被 check_exits 误杀
             rec['valid_samples_count'] = rec.get('valid_samples_count', 0) + 1
             
             # --- 动态 dt 计算 ---
             # 因为此时 new_point 还没被 append，所以当前的最后一个点就是 trajectory[-1]
             if timestamp is not None and len(rec['trajectory']) >= 1:
                 dt = timestamp - rec['trajectory'][-1]['timestamp']
-                dt = max(0.001, min(dt, 0.5)) 
+                dt = max(0.001, min(dt, 0.5)) # 防止时间戳异常导致单帧位移爆炸
             else:
                 dt = 1.0 / getattr(self, 'target_fps', 30)
                 
@@ -161,27 +161,13 @@ class VehicleRegistry:
             rec['speed_sum'] = rec.get('speed_sum', 0.0) + speed
             rec['speed_count'] = rec.get('speed_count', 0) + 1
 
-            # ==========================================
-            # 第二阶段：智能静止点压缩 (仅针对轨迹数组本身进行瘦身)
-            # ==========================================
-            STATIONARY_THRESHOLD = 0.1 
-            
-            # 只有当列表里至少有2个点时，我们才能判定 "上一帧" 和 "上上帧"
-            if len(rec['trajectory']) >= 2:
-                prev_pt = rec['trajectory'][-1]
-                prev_prev_pt = rec['trajectory'][-2]
-                
-                # 如果 当前帧、上一帧、上上帧 全都是静止状态
-                if speed < STATIONARY_THRESHOLD and \
-                   prev_pt['speed'] < STATIONARY_THRESHOLD and \
-                   prev_prev_pt['speed'] < STATIONARY_THRESHOLD:
-                    
-                    # 触发压缩：持续覆盖更新最后一个静止点，拦截追加动作
-                    # 这样可以完美保留红灯开始的第一个点，以及红灯结束前的最后一个点
-                    rec['trajectory'][-1] = new_point
-                    return 
-
-            # 不满足压缩条件，正常追加
+            # 向平滑算法(S-G Filter)提供完整的原始运动学序列
+            new_point = {
+                'frame_id': frame_id, 'speed': speed, 'accel': accel,
+                'raw_x': raw_x, 'raw_y': raw_y,
+                'pixel_x': pixel_x, 'pixel_y': pixel_y,
+                'timestamp': timestamp
+            }
             rec['trajectory'].append(new_point)
 
     def accumulate_opmode(self, record, op_mode: int):
@@ -258,7 +244,6 @@ class VehicleRegistry:
                     # 1. 保留少量历史点，防止运动学 S-G 滤波器在切片衔接处产生跳变断层
                     keep_pts = 15  
                     self.records[tid]['trajectory'] = self.records[tid]['trajectory'][-keep_pts:]
-                    self.records[tid]['valid_samples_count'] = len(self.records[tid]['trajectory'])
                     
                     # 2. 更新下一段切片的起始时间点（无缝衔接）
                     self.records[tid]['first_time'] = record['last_seen_time']
