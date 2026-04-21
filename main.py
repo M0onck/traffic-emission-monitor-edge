@@ -12,12 +12,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-from app.bootstrap import sync_native_extensions
-# 确保底层 C++ 库编译并注入环境变量
-native_lib_path = sync_native_extensions()
 
-# 对于传感器驱动，这里可以动态添加到加载路径，方便后面的 ctypes 调用
-sys.path.append(native_lib_path)
 
 # 导入其他组件
 from PyQt5.QtWidgets import QApplication
@@ -31,6 +26,14 @@ from ui.controllers.main_controller import MainController
 def main():
     # 强制使用 spawn 模式，避免 Linux 下 GUI 与多进程的资源死锁
     mp.set_start_method('spawn', force=True)
+
+    from app.bootstrap import sync_native_extensions
+    # 确保底层 C++ 库编译并注入环境变量
+    native_lib_path = sync_native_extensions()
+    # 对于传感器驱动，这里可以动态添加到加载路径，方便后面的 ctypes 调用
+    sys.path.append(native_lib_path)
+
+    # 启动主窗口
     app = QApplication(sys.argv)
     
     # 1. 调用工厂：一次性组装好所有的底层组件、队列和守护进程

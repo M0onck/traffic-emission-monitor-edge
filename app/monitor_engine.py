@@ -39,6 +39,7 @@ class TrafficMonitorEngine:
         self.shm = None
         self.bbox_queue = mp.Queue(maxsize=3)
         self.stop_event = mp.Event()
+        self.daemon_ready_event = mp.Event()
 
         # --- 核心组件引用 (修复 KeyError: 'renderer') ---
         self.registry = components['registry']
@@ -99,7 +100,7 @@ class TrafficMonitorEngine:
             # 2. 启动感知子进程
             self.p_daemon = mp.Process(
                 target=perception_worker,
-                args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict)
+                args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict, self.daemon_ready_event)
             )
             self.p_daemon.daemon = True
             self.p_daemon.start()
@@ -128,19 +129,44 @@ class TrafficMonitorEngine:
             # 看门狗计数器
             empty_queue_streak = 0  
             MAX_STREAK = 30  # 30次超时(每次0.1s) = 约3秒钟无响应
+            init_hang_timeout = time.time() + 60.0 # 绝对超时上限，防止底层 C++ 连初始化都卡死（例如 I2C 硬件锁死）
 
             # 用于标记是否已进行坐标轴初始化
             video_initialized = False
 
             while self._is_running:
-                # 看门狗机制：检查存活状态与心跳超时
-                if not self.p_daemon.is_alive() or empty_queue_streak > MAX_STREAK:
-                    logger.error("[Watchdog] 警报！感知进程崩溃或已无响应.正在尝试重启...")
+                now = time.time()
+
+                # --- 感知子进程看门狗 ---
+                
+                # 状态 1：物理层进程彻底死亡（C++ 断言失败 / 段错误）
+                if not self.p_daemon.is_alive():
+                    exit_code = self.p_daemon.exitcode
+                    logger.error(f"[Watchdog] 感知进程已崩溃 (退出码: {exit_code}). 正在重启...")
                     self._restart_daemon(config_dict)
                     empty_queue_streak = 0
-                    last_hailo_data = [] # 清空过期的框
-                    time.sleep(1.0) # 给新进程一点初始化硬件的时间
+                    last_hailo_data = []
                     continue
+                
+                # 状态 2：进程活着，但处于初始化握手阶段
+                if not self.daemon_ready_event.is_set():
+                    if now > init_hang_timeout:
+                        logger.error("[Watchdog] 感知进程初始化耗时超过60秒，疑似底层驱动死锁，执行重启...")
+                        self._restart_daemon(config_dict)
+                        empty_queue_streak = 0
+                        last_hailo_data = []
+                    else:
+                        # 在握手完成前，不累积超时，耐心等待
+                        empty_queue_streak = 0 
+                
+                # 状态 3：握手已完成，进入严格心跳监视阶段
+                else:
+                    if empty_queue_streak > MAX_STREAK:
+                        logger.error("[Watchdog] 感知进程超过3秒无画面输出. 正在尝试重启...")
+                        self._restart_daemon(config_dict)
+                        empty_queue_streak = 0
+                        last_hailo_data = []
+                        continue
 
                 # --- A. 数据提取 ---
                 try:
@@ -214,7 +240,7 @@ class TrafficMonitorEngine:
 
     def _restart_daemon(self, config_dict):
         """看门狗：热重启感知进程"""
-        logger.warning("[Watchdog] 正在强制终结异常的感知进程...")
+        logger.warning("[Watchdog] 正在清理异常的感知进程...")
         if getattr(self, 'p_daemon', None):
             self.p_daemon.terminate()
             self.p_daemon.join(timeout=2)
@@ -228,6 +254,7 @@ class TrafficMonitorEngine:
 
         logger.info("[Watchdog] 重新初始化 GStreamer 与 PyHailoRT...")
         self.stop_event.clear() # 确保事件锁为放行状态
+        self.daemon_ready_event.clear() # 重置握手标志
         self.p_daemon = mp.Process(
             target=perception_worker,
             args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict)

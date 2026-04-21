@@ -48,7 +48,7 @@ def parse_hailo_ragged_list(raw_list, conf_threshold=0.45):
             
     return results
 
-def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
+def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict, ready_event):
     logger.info("-> [感知进程] 启动，准备挂载 GStreamer 与 PyHailoRT...")
 
     class ConfigWrapper:
@@ -88,9 +88,13 @@ def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
         # 3. 激活硬件推理管线并进入主循环
         with InferVStreams(network_group, input_vstreams_params, output_vstreams_params) as infer_pipeline:
             with network_group.activate(network_group_params):
+
+                # 通知主进程看门狗，子线程已初始化完毕
+                if ready_event:
+                    ready_event.set()
                 
                 while not stop_event.is_set():
-                    # 【硬件起搏器】：死等 GStreamer 的新画面
+                    # 等待 GStreamer 的新画面
                     if frame_ready_event.wait(timeout=0.2):
                         frame_ready_event.clear()
                         
@@ -101,7 +105,7 @@ def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict):
                         # A. 组织输入数据 (扩展 batch 维)
                         input_data = np.expand_dims(ai_frame, axis=0)
                         
-                        # B. 绝对安全的同步推理
+                        # B. 安全的同步推理
                         infer_results = infer_pipeline.infer({input_name: input_data})
                         
                         # C. 提取与压铸
