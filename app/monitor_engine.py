@@ -81,13 +81,27 @@ class TrafficMonitorEngine:
         self._is_running = True
         logger.info("[Engine] 启动多进程解耦引擎...")
 
+        # Session 的生成与挂载
+        start_timestamp = time.time()
+        self.current_session_id = getattr(self.cfg, 'CURRENT_SESSION_ID', None)
+        
+        # 兜底逻辑：如果是独立脱离 UI 测试，则自己创建
+        if not self.current_session_id:
+            self.current_session_id = f"Task_{time.strftime('%Y%m%d_%H%M%S')}"
+            self.db.create_session(self.current_session_id, start_timestamp, "MainRoad")
+            self.cfg.CURRENT_SESSION_ID = self.current_session_id # 同步回配置单例
+
         # 准备可序列化的配置字典，确保 UI 的动态修改能传给子进程
         config_dict = {
             'VIDEO_PATH': self.cfg.VIDEO_PATH,
             'HEF_PATH': self.cfg.HEF_PATH,
             'FRAME_WIDTH': self.cfg.FRAME_WIDTH,
             'FRAME_HEIGHT': self.cfg.FRAME_HEIGHT,
-            'USE_CAMERA': self.cfg.USE_CAMERA
+            'USE_CAMERA': self.cfg.USE_CAMERA,
+            'ENABLE_RECORD': getattr(self.cfg, 'ENABLE_RECORD', False),
+            'RECORD_SAVE_PATH': getattr(self.cfg, 'RECORD_SAVE_PATH', 'data/recorded_videos'),
+            'RECORD_SEGMENT_MIN': getattr(self.cfg, 'RECORD_SEGMENT_MIN', 5),
+            'CURRENT_SESSION_ID': self.current_session_id
         }
 
         try:
@@ -107,16 +121,6 @@ class TrafficMonitorEngine:
 
             # 3. 启动传感器
             if self.thermal_cam: self.thermal_cam.start()
-
-            # 4. 挂载 Session
-            start_timestamp = time.time()
-            # 读取前端控制器已创建并传入配置的 Session ID
-            self.current_session_id = getattr(self.cfg, 'CURRENT_SESSION_ID', None)
-            
-            # 兜底逻辑：如果是独立脱离 UI 测试，则自己创建
-            if not self.current_session_id:
-                self.current_session_id = f"Task_{time.strftime('%Y%m%d_%H%M%S')}"
-                self.db.create_session(self.current_session_id, start_timestamp, "MainRoad")
 
             last_hailo_data = []
             prev_env_time = 0
