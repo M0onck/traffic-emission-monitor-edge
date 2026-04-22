@@ -39,7 +39,6 @@ class GstPipelineManager:
 
         self.video_path = config.VIDEO_PATH
         self.hef_path = config.HEF_PATH
-        self.post_so_path = config.POST_SO_PATH
         self.out_w = config.FRAME_WIDTH
         self.out_h = config.FRAME_HEIGHT
         self.use_camera = config.USE_CAMERA

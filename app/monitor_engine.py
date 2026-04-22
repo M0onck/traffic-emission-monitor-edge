@@ -85,7 +85,6 @@ class TrafficMonitorEngine:
         config_dict = {
             'VIDEO_PATH': self.cfg.VIDEO_PATH,
             'HEF_PATH': self.cfg.HEF_PATH,
-            'POST_SO_PATH': self.cfg.POST_SO_PATH,
             'FRAME_WIDTH': self.cfg.FRAME_WIDTH,
             'FRAME_HEIGHT': self.cfg.FRAME_HEIGHT,
             'USE_CAMERA': self.cfg.USE_CAMERA
