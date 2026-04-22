@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  edge-monitor:
+    build: .
+    container_name: traffic-emission-monitor-edge
+    restart: always
+    # 使用 host 网络模式，降低网络协议栈开销，适合边缘设备
+    network_mode: "host" 
+    environment:
+      - TZ=Asia/Shanghai
+    # 赋予容器访问特定硬件设备节点的权限
+    devices:
+      - "/dev/hailo0:/dev/hailo0"      # Hailo-8 NPU
+      - "/dev/i2c-1:/dev/i2c-1"        # MLX90640 热成像仪
+      - "/dev/ttyUSB0:/dev/ttyUSB0"    # 气象站 (按实际修改)
+      - "/dev/video0:/dev/video0"      # IMX296 摄像头
+      - "/mnt/nvmessd:/mnt/nvmessd"    # M.2 固态硬盘
+    # 追加对应用户组权限，避免遇到 Permission Denied
+    group_add:
+      - video
+      - dialout
+      - i2c
+    volumes:
+      # 持久化数据库：确保容器更新或重启时，历史数据不丢失
+      - ./data:/app/data
+      # 挂载宿主机时间
+      - /etc/localtime:/etc/localtime:ro
+    logging:
+      # 防止日志无限增长撑爆树莓派 SD 卡
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"

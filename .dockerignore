@@ -1,0 +1,30 @@
+# 忽略宿主机现有的编译产物和缓存
+build/
+__pycache__/
+.git/
+.vscode/
+.idea/
+*.pyc
+venv/
+.env
+
+# 忽略任何可能散落的动态库
+*.so
+*.o
+*.a
+
+# 忽略运行时产生的媒体文件
+*.mp4
+*.avi
+*.mkv
+*.jpg
+*.png
+
+# 忽略日志文件
+*.log
+logs/
+
+# 忽略数据库与本地状态
+data/
+*.db
+*.sqlite3

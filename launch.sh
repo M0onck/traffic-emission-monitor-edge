@@ -1,10 +1,6 @@
 #!/bin/bash
 # launch.sh
 
-echo "检查构建工具依赖..."
-sudo apt-get update
-sudo apt-get install -y cmake build-essential libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
-
 # 1. 切换工作目录到项目根目录，确保相对路径资源加载正常
 cd /home/m0onck/traffic-emission-monitor-edge
 

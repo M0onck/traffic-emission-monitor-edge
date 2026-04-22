@@ -104,6 +104,7 @@ class TrafficMonitorEngine:
             )
             self.p_daemon.daemon = True
             self.p_daemon.start()
+            logger.info(f"感知进程已启动，PID: {self.p_daemon.pid}")
 
             # 3. 启动传感器
             if self.thermal_cam: self.thermal_cam.start()
@@ -129,7 +130,7 @@ class TrafficMonitorEngine:
             # 看门狗计数器
             empty_queue_streak = 0  
             MAX_STREAK = 30  # 30次超时(每次0.1s) = 约3秒钟无响应
-            init_hang_timeout = time.time() + 60.0 # 绝对超时上限，防止底层 C++ 连初始化都卡死（例如 I2C 硬件锁死）
+            self.init_hang_timeout = time.time() + 60.0 # 绝对超时上限，防止底层 C++ 连初始化都卡死（例如 I2C 硬件锁死）
 
             # 用于标记是否已进行坐标轴初始化
             video_initialized = False
@@ -150,11 +151,12 @@ class TrafficMonitorEngine:
                 
                 # 状态 2：进程活着，但处于初始化握手阶段
                 if not self.daemon_ready_event.is_set():
-                    if now > init_hang_timeout:
+                    if now > self.init_hang_timeout:
                         logger.error("[Watchdog] 感知进程初始化耗时超过60秒，疑似底层驱动死锁，执行重启...")
                         self._restart_daemon(config_dict)
                         empty_queue_streak = 0
                         last_hailo_data = []
+                        continue
                     else:
                         # 在握手完成前，不累积超时，耐心等待
                         empty_queue_streak = 0 
@@ -257,11 +259,12 @@ class TrafficMonitorEngine:
         self.daemon_ready_event.clear() # 重置握手标志
         self.p_daemon = mp.Process(
             target=perception_worker,
-            args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict)
+            args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict, self.daemon_ready_event)
         )
         self.p_daemon.daemon = True
         self.p_daemon.start()
-        logger.info("[Watchdog] 感知进程重启完成，已恢复监控.")
+        self.init_hang_timeout = time.time() + 60.0
+        logger.info(f"[Watchdog] 感知进程重启完成 (PID: {self.p_daemon.pid})，已恢复监控.")
 
     def _initialize_geometry(self, frame):
         """动态坐标系适配逻辑"""
