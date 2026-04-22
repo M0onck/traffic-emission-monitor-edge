@@ -21,7 +21,6 @@ services:
       - dialout
       - i2c
     volumes:
-      - ./data:/app/data                 # 持久化数据库：确保容器更新或重启时，历史数据不丢失
       - /etc/localtime:/etc/localtime:ro # 挂载宿主机时间
       - /mnt/nvmessd/data:/app/data      # M.2 固态硬盘映射
       - /media:/media:rw                 # 外部 U 盘预留挂载点
