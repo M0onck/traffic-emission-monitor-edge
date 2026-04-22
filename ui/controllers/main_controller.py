@@ -296,7 +296,7 @@ class MainController:
         else:
             # 确保全局摄像头实例化，并注入给标定画布
             if self.global_camera is None:
-                self.global_camera = GstPipelineManager(cfg)
+                self.global_camera = GstPipelineManager(config=cfg, force_no_record=True)
             self.view.canvas.load_camera(self.global_camera)
             # 如果尚未运行，按照正常流程进入第一步预设
             self.enter_app(self.wizard_flow[0])

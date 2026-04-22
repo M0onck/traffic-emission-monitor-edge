@@ -4,7 +4,7 @@ from pathlib import Path
 
 class StorageManager:
     # 容器内固定挂载点
-    DATA_ROOT = Path("/app/data")
+    DATA_ROOT = Path("data")
     USB_ROOT = Path("/media")
     
     # 子功能目录

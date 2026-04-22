@@ -30,10 +30,11 @@ def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
     )
 
 class GstPipelineManager:
-    def __init__(self, config: dict, shm_array=None, frame_ready_event=None):
+    def __init__(self, config: dict, shm_array=None, frame_ready_event=None, force_no_record=False):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
         Gst.init(None)
 
+        self.config = config
         self._shm_array = shm_array  # 直接持有共享内存引用
         self._frame_ready_event = frame_ready_event
 
@@ -42,6 +43,9 @@ class GstPipelineManager:
         self.out_w = config.FRAME_WIDTH
         self.out_h = config.FRAME_HEIGHT
         self.use_camera = config.USE_CAMERA
+        self.force_no_record = force_no_record
+
+        self.session_id = getattr(config, 'CURRENT_SESSION_ID', 'debug_session')
 
         # 构建底层功能齐全（去畸变、录像、AI、预览）的并行大管道
         self.pipeline_str = self._build_pipelines()
@@ -133,13 +137,22 @@ class GstPipelineManager:
 
         cam_w, cam_h = 1456, 1088
         out_w, out_h = self.out_w, self.out_h
+
+        # 如果强制不录像，或者全局开关没开，则不构建录像分支
+        enable_rec = getattr(self.config, 'ENABLE_RECORD', False)
+        if self.force_no_record:
+            enable_rec = False
         
         # --- 1. 录像分支 ---
         record_branch = ""
-        if is_camera and cfg.ENABLE_RECORD:
+        if is_camera and enable_rec:
             os.makedirs(cfg.RECORD_SAVE_PATH, exist_ok=True)
             segment_ns = int(cfg.RECORD_SEGMENT_MIN * 60 * 1000000000)
-            loc_pattern = os.path.join(cfg.RECORD_SAVE_PATH, "temp_rec_%05d.mp4")
+            
+            # 使用初始化时固化好的 session_id
+            filename = f"{self.session_id}_seq%05d_start{int(time.time())}.mp4"
+            loc_pattern = os.path.join(self.config.RECORD_SAVE_PATH, filename)
+
             record_branch = (
                 f" t. ! queue max-size-buffers=30 leaky=downstream ! "
                 f"videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 ! "
@@ -231,12 +244,3 @@ class GstPipelineManager:
             del self._last_buffer
             del self._last_map_info
 
-    def set_record_location(self, session_id):
-        """动态更新录制路径。"""
-        rec_sink = self.pipeline.get_by_name("rec_sink")
-        if rec_sink:
-            timestamp = int(time.time())
-            filename = f"{session_id}_seq%05d_start{timestamp}.mp4"
-            full_path = os.path.join(cfg.RECORD_SAVE_PATH, filename)
-            rec_sink.set_property("location", full_path)
-            logger.info(f"录制路径已成功动态更新为: {full_path}")
