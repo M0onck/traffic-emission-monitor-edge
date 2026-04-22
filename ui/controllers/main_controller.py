@@ -13,6 +13,7 @@ from datetime import datetime
 from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
+from infra.config.storage_manager import StorageManager
 from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
 
@@ -826,25 +827,36 @@ class MainController:
 
     def handle_browse_local_video(self):
         """处理点击浏览本地视频文件的逻辑"""
-        # 用户既然点击了浏览，就顺便自动帮其勾选上“本地视频”单选框
         self.view.radio_source_local.setChecked(True)
         
-        # 呼出系统文件选择对话框
+        # 1. 明确起始目录为 StorageManager 规范的测试目录
+        init_dir = str(StorageManager.TEST_DIR)
+        
+        # 呼出系统文件选择对话框 (建议传入 self.view 作为父组件居中显示)
         file_path, _ = QFileDialog.getOpenFileName(
-            None,
+            self.view,
             "选择本地测试视频文件",
-            "", # 默认路径（为空则基于上次记忆）
+            init_dir, # 限制起始目录
             "视频文件 (*.mp4 *.avi *.mkv *.mov);;所有文件 (*.*)"
         )
         
         if file_path:
-            # 1. 更新 UI 显示
+            # 2. 安全沙盒拦截：不允许选择 data/test_videos 以外的文件
+            if not file_path.startswith(str(StorageManager.DATA_ROOT)):
+                dialog = EdgeMessageBox(
+                    self.view, 
+                    "⚠️ 路径非法", 
+                    "为保障容器隔离安全，只能选择应用数据目录下的视频文件。", 
+                    info_text=f"允许的根目录: {StorageManager.DATA_ROOT}",
+                    is_warning=True
+                )
+                dialog.exec_()
+                return
+
+            # 3. 更新 UI 显示与配置
             self.view.lbl_local_path.setText(file_path)
-            
-            # 2. 调用 config/loader.py 中的方法更新并落盘
             cfg.update_source_settings(file_path, use_camera=False)
-            self._reload_global_camera() # 销毁旧实例
-            
+            self._reload_global_camera() 
             print(f"前端控制器：已更新视频输入路径为 {file_path}，并保存至配置文件")
 
     def handle_detect_camera(self):
@@ -920,8 +932,27 @@ class MainController:
 
     def handle_browse_record_path(self):
         """选择录制视频保存目录"""
-        dir_path = QFileDialog.getExistingDirectory(None, "选择视频保存目录", "")
+        # 起始目录指定为录制文件夹
+        init_dir = str(StorageManager.REC_DIR)
+        
+        dir_path = QFileDialog.getExistingDirectory(self.view, "选择视频保存目录", init_dir)
+        
         if dir_path:
+            # 安全沙盒拦截：仅允许存在 data 文件夹或外部挂载的 U盘 文件夹中
+            is_valid_internal = dir_path.startswith(str(StorageManager.DATA_ROOT))
+            is_valid_usb = dir_path.startswith(str(StorageManager.USB_ROOT))
+            
+            if not (is_valid_internal or is_valid_usb):
+                dialog = EdgeMessageBox(
+                    self.view, 
+                    "⚠️ 存储位置非法", 
+                    "边缘计算节点的录制视频必须保存在指定的数据盘或外部 U 盘中。", 
+                    info_text=f"请选择 {StorageManager.DATA_ROOT} 或 {StorageManager.USB_ROOT} 下的目录。",
+                    is_warning=True
+                )
+                dialog.exec_()
+                return
+
             self.view.lbl_record_save_path.setText(dir_path)
             self.save_record_settings()
 

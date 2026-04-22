@@ -445,7 +445,7 @@ class MainWindow(QMainWindow):
         self.btn_browse_record_path.setStyleSheet(self.style_hollow_white)
         self.btn_browse_record_path.setFixedHeight(40)
         
-        self.lbl_record_save_path = QLabel("/mnt/nvmessd/recorded_videos")
+        self.lbl_record_save_path = QLabel("data/recorded_videos")
         self.lbl_record_save_path.setFont(QFont("Arial", 11))
         self.lbl_record_save_path.setStyleSheet("color: #aaaaaa; border: none;")
         
