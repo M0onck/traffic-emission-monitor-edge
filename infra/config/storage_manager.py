@@ -47,3 +47,20 @@ class StorageManager:
         dest = Path(usb_target_path) / video_name
         shutil.copy2(src, dest)
         return dest
+
+    @classmethod
+    def get_session_videos(cls) -> dict:
+        """扫描录像目录，按 session_id 归类视频文件"""
+        if not cls.REC_DIR.exists():
+            return {}
+            
+        session_map = {}
+        for file in cls.REC_DIR.iterdir():
+            if file.suffix.lower() == '.mp4' and '_seq' in file.name:
+                # 提取 session_id (前缀部分)
+                session_id = file.name.split('_seq')[0]
+                if session_id not in session_map:
+                    session_map[session_id] = []
+                session_map[session_id].append(file.name)
+                
+        return session_map

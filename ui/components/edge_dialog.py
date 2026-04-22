@@ -1,5 +1,5 @@
 # 文件路径: ui/components/edge_dialog.py
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QPushButton
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QPushButton, QCheckBox, QScrollArea, QWidget
 from PyQt5.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve
 from PyQt5.QtGui import QFont
 
@@ -103,3 +103,67 @@ class EdgeMessageBox(EdgeAnimatedDialog):
         btn_layout.addSpacing(20)
         btn_layout.addWidget(btn_confirm)
         layout.addLayout(btn_layout)
+
+class EdgeExportDialog(EdgeAnimatedDialog):
+    """用于选择采集任务并导出视频的多选弹窗"""
+    def __init__(self, parent, session_data_map):
+        # 动态计算高度，最多不超过 350
+        height = min(350, 180 + len(session_data_map) * 40)
+        super().__init__(parent, target_height=height)
+        
+        self.selected_sessions = []
+        
+        layout = QVBoxLayout(self.panel)
+        layout.setContentsMargins(40, 20, 40, 20)
+        
+        title = QLabel("选择需要导出的采集任务")
+        title.setFont(QFont("Arial", 16, QFont.Bold))
+        title.setStyleSheet("color: #ffffff; border: none;")
+        layout.addWidget(title)
+        layout.addSpacing(10)
+        
+        # 使用滚动区域容纳可能很多的任务
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+        
+        content = QWidget()
+        content.setStyleSheet("background-color: transparent;")
+        self.vbox = QVBoxLayout(content)
+        self.vbox.setSpacing(10)
+        
+        self.checkboxes = {}
+        for session_id, count in session_data_map.items():
+            # 显示任务ID和包含的视频切片数量
+            cb = QCheckBox(f"任务: {session_id} (含 {count} 个视频)")
+            cb.setFont(QFont("Arial", 13))
+            cb.setStyleSheet("QCheckBox { color: #dddddd; } QCheckBox::indicator { width: 20px; height: 20px; }")
+            self.checkboxes[session_id] = cb
+            self.vbox.addWidget(cb)
+            
+        self.vbox.addStretch()
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        
+        # 底部按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setFixedSize(100, 40)
+        btn_cancel.setStyleSheet("background-color: transparent; border: 2px solid #777; color: #fff; border-radius: 5px;")
+        btn_cancel.clicked.connect(lambda: self.close_with_anim(QDialog.Rejected))
+        
+        btn_confirm = QPushButton("开始导出")
+        btn_confirm.setFixedSize(100, 40)
+        btn_confirm.setStyleSheet("background-color: transparent; border: 2px solid #00e676; color: #00e676; border-radius: 5px;")
+        btn_confirm.clicked.connect(self.accept_selection)
+        
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addSpacing(15)
+        btn_layout.addWidget(btn_confirm)
+        layout.addLayout(btn_layout)
+
+    def accept_selection(self):
+        self.selected_sessions = [sid for sid, cb in self.checkboxes.items() if cb.isChecked()]
+        self.close_with_anim(QDialog.Accepted)

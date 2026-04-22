@@ -434,30 +434,22 @@ class MainWindow(QMainWindow):
         segment_layout.addStretch()
         rs_layout.addLayout(segment_layout)
 
-        # 录制保存路径选择
-        path_layout = QHBoxLayout()
-        lbl_path = QLabel("保存路径:")
-        lbl_path.setFont(QFont("Arial", 14))
-        lbl_path.setStyleSheet("color: #cccccc; border: none;")
+        # 录制文件导出选择
+        export_layout = QHBoxLayout()
+        lbl_export = QLabel("数据导出:")
+        lbl_export.setFont(QFont("Arial", 14))
+        lbl_export.setStyleSheet("color: #cccccc; border: none;")
         
-        self.btn_browse_record_path = QPushButton(" 选择目录 ")
-        self.btn_browse_record_path.setFont(QFont("Arial", 12))
-        self.btn_browse_record_path.setStyleSheet(self.style_hollow_white)
-        self.btn_browse_record_path.setFixedHeight(40)
+        self.btn_export_videos = QPushButton(" 导出视频至外部 U 盘 ")
+        self.btn_export_videos.setFont(QFont("Arial", 12, QFont.Bold))
+        self.btn_export_videos.setStyleSheet(self.style_hollow_green) # 使用绿色镂空引导操作
+        self.btn_export_videos.setFixedHeight(40)
         
-        self.lbl_record_save_path = QLabel("data/recorded_videos")
-        self.lbl_record_save_path.setFont(QFont("Arial", 11))
-        self.lbl_record_save_path.setStyleSheet("color: #aaaaaa; border: none;")
-        
-        path_layout.addWidget(lbl_path)
-        path_layout.addSpacing(20)
-        path_layout.addWidget(self.btn_browse_record_path)
-        path_layout.addSpacing(15)
-        path_layout.addWidget(self.lbl_record_save_path)
-        path_layout.addStretch()
-        rs_layout.addLayout(path_layout)
-        
-        rs_layout.addStretch()
+        export_layout.addWidget(lbl_export)
+        export_layout.addSpacing(20)
+        export_layout.addWidget(self.btn_export_videos)
+        export_layout.addStretch()
+        rs_layout.addLayout(export_layout)
         # 将新页签添加到选项卡中
         self.settings_tabs.addTab(self.tab_record_settings, "录制选项")
 

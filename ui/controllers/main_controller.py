@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QTableWidgetItem, QVBoxLayout,
                              QFileDialog)
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from datetime import datetime
-from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog
+from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog, EdgeExportDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
 from infra.config.storage_manager import StorageManager
@@ -228,7 +228,6 @@ class MainController:
         
         segment_map = {5: 0, 10: 1, 15: 2, 30: 3}
         self.view.combo_segment_time.setCurrentIndex(segment_map.get(self.cfg.RECORD_SEGMENT_MIN, 1))
-        self.view.lbl_record_save_path.setText(self.cfg.RECORD_SAVE_PATH)
 
         # 每分钟检查 SSD 剩余空间并清理旧视频
         self.disk_monitor_timer = QTimer(self.view)
@@ -269,7 +268,7 @@ class MainController:
         self.view.radio_mode_inference.toggled.connect(self.handle_run_mode_changed)
         self.view.radio_mode_collection.toggled.connect(self.handle_run_mode_changed)
         self.view.btn_record_switch.toggled.connect(self.handle_record_switch_toggled)
-        self.view.btn_browse_record_path.clicked.connect(self.handle_browse_record_path)
+        self.view.btn_export_videos.clicked.connect(self.handle_export_videos)
         self.view.combo_segment_time.currentIndexChanged.connect(self.save_record_settings)
 
         # 退出程序按钮的绑定
@@ -930,38 +929,72 @@ class MainController:
             self.view.btn_record_switch.setStyleSheet(self.view.style_hollow_white)
         self.save_record_settings() # 状态变化即保存
 
-    def handle_browse_record_path(self):
-        """选择录制视频保存目录"""
-        # 起始目录指定为录制文件夹
-        init_dir = str(StorageManager.REC_DIR)
-        
-        dir_path = QFileDialog.getExistingDirectory(self.view, "选择视频保存目录", init_dir)
-        
-        if dir_path:
-            # 安全沙盒拦截：仅允许存在 data 文件夹或外部挂载的 U盘 文件夹中
-            is_valid_internal = dir_path.startswith(str(StorageManager.DATA_ROOT))
-            is_valid_usb = dir_path.startswith(str(StorageManager.USB_ROOT))
+    def handle_export_videos(self):
+        """处理将视频导出至外部 U 盘的请求"""
+        # 1. 硬件检测：检查是否有挂载的 U 盘
+        usbs = StorageManager.get_available_usbs()
+        if not usbs:
+            dialog = EdgeMessageBox(
+                self.view, 
+                "未检测到外部存储", 
+                "请将 U 盘插入树莓派的 USB 接口。", 
+                info_text="系统仅支持导出至挂载于 /media 目录下的设备。",
+                is_warning=True
+            )
+            dialog.exec_()
+            return
             
-            if not (is_valid_internal or is_valid_usb):
-                dialog = EdgeMessageBox(
-                    self.view, 
-                    "⚠️ 存储位置非法", 
-                    "边缘计算节点的录制视频必须保存在指定的数据盘或外部 U 盘中。", 
-                    info_text=f"请选择 {StorageManager.DATA_ROOT} 或 {StorageManager.USB_ROOT} 下的目录。",
-                    is_warning=True
-                )
-                dialog.exec_()
-                return
+        target_usb_path = usbs[0] # 默认使用检测到的第一个 U 盘
 
-            self.view.lbl_record_save_path.setText(dir_path)
-            self.save_record_settings()
+        # 2. 数据检测：获取所有含有录像的任务
+        session_videos = StorageManager.get_session_videos()
+        if not session_videos:
+            dialog = EdgeMessageBox(self.view, "无视频数据", "当前本地存储中没有可导出的视频文件。")
+            dialog.exec_()
+            return
+
+        # 3. 构建给弹窗用的精简数据映射: {session_id: 视频数量}
+        session_data_map = {sid: len(files) for sid, files in session_videos.items()}
+
+        # 4. 呼出多选弹窗
+        export_dialog = EdgeExportDialog(self.view, session_data_map)
+        if export_dialog.exec_() == EdgeMessageBox.Accepted:
+            selected_sids = export_dialog.selected_sessions
+            if not selected_sids:
+                return # 啥都没选
+                
+            self.view.btn_export_videos.setText(" 正在导出... ")
+            self.view.btn_export_videos.setEnabled(False)
+            self.view.btn_export_videos.repaint() # 强制立刻刷新 UI
+            
+            # 5. 执行文件拷贝
+            # 注意：实际生产中大量大文件拷贝建议放入 QThread 防止 UI 假死。
+            # 这里为了保持逻辑紧凑，先在主线程执行同步拷贝
+            try:
+                exported_count = 0
+                for sid in selected_sids:
+                    for video_name in session_videos[sid]:
+                        StorageManager.export_to_usb(video_name, target_usb_path)
+                        exported_count += 1
+                        
+                EdgeMessageBox(
+                    self.view, 
+                    "导出成功", 
+                    f"已成功将 {exported_count} 个视频文件导出至 U 盘。",
+                    info_text=f"目标路径: {target_usb_path.name}"
+                ).exec_()
+            except Exception as e:
+                EdgeMessageBox(self.view, "导出失败", f"文件拷贝过程中发生错误: {e}", is_warning=True).exec_()
+            finally:
+                self.view.btn_export_videos.setText(" 导出视频至外部 U 盘 ")
+                self.view.btn_export_videos.setEnabled(True)
 
     def save_record_settings(self):
         """将当前的录制 UI 状态同步到配置文件"""
         enable = self.view.btn_record_switch.isChecked()
         seg_str = self.view.combo_segment_time.currentText()
         seg_min = int(seg_str.split()[0]) # 提取出纯数字 5, 10, 15...
-        path = self.view.lbl_record_save_path.text()
+        path = str(StorageManager.REC_DIR)
         cfg.update_record_settings(enable, seg_min, path)
 
     def check_and_cleanup_disk_space(self):
