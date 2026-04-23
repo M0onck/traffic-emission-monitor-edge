@@ -2,9 +2,11 @@
 build/
 __pycache__/
 .git/
+.gitignore/
 .vscode/
 .idea/
 *.pyc
+*.pyo
 venv/
 .env
 

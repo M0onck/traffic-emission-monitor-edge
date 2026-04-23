@@ -9,5 +9,4 @@ onnxruntime
 
 # 系统与应用层工具
 psutil
-PyQt5
 ntplib

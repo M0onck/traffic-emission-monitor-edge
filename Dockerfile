@@ -1,5 +1,5 @@
 # 树莓派 5 (ARM64) 基础镜像
-FROM ubuntu:24.04
+FROM debian:bookworm
 
 # 防止 apt 安装时卡在交互提示
 ENV DEBIAN_FRONTEND=noninteractive
@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # 设定工作目录
 WORKDIR /app
 
-# 安装系统级依赖 (编译工具链、GStreamer 框架、I2C/V4L2 硬件工具)
+# 安装系统级依赖 (编译工具链、GStreamer 框架、I2C/V4L2 硬件工具、PyQt5/X11 组件)
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -15,6 +15,11 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
+    libxcb-cursor0 \
+    libxkbcommon-x11-0 \
+    libxcb-xinerama0 \
+    libx11-xcb1 \
+    libgl1 \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-plugins-good \
@@ -28,11 +33,22 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# 导入 Hailo 官方 Apt 仓库并安装容器内依赖
+# 从 Raspberry Pi 官方源安全提取 Hailo 运行库
 # 这会提供 libhailort.so 以及 python3-hailort (即代码中 import hailo_platform 的来源)
-RUN wget -O - https://hailo.ai/apt/hailo.gpg | apt-key add - && \
-    echo "deb [arch=arm64] https://hailo.ai/apt/ stable main" | tee /etc/apt/sources.list.d/hailo.list && \
-    apt-get update && apt-get install -y hailort python3-hailort \
+RUN wget -qO- https://archive.raspberrypi.com/debian/raspberrypi.gpg.key | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg && \
+    echo "deb [arch=arm64 signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] http://archive.raspberrypi.com/debian bookworm main" > /etc/apt/sources.list.d/raspberrypi.list && \
+    echo "Package: *" > /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "Pin: origin archive.raspberrypi.com" >> /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "Pin-Priority: 1" >> /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "" >> /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "Package: hailort hailort-* libhailort* hailo* python3-hailort" >> /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "Pin: origin archive.raspberrypi.com" >> /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "Pin-Priority: 1001" >> /etc/apt/preferences.d/raspberrypi-pin && \
+    apt-get update && apt-get install -y hailort python3-hailort
+
+# 安装基础依赖和系统级 PyQt5
+RUN apt-get update && apt-get install -y \
+    python3-pyqt5 \
     && rm -rf /var/lib/apt/lists/*
 
 # 建立 Python 虚拟环境 (遵循 PEP 668 规范)
