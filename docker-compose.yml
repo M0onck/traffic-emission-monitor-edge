@@ -16,6 +16,7 @@ services:
       - dialout
       - i2c
     volumes:
+      - .:/app                                        # [DEBUG] 将宿主机当前目录挂载到容器 /app
       - /run/udev:/run/udev:ro                        # 允许容器内 libcamera 枚举宿主机设备节点
       - /etc/localtime:/etc/localtime:ro              # 挂载宿主机时间
       - /tmp/.X11-unix:/tmp/.X11-unix:rw              # GUI 界面套接字挂载

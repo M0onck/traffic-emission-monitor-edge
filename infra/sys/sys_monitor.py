@@ -24,10 +24,10 @@ class SysMonitor:
 
     @staticmethod
     def get_ssd_storage() -> str:
-        """扩展存储 (获取挂载点 /mnt/nvmessd 的磁盘使用率，即 SSD)"""
-        mount_point = '/mnt/nvmessd'
+        """扩展存储 (获取挂载点的磁盘使用率，即 SSD)"""
+        mount_point = '/app/data'
         try:
-            if os.path.exists(mount_point) and os.path.ismount(mount_point):
+            if os.path.exists(mount_point):
                 usage = psutil.disk_usage(mount_point)
                 used_gb = usage.used / (1024 ** 3)
                 total_gb = usage.total / (1024 ** 3)
