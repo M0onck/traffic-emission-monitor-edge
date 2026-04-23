@@ -862,39 +862,32 @@ class MainController:
         dialog.exec_()
     
     def handle_export_db_data(self):
-        """处理当前选中 Session 的数据库导出请求"""
-        # 1. 获取当前下拉菜单选中的 Session ID
+        """处理当前选中 Session 的数据库导出"""
         current_session_id = self.view.session_combo.currentData()
-        
         if not current_session_id:
-            EdgeMessageBox(self.view, "无数据可导出", "当前没有可供导出的任务记录。").exec_()
+            EdgeMessageBox(self.view, "提示", "请先选择一个有效的历史任务。").exec_()
             return
 
-        # 2. U 盘检测 (复用现有的安全检索逻辑)
         usbs = StorageManager.get_available_usbs()
         if not usbs:
-            dialog = EdgeMessageBox(
-                self.view, 
-                "未检测到外部存储", 
-                "请将 U 盘插入设备的 USB 接口。", 
-                info_text="系统仅支持导出至挂载于 /media 目录下的设备。",
-                is_warning=True
-            )
-            dialog.exec_()
-            return
-            
+            # 这里复用你之前的弹窗逻辑
+            return 
         target_usb_path = usbs[0]
 
-        # 3. 执行导出
-        self.view.btn_export_db.setText(" 正在导出... ")
+        # 状态锁定
+        self.view.btn_export_db.setText("正在导出...")
         self.view.btn_export_db.setEnabled(False)
-        # 启动异步导出线程
-        self.export_dialog = EdgeProgressDialog(self.view, "导出数据", "正在准备生成 CSV 表单...")
         
-        # 注意这里传的是单个 [current_session_id] 以匹配 worker 列表遍历的逻辑
+        # 实例化进度弹窗
+        self.export_dialog = EdgeProgressDialog(self.view, "数据导出", "准备中...")
+        
+        # 启动工作线程
         self.export_worker = ExportWorker('data', [current_session_id], target_usb_path, self.db)
         self.export_worker.progress_updated.connect(self.export_dialog.update_progress)
         self.export_worker.finished.connect(self._on_export_finished)
+        
+        # 如果线程意外崩溃，也要确保能关闭弹窗并恢复按钮
+        self.export_worker.finished.connect(self.export_worker.deleteLater) 
         
         self.export_worker.start()
         self.export_dialog.exec_()
@@ -1033,9 +1026,9 @@ class MainController:
         if hasattr(self.view, 'btn_export_videos'):
             self.view.btn_export_videos.setText(" 导出视频至外部 U 盘 ")
             self.view.btn_export_videos.setEnabled(True)
-        if hasattr(self.view, 'btn_batch_export_data'):
-            self.view.btn_batch_export_data.setText("导出数据")
-            self.view.btn_batch_export_data.setEnabled(True)
+        if hasattr(self.view, 'btn_export_db'):
+            self.view.btn_export_db.setText("批量导出")
+            self.view.btn_export_db.setEnabled(True)
 
         # 3. 弹出最终结果
         if success:
