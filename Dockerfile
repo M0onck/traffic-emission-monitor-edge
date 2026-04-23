@@ -55,9 +55,11 @@ RUN apt-get update && apt-get install -y \
 RUN python3 -m venv --system-site-packages /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 安装 Python 依赖
+# 安装 Python 依赖，需要额外删除其他库附带的其他版本 opencv-python
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall -y opencv-python opencv-contrib-python \
+    && pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless==4.9.0.80
 
 # 拷贝项目全量源码
 COPY . .

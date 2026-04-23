@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   edge-monitor:
@@ -20,6 +19,7 @@ services:
       - /run/udev:/run/udev:ro                        # 允许容器内 libcamera 枚举宿主机设备节点
       - /etc/localtime:/etc/localtime:ro              # 挂载宿主机时间
       - /tmp/.X11-unix:/tmp/.X11-unix:rw              # GUI 界面套接字挂载
+      - ~/.Xauthority:/root/.Xauthority:rw            # 把宿主机的凭证文件挂载给容器的 root 用户
       - /mnt/nvmessd/data:/app/data                   # M.2 固态硬盘映射，用于业务数据挂载
       - /media:/media:rshared                         # 外部 U 盘预留动态挂载点
     # 赋予容器访问特定硬件设备节点的权限

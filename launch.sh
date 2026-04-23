@@ -8,9 +8,9 @@ cd /home/m0onck/traffic-emission-monitor-edge
 source venv/bin/activate
 
 # 3. 配置环境变量
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
-export WAYLAND_DISPLAY=wayland-0
-export QT_QPA_PLATFORM=wayland
+# export XDG_RUNTIME_DIR=/run/user/$(id -u)
+# export WAYLAND_DISPLAY=wayland-0
+# export QT_QPA_PLATFORM=wayland
 
 # 强制开启底层 TRACE 级别日志，并输出到文件
 export HAILORT_LOGGER_LEVEL=TRACE
