@@ -974,14 +974,15 @@ class MainController:
                 exported_count = 0
                 for sid in selected_sids:
                     for video_name in session_videos[sid]:
-                        StorageManager.export_to_usb(video_name, target_usb_path)
+                        # 在这里追加 session_id=sid 参数
+                        StorageManager.export_to_usb(video_name, target_usb_path, session_id=sid)
                         exported_count += 1
                         
                 EdgeMessageBox(
                     self.view, 
                     "导出成功", 
                     f"已成功将 {exported_count} 个视频文件导出至 U 盘。",
-                    info_text=f"目标路径: {target_usb_path.name}"
+                    info_text=f"目标路径: {target_usb_path.name}/{selected_sids[0]}_recorded_videos 等"
                 ).exec_()
             except Exception as e:
                 EdgeMessageBox(self.view, "导出失败", f"文件拷贝过程中发生错误: {e}", is_warning=True).exec_()

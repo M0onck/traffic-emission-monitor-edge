@@ -23,7 +23,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro # 挂载宿主机时间
       - /mnt/nvmessd/data:/app/data      # M.2 固态硬盘映射
-      - /media:/media:rw                 # 外部 U 盘预留挂载点
+      - /media:/media:rshared            # 外部 U 盘预留动态挂载点
     logging:
       # 防止日志无限增长撑爆树莓派 SD 卡
       driver: "json-file"
