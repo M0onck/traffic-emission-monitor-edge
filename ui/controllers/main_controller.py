@@ -7,7 +7,7 @@ from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QTableWidgetItem, QVBoxLayout, 
                              QHBoxLayout, QLabel, 
                              QPushButton, QRadioButton,
-                             QFileDialog, QDialog)
+                             QDialog)
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from datetime import datetime
 from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog, EdgeExportDialog, EdgeProgressDialog
@@ -210,6 +210,7 @@ class MainController:
             self.view.page_monitor            # 步骤 4: 实时监控屏
         ]
         self.bind_signals()
+        self._populate_local_videos()
 
         # ==========================================
         # 4. 后台守护任务 (Background Timers)
@@ -410,7 +411,7 @@ class MainController:
 
         # 设置界面相关按钮的绑定
         self.view.btn_settings.clicked.connect(self.route_settings_click)
-        self.view.btn_browse_local.clicked.connect(self.handle_browse_local_video)
+        self.view.combo_local_video.currentIndexChanged.connect(self.handle_local_video_changed)
         self.view.btn_detect_camera.clicked.connect(self.handle_detect_camera)
         self.view.radio_source_local.toggled.connect(self.handle_source_type_changed)
         self.view.radio_source_camera.toggled.connect(self.handle_source_type_changed)
@@ -1040,40 +1041,6 @@ class MainController:
             self.global_camera = GstPipelineManager(cfg)
             self.view.canvas.load_camera(self.global_camera)
 
-    def handle_browse_local_video(self):
-        """处理点击浏览本地视频文件的逻辑"""
-        self.view.radio_source_local.setChecked(True)
-        
-        # 1. 明确起始目录为 StorageManager 规范的测试目录
-        init_dir = str(StorageManager.TEST_DIR)
-        
-        # 呼出系统文件选择对话框 (建议传入 self.view 作为父组件居中显示)
-        file_path, _ = QFileDialog.getOpenFileName(
-            self.view,
-            "选择本地测试视频文件",
-            init_dir, # 限制起始目录
-            "视频文件 (*.mp4 *.avi *.mkv *.mov);;所有文件 (*.*)"
-        )
-        
-        if file_path:
-            # 2. 安全沙盒拦截：不允许选择 data/test_videos 以外的文件
-            if not file_path.startswith(str(StorageManager.DATA_ROOT)):
-                dialog = EdgeMessageBox(
-                    self.view, 
-                    "⚠️ 路径非法", 
-                    "为保障容器隔离安全，只能选择应用数据目录下的视频文件。", 
-                    info_text=f"允许的根目录: {StorageManager.DATA_ROOT}",
-                    is_warning=True
-                )
-                dialog.exec_()
-                return
-
-            # 3. 更新 UI 显示与配置
-            self.view.lbl_local_path.setText(file_path)
-            cfg.update_source_settings(file_path, use_camera=False)
-            self._reload_global_camera() 
-            print(f"前端控制器：已更新视频输入路径为 {file_path}，并保存至配置文件")
-
     def handle_detect_camera(self):
         """搜索物理设备并生成 GStreamer 管道"""
         self.view.radio_source_camera.setChecked(True)
@@ -1114,9 +1081,10 @@ class MainController:
 
         if self.view.radio_source_local.isChecked():
             # 切换到本地模式
-            current_path = self.view.lbl_local_path.text()
-            cfg.update_source_settings(current_path, use_camera=False)
-            self._reload_global_camera()
+            current_path = self.view.combo_local_video.currentData()
+            if current_path:
+                cfg.update_source_settings(current_path, use_camera=False)
+                self._reload_global_camera()
         
         elif self.view.radio_source_camera.isChecked():
             # 只要当前提示标签显示为“已接入”，就自动切换配置
@@ -1164,6 +1132,41 @@ class MainController:
             EdgeMessageBox(self.view, title, msg).exec_()
         else:
             EdgeMessageBox(self.view, title, msg, is_warning=True).exec_()
+
+    def _populate_local_videos(self):
+        """扫描测试目录并填充本地视频下拉菜单"""
+        self.view.combo_local_video.blockSignals(True)
+        self.view.combo_local_video.clear()
+        
+        # 调用 StorageManager 获取 data/test_videos 下的视频
+        videos = StorageManager.list_test_videos()
+        
+        if not videos:
+            self.view.combo_local_video.addItem("未找到测试视频", None)
+            self.view.combo_local_video.setEnabled(False)
+        else:
+            self.view.combo_local_video.setEnabled(True)
+            for vid in videos:
+                # 界面显示文件名，内部 Data 绑定绝对/相对路径
+                full_path = str(StorageManager.TEST_DIR / vid)
+                self.view.combo_local_video.addItem(vid, full_path)
+                
+            # 尝试恢复配置文件中记录的视频选中状态
+            idx = self.view.combo_local_video.findData(cfg.LOCAL_VIDEO_PATH)
+            if idx >= 0:
+                self.view.combo_local_video.setCurrentIndex(idx)
+                
+        self.view.combo_local_video.blockSignals(False)
+
+    def handle_local_video_changed(self):
+        """下拉菜单切换视频文件时触发"""
+        self.view.radio_source_local.setChecked(True)
+        file_path = self.view.combo_local_video.currentData()
+        
+        if file_path:
+            cfg.update_source_settings(file_path, use_camera=False)
+            self._reload_global_camera() 
+            print(f"前端控制器：已更新视频输入路径为 {file_path}")
 
     def handle_export_videos(self):
         """处理将视频导出至外部 U 盘的请求"""
