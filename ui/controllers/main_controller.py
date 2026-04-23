@@ -3,19 +3,72 @@ import json
 import cv2
 import numpy as np
 import infra.config.loader as cfg
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QTableWidgetItem, QVBoxLayout, 
                              QHBoxLayout, QLabel, 
                              QPushButton, QRadioButton,
-                             QFileDialog)
+                             QFileDialog, QDialog)
 from PyQt5.QtGui import QImage, QPixmap, QFont
 from datetime import datetime
-from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog, EdgeExportDialog
+from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog, EdgeExportDialog, EdgeProgressDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
 from infra.store.storage_manager import StorageManager
 from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
+
+class ExportWorker(QThread):
+    """后台异步导出线程，防止大文件拷贝导致主界面假死"""
+    # 定义通讯信号：进度值, 提示文本
+    progress_updated = pyqtSignal(int, str)
+    # 定义结束信号：是否成功, 弹窗标题, 弹窗内容
+    finished = pyqtSignal(bool, str, str) 
+
+    def __init__(self, task_type, sids, target_usb, payload):
+        super().__init__()
+        self.task_type = task_type
+        self.sids = sids
+        self.target_usb = target_usb
+        # 视频模式为 session_videos 字典，数据模式为 db_manager 实例
+        self.payload = payload 
+
+    def run(self):
+        try:
+            total = 0
+            if self.task_type == 'video':
+                total = sum(len(self.payload[sid]) for sid in self.sids)
+            elif self.task_type == 'data':
+                total = len(self.sids)
+
+            if total == 0:
+                self.finished.emit(True, "导出完成", "没有找到需要导出的文件。")
+                return
+
+            count = 0
+            if self.task_type == 'video':
+                for sid in self.sids:
+                    for video in self.payload[sid]:
+                        progress = int((count / total) * 100)
+                        self.progress_updated.emit(progress, f"正在拷贝视频:\n{video}")
+                        # 执行耗时的 IO 拷贝
+                        StorageManager.export_to_usb(video, self.target_usb, session_id=sid)
+                        count += 1
+                        
+            elif self.task_type == 'data':
+                db = self.payload
+                for sid in self.sids:
+                    progress = int((count / total) * 100)
+                    self.progress_updated.emit(progress, f"正在生成数据报表:\n任务 {sid}")
+                    StorageManager.export_data_to_usb(sid, self.target_usb, db)
+                    count += 1
+
+            self.progress_updated.emit(100, "文件写入完毕，正在刷新设备缓冲区...")
+            self.msleep(500) # 故意停顿半秒，让用户看清 100% 的进度条
+            
+            self.finished.emit(True, "导出成功", f"成功将 {total} 项数据导出至 U 盘:\n{self.target_usb.name}")
+
+        except Exception as e:
+            self.finished.emit(False, "导出失败", f"文件处理过程中发生错误:\n{e}")
 
 class MainController:
     """!
@@ -835,27 +888,16 @@ class MainController:
         # 3. 执行导出
         self.view.btn_export_db.setText(" 正在导出... ")
         self.view.btn_export_db.setEnabled(False)
-        self.view.btn_export_db.repaint()
+        # 启动异步导出线程
+        self.export_dialog = EdgeProgressDialog(self.view, "导出数据", "正在准备生成 CSV 表单...")
         
-        try:
-            # 调用底层方法
-            target_dir, files = StorageManager.export_data_to_usb(
-                current_session_id, target_usb_path, self.db
-            )
-            
-            file_names_str = "\n".join(files)
-            EdgeMessageBox(
-                self.view, 
-                "导出成功", 
-                f"已成功将任务数据导出至 U 盘。",
-                info_text=f"保存目录:\n{target_dir.name}\n\n包含文件:\n{file_names_str}"
-            ).exec_()
-            
-        except Exception as e:
-            EdgeMessageBox(self.view, "导出失败", f"数据转换或拷贝时发生错误: {e}", is_warning=True).exec_()
-        finally:
-            self.view.btn_export_db.setText("导出数据")
-            self.view.btn_export_db.setEnabled(True)
+        # 注意这里传的是单个 [current_session_id] 以匹配 worker 列表遍历的逻辑
+        self.export_worker = ExportWorker('data', [current_session_id], target_usb_path, self.db)
+        self.export_worker.progress_updated.connect(self.export_dialog.update_progress)
+        self.export_worker.finished.connect(self._on_export_finished)
+        
+        self.export_worker.start()
+        self.export_dialog.exec_()
 
     def update_timer_tasks(self):
         """总控定时器：分配 UI 刷新任务"""
@@ -981,6 +1023,26 @@ class MainController:
             self.view.btn_record_switch.setStyleSheet(self.view.style_hollow_white)
         self.save_record_settings() # 状态变化即保存
 
+    def _on_export_finished(self, success, title, msg):
+        """响应导出线程结束的槽函数"""
+        # 1. 安全关闭进度条弹窗
+        if hasattr(self, 'export_dialog') and self.export_dialog:
+            self.export_dialog.close_with_anim(QDialog.Accepted)
+
+        # 2. 恢复按钮的点击状态
+        if hasattr(self.view, 'btn_export_videos'):
+            self.view.btn_export_videos.setText(" 导出视频至外部 U 盘 ")
+            self.view.btn_export_videos.setEnabled(True)
+        if hasattr(self.view, 'btn_batch_export_data'):
+            self.view.btn_batch_export_data.setText("导出数据")
+            self.view.btn_batch_export_data.setEnabled(True)
+
+        # 3. 弹出最终结果
+        if success:
+            EdgeMessageBox(self.view, title, msg).exec_()
+        else:
+            EdgeMessageBox(self.view, title, msg, is_warning=True).exec_()
+
     def handle_export_videos(self):
         """处理将视频导出至外部 U 盘的请求"""
         # 1. 硬件检测：检查是否有挂载的 U 盘
@@ -1017,30 +1079,16 @@ class MainController:
                 
             self.view.btn_export_videos.setText(" 正在导出... ")
             self.view.btn_export_videos.setEnabled(False)
-            self.view.btn_export_videos.repaint() # 强制立刻刷新 UI
+            self.export_dialog = EdgeProgressDialog(self.view, "导出视频", "正在初始化数据流...")
             
-            # 5. 执行文件拷贝
-            # 注意：实际生产中大量大文件拷贝建议放入 QThread 防止 UI 假死。
-            # 这里为了保持逻辑紧凑，先在主线程执行同步拷贝
-            try:
-                exported_count = 0
-                for sid in selected_sids:
-                    for video_name in session_videos[sid]:
-                        # 在这里追加 session_id=sid 参数
-                        StorageManager.export_to_usb(video_name, target_usb_path, session_id=sid)
-                        exported_count += 1
-                        
-                EdgeMessageBox(
-                    self.view, 
-                    "导出成功", 
-                    f"已成功将 {exported_count} 个视频文件导出至 U 盘。",
-                    info_text=f"目标路径: {target_usb_path.name}/{selected_sids[0]}_recorded_videos 等"
-                ).exec_()
-            except Exception as e:
-                EdgeMessageBox(self.view, "导出失败", f"文件拷贝过程中发生错误: {e}", is_warning=True).exec_()
-            finally:
-                self.view.btn_export_videos.setText(" 导出视频至外部 U 盘 ")
-                self.view.btn_export_videos.setEnabled(True)
+            self.export_worker = ExportWorker('video', selected_sids, target_usb_path, session_videos)
+            # 绑定信号到进度条更新 UI
+            self.export_worker.progress_updated.connect(self.export_dialog.update_progress)
+            self.export_worker.finished.connect(self._on_export_finished)
+            
+            # 启动线程，并挂起进度弹窗
+            self.export_worker.start()
+            self.export_dialog.exec_()
 
     def save_record_settings(self):
         """将当前的录制 UI 状态同步到配置文件"""

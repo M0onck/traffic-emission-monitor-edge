@@ -1,5 +1,5 @@
 # 文件路径: ui/components/edge_dialog.py
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QPushButton, QCheckBox, QScrollArea, QWidget
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QPushButton, QCheckBox, QScrollArea, QProgressBar, QWidget
 from PyQt5.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve
 from PyQt5.QtGui import QFont
 
@@ -167,3 +167,57 @@ class EdgeExportDialog(EdgeAnimatedDialog):
     def accept_selection(self):
         self.selected_sessions = [sid for sid, cb in self.checkboxes.items() if cb.isChecked()]
         self.close_with_anim(QDialog.Accepted)
+
+class EdgeProgressDialog(EdgeAnimatedDialog):
+    """用于显示异步耗时任务进度的弹窗"""
+    def __init__(self, parent, title="正在处理", message="请稍候..."):
+        super().__init__(parent, target_height=180)
+        
+        # 强制模态：导出期间不允许点击外部关闭，防止逻辑中断
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self.panel)
+        layout.setContentsMargins(40, 25, 40, 25)
+
+        self.lbl_title = QLabel(title)
+        self.lbl_title.setFont(QFont("Arial", 16, QFont.Bold))
+        self.lbl_title.setStyleSheet("color: #ffffff; border: none;")
+        layout.addWidget(self.lbl_title)
+
+        layout.addSpacing(10)
+
+        self.lbl_message = QLabel(message)
+        self.lbl_message.setFont(QFont("Arial", 12))
+        self.lbl_message.setStyleSheet("color: #aaaaaa; border: none;")
+        # 允许文字自动换行
+        self.lbl_message.setWordWrap(True)
+        layout.addWidget(self.lbl_message)
+
+        layout.addSpacing(15)
+
+        # 构建赛博朋克风格的绿色进度条
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setTextVisible(False) # 隐藏默认的居中百分比文字，保持极简
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background-color: #222222;
+                border-radius: 4px;
+            }
+            QProgressBar::chunk {
+                background-color: #00e676;
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
+
+    def update_progress(self, value: int, text: str = None):
+        """更新进度与提示文字 (由子线程的信号触发)"""
+        self.progress_bar.setValue(value)
+        if text:
+            # 截断过长的文件名，防止撑爆弹窗布局
+            if len(text) > 40:
+                text = text[:15] + "..." + text[-20:]
+            self.lbl_message.setText(text)
