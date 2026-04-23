@@ -30,22 +30,24 @@ def get_rpi_camera_pipeline(width=1280, height=720, fps=30):
     )
 
 class GstPipelineManager:
-    def __init__(self, config: dict, shm_array=None, frame_ready_event=None, force_no_record=False):
+    def __init__(self, config: dict, shm_array=None, frame_ready_event=None, force_no_record=False, progress_callback=None):
         os.environ["QT_QPA_PLATFORM"] = "xcb"
         Gst.init(None)
-
         self.config = config
         self._shm_array = shm_array  # 直接持有共享内存引用
         self._frame_ready_event = frame_ready_event
-
         self.video_path = config.VIDEO_PATH
         self.hef_path = config.HEF_PATH
         self.out_w = config.FRAME_WIDTH
         self.out_h = config.FRAME_HEIGHT
         self.use_camera = config.USE_CAMERA
         self.force_no_record = force_no_record
-
         self.session_id = getattr(config, 'CURRENT_SESSION_ID', 'debug_session')
+        self.progress_callback = progress_callback
+
+        # === 在构建管线前报告进度 ===
+        if self.progress_callback:
+            self.progress_callback(30, "正在构建 GPU 加速的视频处理管线...")
 
         # 构建底层功能齐全（去畸变、录像、AI、预览）的并行大管道
         self.pipeline_str = self._build_pipelines()
@@ -201,9 +203,34 @@ class GstPipelineManager:
         return final_pipeline_str
 
     def start(self):
+        # === 在启动引擎前报告进度 ===
+        if self.progress_callback:
+            self.progress_callback(60, "正在启动 GStreamer 硬件数据流引擎...")
         logger.info("正在启动 GStreamer 管道 (原生 PyHailoRT 抓图模式)...")
         self.pipeline.set_state(Gst.State.PLAYING)
         self.is_running = True
+
+    def wait_for_first_frame(self, timeout=10.0) -> bool:
+        """
+        阻塞等待硬件传感器预热并吐出第一帧有效画面。
+        这能杜绝进入 UI 标定界面时出现“黑屏闪烁”的问题。
+        """
+        if self.progress_callback:
+            self.progress_callback(85, "正在拉取并解析首帧预处理画面...")
+            
+        start_time = time.time()
+        # 循环检测缓存帧是否已经被 _on_new_sample 填充
+        while self._latest_frame is None:
+            if time.time() - start_time > timeout:
+                logger.error("[GstPipeline] 获取首帧超时，硬件可能离线或被占用！")
+                return False
+            time.sleep(0.1) # 100ms 轮询一次，不阻塞 CPU
+
+        # === 在系统就绪时报告进度 ===    
+        if self.progress_callback:
+            self.progress_callback(100, "系统就绪，视觉通道已建立...")
+            
+        return True
 
     def stop(self):
         """安全停止流水线。顺序极其严格，防止底层撕裂。"""

@@ -17,6 +17,48 @@ from infra.store.storage_manager import StorageManager
 from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
 
+class InitWorker(QThread):
+    """负责系统启动时的硬件与算法初始化，避免主界面卡顿"""
+    progress_updated = pyqtSignal(int, str)
+    finished = pyqtSignal(object) # 传回初始化好的摄像头实例
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+    def run(self):
+        try:
+            self.progress_updated.emit(10, "正在检索 NPU 算力资源...")
+            
+            def update_progress(val: int, text: str):
+                self.progress_updated.emit(val, text)
+
+            # 1. 实例化管理器 (进度会走到 30%)
+            global_camera = GstPipelineManager(
+                self.config, 
+                force_no_record=True,
+                progress_callback=update_progress 
+            )
+            
+            # 2. 真实启动管线 (进度会走到 60%)
+            global_camera.start()
+            
+            # 3. 阻塞等待物理传感器预热并传回首帧 (进度会悬停在 85%，拿到后跳到 100%)
+            success = global_camera.wait_for_first_frame(timeout=10.0)
+            
+            if not success:
+                # 如果超时，说明硬件故障，停止管线并抛出异常
+                global_camera.stop()
+                raise Exception("传感器未能捕获画面，请检查 CSI/USB 排线连接。")
+                
+            # 留出 300ms 视觉缓冲，让用户看清 100% 的提示文字
+            self.msleep(300) 
+            self.finished.emit(global_camera)
+            
+        except Exception as e:
+            print(f"[Init Error] 初始化失败: {e}")
+            self.finished.emit(None)
+
 class ExportWorker(QThread):
     """后台异步导出线程，防止大文件拷贝导致主界面假死"""
     # 定义通讯信号：进度值, 提示文本
@@ -344,17 +386,53 @@ class MainController:
 
     def route_app1_click(self):
         """主界面按钮的智能跳转路由"""
+        """主界面按钮的异步初始化跳转路由"""
+        # 如果已经在采集中，直接进入监控画面
         if self.is_collecting:
-            # 如果已经在采集中，直接跳过标定和设置，切入监控面板
             self.enter_app(self.view.page_monitor)
-        else:
-            # 确保全局摄像头实例化，并注入给标定画布
-            if self.global_camera is None:
-                self.global_camera = GstPipelineManager(config=cfg, force_no_record=True)
+            return
+
+        # 如果已经初始化过了，直接进入
+        if self.global_camera is not None:
             self.view.canvas.load_camera(self.global_camera)
-            # 如果尚未运行，按照正常流程进入第一步预设
             self.enter_app(self.wizard_flow[0])
+            return
+
+        # --- 执行异步初始化 ---
+        # 1. 禁用按钮防止重复点击
+        self.view.btn_app1.setEnabled(False)
+        self.view.btn_app1.setText("正在初始化...")
+
+        # 2. 呼出进度条控件
+        self.init_dialog = EdgeProgressDialog(self.view, "系统初始化", "准备载入感知引擎...")
+        
+        # 3. 启动初始化线程
+        self.init_worker = InitWorker(self.cfg)
+        self.init_worker.progress_updated.connect(self.init_dialog.update_progress)
+        self.init_worker.finished.connect(self._on_init_finished)
+        
+        self.init_worker.start()
+        self.init_dialog.exec_()
     
+    def _on_init_finished(self, camera_instance):
+        """初始化完成后的回调"""
+        # 关闭进度条
+        if hasattr(self, 'init_dialog'):
+            self.init_dialog.close_with_anim(QDialog.Accepted)
+
+        # 恢复主按钮状态
+        self.view.btn_app1.setEnabled(True)
+        self.view.btn_app1.setText("多源数据采集")
+
+        if camera_instance:
+            self.global_camera = camera_instance
+            self.view.canvas.load_camera(self.global_camera)
+            # 跳转到标定第一步
+            self.enter_app(self.wizard_flow[0])
+            self.update_main_menu_btn_style()
+        else:
+            EdgeMessageBox(self.view, "初始化失败", "无法启动硬件摄像头或感知引擎，请检查硬件连接。", is_warning=True).exec_()
+
     def route_app2_click(self):
         """跳转至气象站校准页面"""
         self.enter_app(self.view.page_weather_calib)
@@ -566,8 +644,6 @@ class MainController:
         dialog = EdgeMessageBox(self.view, "结束任务确认", "确定要结束当前的采集任务并关闭引擎吗？", "未保存的缓冲区数据可能会丢失。", is_warning=True)
         if dialog.exec_() == EdgeMessageBox.Accepted:
             self.stop_monitoring()
-    
-    # ui/controllers/main_controller.py
 
     def stop_monitoring(self):
         if not self.is_collecting: return
