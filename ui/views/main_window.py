@@ -74,15 +74,15 @@ class MainWindow(QMainWindow):
         self.btn_stop.setFont(font); self.btn_stop.setMinimumHeight(50)
         self.btn_stop.setStyleSheet(self.style_hollow_red) 
 
-        self.btn_delete_db = QPushButton("批量删除")
-        self.btn_delete_db.setFont(font); self.btn_delete_db.setMinimumHeight(50)
-        self.btn_delete_db.setStyleSheet(self.style_hollow_red)
-        self.btn_delete_db.setVisible(False)
-
         self.btn_export_db = QPushButton("批量导出")
         self.btn_export_db.setFont(font); self.btn_export_db.setMinimumHeight(50)
         self.btn_export_db.setStyleSheet(self.style_hollow_white)
         self.btn_export_db.setVisible(False)
+
+        self.btn_delete_db = QPushButton("批量删除")
+        self.btn_delete_db.setFont(font); self.btn_delete_db.setMinimumHeight(50)
+        self.btn_delete_db.setStyleSheet(self.style_hollow_red)
+        self.btn_delete_db.setVisible(False)
 
         self.btn_prev = QPushButton("◀ 上一步")
         self.btn_prev.setFont(font); self.btn_prev.setMinimumHeight(50)
@@ -101,8 +101,8 @@ class MainWindow(QMainWindow):
 
         self.nav_layout.addWidget(self.btn_home)
         self.nav_layout.addWidget(self.btn_stop)
-        self.nav_layout.addWidget(self.btn_delete_db)
         self.nav_layout.addWidget(self.btn_export_db)
+        self.nav_layout.addWidget(self.btn_delete_db)
         self.nav_layout.addWidget(self.btn_prev)
         self.nav_layout.addStretch()
         self.nav_layout.addWidget(self.btn_headless)

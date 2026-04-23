@@ -16,6 +16,10 @@ from infra.store.sqlite_manager import DatabaseManager
 from infra.store.storage_manager import StorageManager
 from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
+from app.monitor_engine import TrafficMonitorEngine
+from ui.workers.engine_worker import EngineWorker
+import time
+from datetime import datetime
 
 class InitWorker(QThread):
     """负责系统启动时的硬件与算法初始化，避免主界面卡顿"""
@@ -58,6 +62,58 @@ class InitWorker(QThread):
         except Exception as e:
             print(f"[Init Error] 初始化失败: {e}")
             self.finished.emit(None)
+
+class MonitorStartWorker(QThread):
+    progress_updated = pyqtSignal(int, str)
+    # 传回成功标志、报错信息，以及实例化好的 worker 和 engine 对象
+    finished = pyqtSignal(bool, str, object, object) 
+
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+
+    def run(self):
+        try:
+            # --- 步骤 1: 任务会话 (Session) 创建 ---
+            self.progress_updated.emit(10, "正在生成任务 Session 并注册数据库...")
+            self.controller.current_session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.controller.cfg.CURRENT_SESSION_ID = self.controller.current_session_id
+
+            if hasattr(self.controller, 'db') and self.controller.db:
+                # 完美复刻原版逻辑，读取 LOCATION_DESC
+                location_desc = getattr(self.controller.cfg, 'LOCATION_DESC', "默认监控点")
+                self.controller.db.create_session(self.controller.current_session_id, time.time(), location_desc)
+
+            # --- 步骤 2: 硬件控制权移交 ---
+            self.progress_updated.emit(40, "正在释放标定画布的摄像头管线...")
+            if getattr(self.controller, 'global_camera', None):
+                print("[Controller] 正在释放主进程摄像头管线，为后端推理引擎让路...")
+                self.controller.global_camera.stop()
+                self.controller.global_camera = None
+
+            # --- 步骤 3: 实例化后端核心引擎与 Worker (卡顿的主要来源) ---
+            self.progress_updated.emit(65, "正在装配多源数据引擎与通信总线...")
+            
+            # 实例化原版的 EngineWorker
+            worker = EngineWorker()
+            
+            # 完全复刻原版参数的依赖注入
+            engine = TrafficMonitorEngine(
+                config=self.controller.cfg,
+                components=self.controller.components,
+                sync_queue=self.controller.sync_queue,
+                frame_callback=worker.emit_frame 
+            )
+            worker.set_engine(engine)
+            
+            self.progress_updated.emit(100, "引擎装配完毕，正在切换运行模式...")
+            self.msleep(300)
+            
+            # 将创建好的对象抛回主线程，由主线程负责执行
+            self.finished.emit(True, "", worker, engine)
+
+        except Exception as e:
+            self.finished.emit(False, str(e), None, None)
 
 class ExportWorker(QThread):
     """后台异步导出线程，防止大文件拷贝导致主界面假死"""
@@ -189,36 +245,22 @@ class MainController:
 
     def start_monitoring(self):
         """!
-        @brief 启动监控流程（已取代旧版 start_engine）：装配物理参数 -> 释放硬件 -> 启动引擎。
+        @brief 启动监控流程：主线程装配物理参数 -> 呼出进度条 -> 后台释放硬件与实例化引擎。
         """
         if self.is_collecting: return
 
-        # 任务会话 (Session) 创建
-        import time
-        from datetime import datetime
+        # ==========================================
+        # 1. 物理先验参数同步 (主线程执行，保障 UI 安全)
+        # ==========================================
+        import numpy as np
         
-        # 生成基于时间戳的唯一 Session ID
-        self.current_session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # 将 Session ID 同步给全局配置，底层引擎将依赖它进行落盘
-        self.cfg.CURRENT_SESSION_ID = self.current_session_id
-
-        # 在数据库中注册这条主任务记录
-        if hasattr(self, 'db') and self.db:
-            location_desc = getattr(self.cfg, 'LOCATION_DESC', "默认监控点")
-            self.db.create_session(self.current_session_id, time.time(), location_desc)
-
-        # --- 1. 物理先验参数同步 ---
-        # 从 UI 层获取透视标定点和物理尺寸，同步到全局配置中，供后端的对齐引擎(AlignmentEngine)使用
+        # 安全地从 UI 提取数据
         self.cfg.SOURCE_POINTS = self.view.canvas.get_real_points().tolist()
         self.cfg.PHYS_WIDTH = self.view.phys_w
         self.cfg.PHYS_HEIGHT = self.view.phys_h
 
-        # 同步更新字典里的 numpy 数组，供底层引擎使用
-        import numpy as np
+        # 同步 numpy 数组给 components
         self.components['norm_source_points'] = np.array(self.cfg.SOURCE_POINTS, dtype=np.float32)
-
-        # 计算真实的物理目标点矩阵
         self.components['target_points'] = np.array([
             [0, self.cfg.PHYS_HEIGHT],
             [self.cfg.PHYS_WIDTH, self.cfg.PHYS_HEIGHT],
@@ -226,39 +268,17 @@ class MainController:
             [0, 0]
         ], dtype=np.float32)
 
-        # --- 2. 硬件控制权移交 ---
-        # 释放主界面标定画布占用的摄像头流，为感知子进程或后台推理让路
-        if getattr(self, 'global_camera', None):
-            print("[Controller] 正在释放主进程摄像头管线，为后端推理引擎让路...")
-            self.global_camera.stop()
-            self.global_camera = None
-
-        from app.monitor_engine import TrafficMonitorEngine
-        from ui.workers.engine_worker import EngineWorker
-
-        # --- 3. 实例化 Worker 并绑定 UI 刷新回调 ---
-        self.worker = EngineWorker()
-        self.worker.frame_ready.connect(self.on_frame_received)
-
-        # --- 4. 实例化后端核心引擎 ---
-        # 使用依赖注入(DI)的方式，将所需的所有资源一次性传给引擎
-        self.engine = TrafficMonitorEngine(
-            config=self.cfg,
-            components=self.components,
-            sync_queue=self.sync_queue,
-            frame_callback=self.worker.emit_frame 
-        )
-
-        # --- 5. 启动后台守护线程 ---
-        self.worker.set_engine(self.engine)
-        self.worker.start()
+        # ==========================================
+        # 2. 启动异步进程准备环境
+        # ==========================================
+        self.start_dialog = EdgeProgressDialog(self.view, "开启实时监测", "正在处理物理先验参数...")
         
-        self.is_collecting = True
+        self.start_worker = MonitorStartWorker(self)
+        self.start_worker.progress_updated.connect(self.start_dialog.update_progress)
+        self.start_worker.finished.connect(self._on_monitor_start_finished)
         
-        # --- 6. 刷新界面状态 ---
-        self.update_nav_buttons()
-        self.update_main_menu_btn_style()
-        print(">>> [Controller] 监控引擎已全面启动。")
+        self.start_worker.start()
+        self.start_dialog.exec_()
 
     def on_frame_received(self, rgb_frame):
         """!
@@ -304,6 +324,39 @@ class MainController:
         self.return_to_home()
         
         print(">>> [Controller] 监控任务已完全终止并回收所有资源。")
+
+    def _on_monitor_start_finished(self, success, error_msg, worker_instance, engine_instance):
+        """监测引擎装配完成后的主线程回调"""
+        if hasattr(self, 'start_dialog'):
+            self.start_dialog.close_with_anim(QDialog.Accepted)
+
+        if success:
+            # 接收子线程建好的实例
+            self.worker = worker_instance
+            self.engine = engine_instance
+            
+            # 在主线程安全地绑定 UI 刷新信号
+            self.worker.frame_ready.connect(self.on_frame_received)
+            
+            # 启动后台守护线程
+            self.worker.start()
+            
+            # 刷新界面状态
+            self.is_collecting = True
+            self.update_nav_buttons()
+            self.update_main_menu_btn_style()
+            self.enter_app(self.view.page_monitor)
+            
+            print(">>> [Controller] 监控引擎已全面启动。")
+        else:
+            # 失败处理：弹出告警并回退
+            from ui.components.edge_dialog import EdgeMessageBox
+            EdgeMessageBox(
+                self.view, 
+                "引擎启动失败", 
+                f"监测引擎装配过程发生异常：\n{error_msg}", 
+                is_warning=True
+            ).exec_()
 
     def _init_timers(self):
         """初始化 UI 层的定时刷新器与守护任务"""
