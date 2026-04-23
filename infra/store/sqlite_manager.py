@@ -294,6 +294,36 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'insert_aligned_dataset' 未定义")
 
+    def get_table_data_for_export(self, table_name: str, session_id: str):
+        """
+        根据表名和 session_id 获取所有原始数据记录及表头，用于 CSV 导出
+        """
+        # 基本的白名单防御，防止 SQL 注入或意外读取系统表
+        allowed_tables = ["Veh_Sum", "Veh_Raw", "Env_Raw", "Aligned_Dataset", "Session_Task"]
+        if table_name not in allowed_tables:
+            print(f"[Database Error] 尝试导出的表名 {table_name} 不合法。")
+            return None, None
+
+        # 动态拼接表名 (白名单校验后拼接是安全的)
+        query = f"SELECT * FROM {table_name} WHERE session_id = ?"
+        try:
+            # 显式创建局部游标，防止多线程跨进程读取时发生 Cursor 冲突
+            cursor = self.conn.cursor()
+            cursor.execute(query, (session_id,))
+            
+            # 从游标的 description 中提取所有列名作为 CSV 的表头
+            columns = [column[0] for column in cursor.description]
+            # 获取该 session_id 下的所有行数据
+            rows = cursor.fetchall()
+            
+            # 及时关闭局部游标
+            cursor.close()
+            return columns, rows
+            
+        except sqlite3.Error as e:
+            print(f"[Database Error] 导出数据时查询表 {table_name} 失败: {e}")
+            return None, None
+
     def close(self):
         try:
             self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")

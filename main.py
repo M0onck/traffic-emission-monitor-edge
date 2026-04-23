@@ -12,8 +12,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-
-
 # 导入其他组件
 from PyQt5.QtWidgets import QApplication
 import multiprocessing as mp

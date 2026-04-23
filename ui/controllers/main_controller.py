@@ -13,7 +13,7 @@ from datetime import datetime
 from ui.components.edge_dialog import EdgeMessageBox, EdgeAnimatedDialog, EdgeExportDialog
 from infra.sys.sys_monitor import SysMonitor
 from infra.store.sqlite_manager import DatabaseManager
-from infra.config.storage_manager import StorageManager
+from infra.store.storage_manager import StorageManager
 from perception.gst_pipeline import GstPipelineManager
 import perception.gst_pipeline as gst
 
@@ -257,6 +257,7 @@ class MainController:
         # 数据表单的按钮/列表绑定
         self.view.btn_refresh_db.clicked.connect(self.handle_db_refresh)
         self.view.btn_delete_db.clicked.connect(self.show_batch_delete_dialog)
+        self.view.btn_export_db.clicked.connect(self.handle_export_db_data)
         self.view.session_combo.currentIndexChanged.connect(self.update_db_table)
 
         # 设置界面相关按钮的绑定
@@ -457,7 +458,9 @@ class MainController:
         
         # 2. 控制特定功能按钮
         self.view.btn_stop.setVisible(current_page == self.view.page_monitor and self.is_collecting)
-        self.view.btn_delete_db.setVisible(current_page == self.view.page_db_browser)
+        is_db_page = (current_page == self.view.page_db_browser)
+        self.view.btn_delete_db.setVisible(is_db_page)
+        self.view.btn_export_db.setVisible(is_db_page)
 
         # 控制无头模式按钮仅在监测页面可见
         is_monitor_page = (current_page == self.view.page_monitor)
@@ -804,6 +807,55 @@ class MainController:
                 
         btn_confirm.clicked.connect(execute_delete)
         dialog.exec_()
+    
+    def handle_export_db_data(self):
+        """处理当前选中 Session 的数据库导出请求"""
+        # 1. 获取当前下拉菜单选中的 Session ID
+        current_session_id = self.view.session_combo.currentData()
+        
+        if not current_session_id:
+            EdgeMessageBox(self.view, "无数据可导出", "当前没有可供导出的任务记录。").exec_()
+            return
+
+        # 2. U 盘检测 (复用现有的安全检索逻辑)
+        usbs = StorageManager.get_available_usbs()
+        if not usbs:
+            dialog = EdgeMessageBox(
+                self.view, 
+                "未检测到外部存储", 
+                "请将 U 盘插入设备的 USB 接口。", 
+                info_text="系统仅支持导出至挂载于 /media 目录下的设备。",
+                is_warning=True
+            )
+            dialog.exec_()
+            return
+            
+        target_usb_path = usbs[0]
+
+        # 3. 执行导出
+        self.view.btn_export_db.setText(" 正在导出... ")
+        self.view.btn_export_db.setEnabled(False)
+        self.view.btn_export_db.repaint()
+        
+        try:
+            # 调用底层方法
+            target_dir, files = StorageManager.export_data_to_usb(
+                current_session_id, target_usb_path, self.db
+            )
+            
+            file_names_str = "\n".join(files)
+            EdgeMessageBox(
+                self.view, 
+                "导出成功", 
+                f"已成功将任务数据导出至 U 盘。",
+                info_text=f"保存目录:\n{target_dir.name}\n\n包含文件:\n{file_names_str}"
+            ).exec_()
+            
+        except Exception as e:
+            EdgeMessageBox(self.view, "导出失败", f"数据转换或拷贝时发生错误: {e}", is_warning=True).exec_()
+        finally:
+            self.view.btn_export_db.setText("导出数据")
+            self.view.btn_export_db.setEnabled(True)
 
     def update_timer_tasks(self):
         """总控定时器：分配 UI 刷新任务"""

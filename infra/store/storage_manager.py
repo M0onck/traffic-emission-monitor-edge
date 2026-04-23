@@ -1,6 +1,10 @@
 import os
+import csv
 import shutil
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 class StorageManager:
     # 容器内固定挂载点
@@ -93,3 +97,43 @@ class StorageManager:
                 session_map[session_id].append(file.name)
                 
         return session_map
+
+    def get_table_data_for_export(self, table_name, session_id):
+        """根据表名和 session_id 获取所有原始数据记录"""
+        query = f"SELECT * FROM {table_name} WHERE session_id = ?"
+        try:
+            self.cursor.execute(query, (session_id,))
+            # 获取表头字段名
+            columns = [column[0] for column in self.cursor.description]
+            # 获取所有行数据
+            rows = self.cursor.fetchall()
+            return columns, rows
+        except Exception as e:
+            logger.error(f"导出数据时查询表 {table_name} 失败: {e}")
+            return None, None
+        
+    @classmethod
+    def export_data_to_usb(cls, session_id, usb_target_path, db_manager):
+        """将指定 Session 的所有数据库表导出为 CSV 文件至 U 盘"""
+        # 1. 创建 session_id + "data" 命名的文件夹
+        target_dir = Path(usb_target_path) / f"{session_id}_data"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 2. 定义需要导出的核心业务表
+        tables_to_export = ["Veh_Sum", "Veh_Raw", "Env_Raw"]
+        exported_files = []
+
+        for table in tables_to_export:
+            cols, rows = db_manager.get_table_data_for_export(table, session_id)
+            if not cols or not rows:
+                continue
+                
+            csv_path = target_dir / f"{table}.csv"
+            # 使用 utf-8-sig 编码以确保导出的 CSV 在 Excel 中打开不会乱码
+            with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                writer.writerow(cols) # 写入表头
+                writer.writerows(rows) # 写入数据行
+            exported_files.append(csv_path.name)
+            
+        return target_dir, exported_files
