@@ -2,6 +2,10 @@ import os
 import psutil
 import socket
 from datetime import datetime
+from pathlib import Path
+
+# 动态获取项目根目录
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 class SysMonitor:
     """边缘端硬件与系统状态监视器"""
@@ -25,7 +29,7 @@ class SysMonitor:
     @staticmethod
     def get_ssd_storage() -> str:
         """扩展存储 (获取挂载点的磁盘使用率，即 SSD)"""
-        mount_point = '/app/data'
+        mount_point = str(PROJECT_ROOT / 'data')
         try:
             if os.path.exists(mount_point):
                 usage = psutil.disk_usage(mount_point)

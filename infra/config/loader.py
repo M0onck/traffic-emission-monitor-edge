@@ -1,13 +1,25 @@
 import json
 import os
 import sys
+from pathlib import Path
 
 """
 [基础层] 配置文件读取器
 功能：负责读取外部 config.json 配置文件，并将其解析为 Python 原生数据类型。
 """
 
-CONFIG_FILE = "config.json"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+CONFIG_FILE = str(PROJECT_ROOT / "config.json")
+
+def get_abs_path(relative_path: str) -> str:
+    """工具函数：将 JSON 中的相对路径转换为绝对路径"""
+    if not relative_path:
+        return relative_path
+    # 如果已经是绝对路径则原样返回，否则基于项目根目录拼接
+    path_obj = Path(relative_path)
+    if path_obj.is_absolute():
+        return relative_path
+    return str(PROJECT_ROOT / relative_path)
 
 try:
     if not os.path.exists(CONFIG_FILE):
@@ -24,20 +36,20 @@ except Exception as e:
 _sys = _cfg["system"]
 RUN_MODE = _sys.get("run_mode", "inference").lower() # 'inference' 或 'collection'
 VIDEO_PATH = _sys["video_path"]
-LOCAL_VIDEO_PATH = _sys.get("local_video_path", VIDEO_PATH)
-DB_PATH = _sys["db_path"]
-FPS = max(1.0, float(_sys.get("fps", 30.0))) # [防御性编程] 防止ZeroDivisionError
+LOCAL_VIDEO_PATH = get_abs_path(_sys.get("local_video_path", ""))
+DB_PATH = get_abs_path(_sys["db_path"])
+FPS = max(1.0, float(_sys.get("fps", 30.0))) # 防止ZeroDivisionError
 DEBUG_MODE = _sys["debug_mode"]
 USE_CAMERA = _sys.get("use_camera", False)
 
 _lib = _cfg["lib_paths"]
-WS_PATH = _lib.get("libweather_path", "build/lib/libweather_driver.so")
-TC_PATH = _lib.get("libthermal_path", "build/lib/libmlx90640_driver.so")
+WS_PATH = get_abs_path(_lib.get("libweather_path", "build/lib/libweather_driver.so"))
+TC_PATH = get_abs_path(_lib.get("libthermal_path", "build/lib/libmlx90640_driver.so"))
 
 _rec = _cfg.get("record_options", {})
 ENABLE_RECORD = _rec.get("enable_record", False)
 RECORD_SEGMENT_MIN = _rec.get("segment_length_min", 10)
-RECORD_SAVE_PATH = _rec.get("save_path", "/mnt/nvmessd/recorded_videos") # 默认优先用 SSD
+RECORD_SAVE_PATH = get_abs_path(_rec.get("save_path", "data/recorded_videos"))
 
 _d = _cfg["display"]
 FRAME_WIDTH = _d.get("frame_width", 1280)
@@ -85,9 +97,9 @@ VEHICLE_SEMANTIC_MAP = {
 
 # --- 3. 边缘端特有模型路径 ---
 _edge = _cfg.get("edge_models", {})
-HEF_PATH = _edge.get("hef_path", "resources/yolov8m.hef")
-Y5FU_PATH = _edge.get("y5fu_path", "perception/plate_classifier/models/y5fu_320x_sim.onnx")
-LITEMODEL_PATH = _edge.get("litemodel_path", "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx")
+HEF_PATH = get_abs_path(_edge.get("hef_path", "resources/yolov8m.hef"))
+Y5FU_PATH = get_abs_path(_edge.get("y5fu_path", "perception/plate_classifier/models/y5fu_320x_sim.onnx"))
+LITEMODEL_PATH = get_abs_path(_edge.get("litemodel_path", "perception/plate_classifier/models/litemodel_cls_96x_r1.onnx"))
 
 # --- 4. 延迟对齐与时间窗参数 (time_windows) ---
 _tw = _cfg.get("time_windows", {})
