@@ -165,16 +165,14 @@ class GstPipelineManager:
         if is_camera and enable_rec:
             os.makedirs(cfg.RECORD_SAVE_PATH, exist_ok=True)
             segment_ns = int(cfg.RECORD_SEGMENT_MIN * 60 * 1000000000)
-            
-            # 使用初始化时固化好的 session_id
-            filename = f"{self.session_id}_seq%05d_start{int(time.time())}.mp4"
-            loc_pattern = os.path.join(self.config.RECORD_SAVE_PATH, filename)
 
             record_branch = (
                 f" t. ! queue max-size-buffers=60 ! "
-                f"videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 key-int-max=30 ! "
+                f"videorate ! "  
+                f"videoconvert ! video/x-raw,format=I420 ! "
+                f"x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 key-int-max=60 ! "
                 f"h264parse config-interval=1 ! "
-                f"splitmuxsink name=rec_sink muxer=matroskamux max-size-time={segment_ns} async-handling=true "
+                f"splitmuxsink name=rec_sink muxer=matroskamux max-size-time={segment_ns} "
             )
 
         if is_camera:
@@ -256,7 +254,16 @@ class GstPipelineManager:
             # 总线等待：给予系统最多 12 秒处理完结帧
             bus = self.pipeline.get_bus()
             if bus:
-                bus.timed_pop_filtered(12 * Gst.SECOND, Gst.MessageType.EOS)
+                # 同时监听 EOS 和 ERROR
+                # 这样如果底层 muxer 发生物理性写入失败，可以立即在终端看到报错
+                msg = bus.timed_pop_filtered(
+                    12 * Gst.SECOND, 
+                    Gst.MessageType.EOS | Gst.MessageType.ERROR
+                )
+                
+                if msg and msg.type == Gst.MessageType.ERROR:
+                    err, debug = msg.parse_error()
+                    logger.error(f"[GStreamer] 视频封装时发生底层致命错误: {err.message}\n调试信息: {debug}")
                 
             # 彻底物理释放
             self.pipeline.set_state(Gst.State.NULL)
