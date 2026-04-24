@@ -7,6 +7,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 # 设定工作目录
 WORKDIR /app
 
+# 提前安装网络与证书工具，用于获取 GPG 密钥
+RUN apt-get update && apt-get install -y wget gnupg ca-certificates
+
+# 导入 Raspberry Pi 官方源的安全密钥并配置源列表
+RUN wget -qO - http://archive.raspberrypi.com/debian/raspberrypi.gpg.key | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] http://archive.raspberrypi.com/debian/ bookworm main" > /etc/apt/sources.list.d/raspi.list
+
+# APT 优先级配置：让树莓派官方源的所有包优先级全面高于 Debian 官方源
+# 解决未来由于底层关联依赖（如 libdrm, wayland 等）造成的版本冲突
+RUN echo "Package: *" > /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "Pin: origin archive.raspberrypi.com" >> /etc/apt/preferences.d/raspberrypi-pin && \
+    echo "Pin-Priority: 1001" >> /etc/apt/preferences.d/raspberrypi-pin
+
 # 安装系统级依赖 (编译工具链、GStreamer 框架、I2C/V4L2 硬件工具、PyQt5/X11 组件)
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -24,27 +37,22 @@ RUN apt-get update && apt-get install -y \
     libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
+    gstreamer1.0-libcamera \
+    gstreamer1.0-gl \
+    libcamera-tools \
     libglib2.0-dev \
     libgl1-mesa-dev \
+    libgl1-mesa-dri \
+    libegl1-mesa \
+    libgles2-mesa \
     i2c-tools \
     v4l-utils \
     gnupg \
     software-properties-common \
     wget \
+    hailort \
+    python3-hailort \
     && rm -rf /var/lib/apt/lists/*
-
-# 从 Raspberry Pi 官方源安全提取 Hailo 运行库
-# 这会提供 libhailort.so 以及 python3-hailort (即代码中 import hailo_platform 的来源)
-RUN wget -qO- https://archive.raspberrypi.com/debian/raspberrypi.gpg.key | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg && \
-    echo "deb [arch=arm64 signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] http://archive.raspberrypi.com/debian bookworm main" > /etc/apt/sources.list.d/raspberrypi.list && \
-    echo "Package: *" > /etc/apt/preferences.d/raspberrypi-pin && \
-    echo "Pin: origin archive.raspberrypi.com" >> /etc/apt/preferences.d/raspberrypi-pin && \
-    echo "Pin-Priority: 1" >> /etc/apt/preferences.d/raspberrypi-pin && \
-    echo "" >> /etc/apt/preferences.d/raspberrypi-pin && \
-    echo "Package: hailort hailort-* libhailort* hailo* python3-hailort" >> /etc/apt/preferences.d/raspberrypi-pin && \
-    echo "Pin: origin archive.raspberrypi.com" >> /etc/apt/preferences.d/raspberrypi-pin && \
-    echo "Pin-Priority: 1001" >> /etc/apt/preferences.d/raspberrypi-pin && \
-    apt-get update && apt-get install -y hailort python3-hailort
 
 # 安装基础依赖和系统级 PyQt5
 RUN apt-get update && apt-get install -y \

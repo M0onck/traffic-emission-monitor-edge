@@ -135,7 +135,8 @@ class GstPipelineManager:
         """
         is_camera = getattr(self, 'use_camera', False) or self.video_path.startswith("libcamerasrc") or self.video_path.startswith("v4l2src")
         
-        map_bin = os.path.abspath("/home/m0onck/traffic-emission-monitor-edge/resources/dewarp_map_rgba_1456x1088.bin")
+        base_dir = os.getcwd() 
+        map_bin = os.path.join(base_dir, "resources", "dewarp_map_rgba_1456x1088.bin")
 
         cam_w, cam_h = 1456, 1088
         out_w, out_h = self.out_w, self.out_h

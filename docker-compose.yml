@@ -4,12 +4,15 @@ services:
     build: .
     container_name: traffic-emission-monitor-edge
     privileged: true                                  # 边缘硬件项目需要特权模式来访问所有底层总线
-    restart: always
+    restart: "no"                                     # 总是重启可用 always
     network_mode: "host"                              # 使用 host 网络模式，降低网络协议栈开销，适合边缘设备
     environment:
       - TZ=Asia/Shanghai
       - DISPLAY=${DISPLAY}                            # 透传宿主机的显示环境变量用于 PyQt5 渲染
       - QT_X11_NO_MITSHM=1                            # 修复 Qt 在 Docker 中的共享内存渲染警告
+      - XDG_RUNTIME_DIR=/tmp/runtime-root             # 解决 XDG_RUNTIME_DIR 警告
+      - GST_GL_PLATFORM=egl                           # 强制 GStreamer 使用 EGL 平台和 GLES API
+      - GST_GL_API=gles2
     # 追加对应用户组权限，避免遇到 Permission Denied
     group_add:
       - video
@@ -23,12 +26,15 @@ services:
       - ~/.Xauthority:/root/.Xauthority:rw            # 把宿主机的凭证文件挂载给容器的 root 用户
       - /mnt/nvmessd/data:/app/data                   # M.2 固态硬盘映射，用于业务数据挂载
       - /media:/media:rshared                         # 外部 U 盘预留动态挂载点
+      - /sys/class/drm:/sys/class/drm:ro              # 解决 ONNX 探测不到底层 DRM GPU 节点的问题
     # 赋予容器访问特定硬件设备节点的权限
     devices:
       - "/dev/hailo0:/dev/hailo0"                     # Hailo-8 NPU
+      - "/dev/dri:/dev/dri"                           # V3D 7.1 硬件图形加速
       - "/dev/i2c-1:/dev/i2c-1"                       # MLX90640 热成像仪
       - "/dev/ttyUSB0:/dev/ttyUSB0"                   # 气象站 (按实际修改)
       - "/dev/video0:/dev/video0"                     # IMX296 摄像头
+      - "/dev/dma_heap:/dev/dma_heap"                 # DMA 堆内存
     # 分配足够的共享内存
     shm_size: '2gb'
     logging:

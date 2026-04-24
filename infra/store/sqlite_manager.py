@@ -23,7 +23,10 @@ class DatabaseManager:
     改进：完全剥离 SQL 语句（DDL 在 schema.sql, DML 在 queries.sql）。
     """
     def __init__(self, db_path: str = "data/database/recorded_data.db", fps: float = 30.0):
-        os.makedirs("data", exist_ok=True)
+        # 自动提取父路径，并递归创建目录结构
+        db_dir = os.path.dirname(db_path)
+        if db_dir:  # 确保路径不为空
+            os.makedirs(db_dir, exist_ok=True)
         self.db_path = db_path
         self.fps = fps
 

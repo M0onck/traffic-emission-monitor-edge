@@ -9,7 +9,7 @@ from infra.store.sqlite_manager import DatabaseManager
 from infra.concurrency.async_recognizer import AsyncPlateRecognizer
 from domain.vehicle.repository import VehicleRegistry
 from domain.vehicle.classifier import VehicleClassifier
-from perception.gst_pipeline import GstPipelineManager
+from infra.store.storage_manager import StorageManager
 from perception.sensor.thermal_camera import ThermalCamera
 from perception.sensor.weather_station import WeatherGateway
 from ui.renderer import Visualizer
@@ -81,6 +81,7 @@ class AppBootstrap:
         stop_event = ctx.Event()
 
         # 1. 基础设施层
+        StorageManager.ensure_structure()
         db = DatabaseManager(db_path=config.DB_PATH, fps=config.FPS)
         force_delay = config.ALIGNMENT_DELAY_SEC if config.RUN_MODE == 'inference' else float('inf')
 
