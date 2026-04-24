@@ -221,3 +221,14 @@ class EdgeProgressDialog(EdgeAnimatedDialog):
             if len(text) > 40:
                 text = text[:15] + "..." + text[-20:]
             self.lbl_message.setText(text)
+    
+    def mousePressEvent(self, event):
+        """重写鼠标事件：彻底屏蔽点击外部关闭的逻辑，强制用户等待进度条走完"""
+        pass # 直接吃掉事件，什么都不做
+
+    def keyPressEvent(self, event):
+        """重写键盘事件：屏蔽 ESC 键强制退出"""
+        if event.key() == Qt.Key_Escape:
+            event.ignore()
+        else:
+            super().keyPressEvent(event)

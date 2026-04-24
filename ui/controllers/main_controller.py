@@ -168,6 +168,50 @@ class ExportWorker(QThread):
         except Exception as e:
             self.finished.emit(False, "导出失败", f"文件处理过程中发生错误:\n{e}")
 
+class MonitorStopWorker(QThread):
+    """负责安全停止引擎、等待视频封口、数据落盘的异步工作线程"""
+    progress_updated = pyqtSignal(int, str)
+    finished = pyqtSignal()
+
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+
+    def run(self):
+        try:
+            self.progress_updated.emit(10, "正在向边缘计算引擎发送停机信号...")
+            
+            # 1. 停止主引擎内部 while 循环
+            if getattr(self.controller, 'worker', None) and getattr(self.controller.worker, 'engine', None):
+                self.controller.worker.engine.stop()
+
+            # 2. 设置 IPC 停止信号 (通知感知子进程)
+            if hasattr(self.controller, 'stop_event') and self.controller.stop_event:
+                self.controller.stop_event.set()
+            
+            self.progress_updated.emit(30, "正在进行最终的车辆轨迹结算与数据库落盘...")
+            self.msleep(1500) # 预留时间给 SQLite 执行 Commit
+
+            # 这个阶段 GStreamer 底层正在将缓存中的 H.264 帧封装成文件
+            self.progress_updated.emit(60, "正在写入视频尾部索引(EOS)，请勿断电...")
+            
+            # 3. 等待线程安全退出 (给足 10 秒钟时间让 GStreamer 发送 EOS 并完成写盘)
+            if self.controller.worker:
+                self.controller.worker.quit()
+                # 【关键】等待上限拉长到 12000 ms (12秒)，以覆盖 GStreamer 的超长封口期
+                if not self.controller.worker.wait(12000):
+                    print("[Warning] 引擎线程响应超时，强制结束。")
+                    self.progress_updated.emit(90, "警告: 底层响应超时，正在强制回收资源...")
+                    self.msleep(1000)
+
+            self.progress_updated.emit(100, "所有缓存数据落盘完毕，系统已安全停机。")
+            self.msleep(800) # 停顿 0.8 秒让用户看清 100% 提示
+            
+        except Exception as e:
+            print(f"[StopWorker] 停机发生异常: {e}")
+        finally:
+            self.finished.emit()
+
 class MainController:
     """!
     @brief 主控制器类，遵循标准的 MVC 架构模式。
@@ -700,29 +744,32 @@ class MainController:
             self.stop_monitoring()
 
     def stop_monitoring(self):
+        """触发异步安全停机流程"""
         if not self.is_collecting: return
         
         print(">>> [Controller] 正在请求引擎停止...")
         self.view.btn_stop.setEnabled(False)
-        self.view.btn_stop.setText("正在结算...")
+        self.view.btn_stop.setText("正在停机...")
 
-        # 停止主引擎内部 while 循环
-        if getattr(self, 'worker', None) and getattr(self.worker, 'engine', None):
-            self.worker.engine.stop()
-
-        # 1. 设置停止信号
-        # 底层 monitor_engine.py 的 run() 循环检测到它后，会自己调用 cleanup()
-        if hasattr(self, 'stop_event') and self.stop_event:
-            self.stop_event.set() 
-
-        # 2. 等待线程安全退出
-        if self.worker:
-            self.worker.quit()
-            # 给引擎 4 秒钟时间完成最后的数据库落盘
-            if not self.worker.wait(4000):
-                print("[Warning] 引擎响应超时。")
+        # 1. 呼出强制模态的进度条弹窗，阻断用户对界面的任何乱点操作
+        self.stop_dialog = EdgeProgressDialog(self.view, "系统安全停机中", "准备结束采集任务...")
         
-        # 3. 线程退出后，再执行 UI 的收尾工作
+        # 2. 实例化并绑定异步停机 Worker
+        self.stop_worker = MonitorStopWorker(self)
+        self.stop_worker.progress_updated.connect(self.stop_dialog.update_progress)
+        self.stop_worker.finished.connect(self._on_monitor_stop_finished)
+        
+        # 3. 启动线程并挂起弹窗
+        self.stop_worker.start()
+        self.stop_dialog.exec_()
+
+    def _on_monitor_stop_finished(self):
+        """异步停机完成后的主线程回调"""
+        # 关闭进度条弹窗
+        if hasattr(self, 'stop_dialog'):
+            self.stop_dialog.close_with_anim(QDialog.Accepted)
+            
+        # 彻底执行原有的状态重置与 UI 恢复逻辑
         self.on_engine_finished()
     
     def handle_exit_request(self):
