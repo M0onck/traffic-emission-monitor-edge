@@ -53,6 +53,11 @@ class GstPipelineManager:
         self.pipeline_str = self._build_pipelines()
         self.pipeline = Gst.parse_launch(self.pipeline_str)
 
+        # 绑定动态命名回调
+        rec_sink = self.pipeline.get_by_name("rec_sink")
+        if rec_sink:
+            rec_sink.connect("format-location", self._on_format_location)
+
         # 配置 clean_sink 的信号模式
         self.clean_sink = self.pipeline.get_by_name("clean_sink")
         if self.clean_sink:
@@ -71,6 +76,14 @@ class GstPipelineManager:
         ai_sink = self.pipeline.get_by_name("ai_sink")
         if ai_sink:
             ai_sink.connect("new-sample", self._on_ai_sample)
+
+    def _on_format_location(self, _splitmux, fragment_id):
+        """
+        每次录制切片时由 GStreamer 回调，动态生成含有精确当前时间戳的文件名
+        """
+        current_time = int(time.time())
+        filename = f"{self.session_id}_seq{fragment_id:05d}_start{current_time}.mkv"
+        return os.path.join(self.config.RECORD_SAVE_PATH, filename)
 
     def _on_ai_sample(self, sink):
         sample = sink.emit("pull-sample")
@@ -157,9 +170,10 @@ class GstPipelineManager:
             loc_pattern = os.path.join(self.config.RECORD_SAVE_PATH, filename)
 
             record_branch = (
-                f" t. ! queue max-size-buffers=30 leaky=downstream ! "
-                f"videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 ! "
-                f"h264parse ! splitmuxsink name=rec_sink location=\"{loc_pattern}\" max-size-time={segment_ns} async-handling=true "
+                f" t. ! queue max-size-buffers=60 ! "
+                f"videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 key-int-max=30 ! "
+                f"h264parse config-interval=1 ! "
+                f"splitmuxsink name=rec_sink muxer=matroskamux max-size-time={segment_ns} async-handling=true "
             )
 
         if is_camera:

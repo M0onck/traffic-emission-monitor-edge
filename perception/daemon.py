@@ -2,6 +2,7 @@ import multiprocessing as mp
 from multiprocessing import shared_memory
 import numpy as np
 import time
+import signal
 import logging
 import threading
 from perception.gst_pipeline import GstPipelineManager
@@ -50,6 +51,14 @@ def parse_hailo_ragged_list(raw_list, conf_threshold=0.45):
 
 def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict, ready_event):
     logger.info("-> [感知进程] 启动，准备挂载 GStreamer 与 PyHailoRT...")
+
+    # 捕获看门狗发出的 SIGTERM 信号，触发优雅退出
+    def sigterm_handler(signum, frame):
+        logger.warning(f"[感知进程] 收到终止信号 ({signum})，正在触发安全停止，保存视频封口...")
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, sigterm_handler)
+    signal.signal(signal.SIGINT, sigterm_handler) # 兼容终端 Ctrl+C 强制结束
 
     class ConfigWrapper:
         def __init__(self, d):
