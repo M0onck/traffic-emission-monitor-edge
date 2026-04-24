@@ -6,6 +6,9 @@ class EngineWorker(QThread):
     # 定义发往 GUI 线程的 RGB 图像信号
     frame_ready = pyqtSignal(np.ndarray)
 
+    # 定义发往 GUI 的进度信号 (百分比, 提示文本)
+    stop_progress = pyqtSignal(int, str)
+
     def __init__(self):
         super().__init__()
         self.engine = None

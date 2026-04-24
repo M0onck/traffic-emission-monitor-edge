@@ -737,6 +737,14 @@ class TrafficMonitorEngine:
         self._is_running = False
         logger.info("[Engine] 开始系统资源与 IPC 内存清理...")
 
+        # 停止阶段进度条回调
+        def report_progress(val, msg):
+            if hasattr(self, 'shutdown_progress_callback') and self.shutdown_progress_callback:
+                self.shutdown_progress_callback(val, msg)
+            logger.info(f"[Cleanup] {val}% - {msg}")
+
+        report_progress(10, "正在发送 IPC 停机指令...")
+
         # ==========================================
         # 1. 多进程 IPC 资源回收 (替代原有的 camera.stop)
         # ==========================================
@@ -744,11 +752,15 @@ class TrafficMonitorEngine:
             self.stop_event.set()
             
         if getattr(self, 'p_daemon', None):
-            self.p_daemon.join(timeout=4)
+            report_progress(30, "正在等待视频封口落盘 (GStreamer EOS)，请勿断电...")
+            self.p_daemon.join(timeout=12)
             if self.p_daemon.is_alive():
                 logger.warning("[Engine] 感知进程未响应，执行强行回收...")
                 self.p_daemon.terminate()
 
+        report_progress(50, "视频已安全封装，正在回收外设与共享内存...")
+
+        # 释放共享内存
         if getattr(self, 'shm', None):
             try:
                 self.shm.close()
@@ -770,6 +782,7 @@ class TrafficMonitorEngine:
         # ==========================================
         # 3. 业务逻辑收尾：强制结算所有滞留车辆
         # ==========================================
+        report_progress(70, "正在强制结算场内滞留车辆轨迹...")
         logger.info("[Engine] 保存剩余车辆数据...")
         import time
         # 伪造一个未来的绝对时间戳 (当前时间 + 1000秒)，强制所有未结算的车辆触发超时离场
@@ -780,6 +793,7 @@ class TrafficMonitorEngine:
         # 4. 异步 OCR 工作池回收
         # ==========================================
         if getattr(self, 'plate_worker', None):
+            report_progress(85, "正在回收异步 OCR 工作队列...")
             logger.info("[Engine] 正在强制回收 OCR 子进程...")
             self.plate_worker.stop()
 
@@ -787,9 +801,11 @@ class TrafficMonitorEngine:
         # 5. 任务状态更新
         # ==========================================
         if getattr(self, 'current_session_id', None):
+            report_progress(95, "正在合并并保存 SQLite 数据库索引...")
             self.db.complete_session(self.current_session_id, time.time())
 
-        logger.info("[Engine] 引擎安全下线。")
+        report_progress(100, "引擎安全关闭，所有数据保存完毕。")
+        logger.info("[Engine] 引擎安全关闭。")
 
     def _print_profile_stats(self):
         """打印每 30 帧的性能监控报表 (已接入 logging 模块并支持开关)"""
