@@ -37,6 +37,8 @@ RUN apt-get update && apt-get install -y \
     libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
     gstreamer1.0-libcamera \
     gstreamer1.0-gl \
     libcamera-tools \
@@ -62,6 +64,10 @@ RUN apt-get update && apt-get install -y \
 # 建立 Python 虚拟环境 (遵循 PEP 668 规范)
 RUN python3 -m venv --system-site-packages /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+
+# 设置 pip 全局高速镜像源
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/ \
+    && pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
 
 # 安装 Python 依赖，需要额外删除其他库附带的其他版本 opencv-python
 COPY requirements.txt .

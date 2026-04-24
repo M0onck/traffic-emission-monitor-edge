@@ -158,7 +158,7 @@ class GstPipelineManager:
 
             record_branch = (
                 f" t. ! queue max-size-buffers=30 leaky=downstream ! "
-                f"videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 ! "
+                f"videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 ! "
                 f"h264parse ! splitmuxsink name=rec_sink location=\"{loc_pattern}\" max-size-time={segment_ns} async-handling=true "
             )
 
@@ -183,9 +183,7 @@ class GstPipelineManager:
             f"video/x-raw, width={out_w}, height={out_h}, format=BGR ! tee name=t " 
         )
 
-        # ==========================================
-        # 4. 专供原生 HailoRT 调用的 640x640 分支
-        # ==========================================
+        # --- 4. AI 推理分支 ---
         ai_branch = (
             f" t. ! queue name=ai_q max-size-buffers=2 leaky=downstream ! "
             f"videoscale qos=false ! video/x-raw, width=640, height=640 ! "

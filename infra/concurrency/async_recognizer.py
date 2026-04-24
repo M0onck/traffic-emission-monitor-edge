@@ -33,7 +33,7 @@ class RecognitionWorker(mp.Process):
         os.environ["OMP_NUM_THREADS"] = "1"
 
         logger.info(f"[OCR Worker-{self.worker_id}] 正在初始化 ONNX 模型...")
-        # 为每个进程单独实例化模型，完美避开多进程/多线程竞态条件
+        # 为每个进程单独实例化模型
         detector = MultiTaskDetectorORT(cfg.Y5FU_PATH)
         classifier = ClassificationORT(cfg.LITEMODEL_PATH)
         pipeline = EdgePlateClassifierPipeline(detector, classifier)

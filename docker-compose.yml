@@ -43,3 +43,5 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+    ulimits:
+      core: 0                                         # 禁止生成 core dump 文件

@@ -137,8 +137,21 @@ class TrafficMonitorEngine:
             # 用于标记是否已进行坐标轴初始化
             video_initialized = False
 
+            # 30 fps 帧率锁配置
+            cached_detections = None
+            target_fps = getattr(self.cfg, 'FPS', 30.0)
+            frame_interval = 1.0 / target_fps
+            last_frame_time = time.time()
+
             while self._is_running:
                 now = time.time()
+
+                # UI 帧率锁
+                elapsed = now - last_frame_time
+                if elapsed < frame_interval:
+                    time.sleep(frame_interval - elapsed)
+                    continue
+                last_frame_time = time.time()
 
                 # --- 感知子进程看门狗 ---
                 
@@ -173,15 +186,23 @@ class TrafficMonitorEngine:
                         continue
 
                 # --- A. 数据提取 ---
-                try:
-                    hailo_data = self.bbox_queue.get(timeout=0.1)
-                    last_hailo_data = hailo_data
-                    empty_queue_streak = 0 # 收到心跳，重置看门狗
-                    self.consecutive_restart_count = 0 # 收到数据说明硬件健康，清零熔断计数
-                except queue.Empty:
+                has_new_ai_data = False
+                
+                # 利用 while 循环清空可能积压的队列，确保只拿最新的一帧，实现零延迟
+                while True:
+                    try:
+                        hailo_data = self.bbox_queue.get_nowait()
+                        last_hailo_data = hailo_data
+                        has_new_ai_data = True
+                        
+                        empty_queue_streak = 0 # 看门狗状态
+                        self.consecutive_restart_count = 0 # 硬重启状态
+                    except queue.Empty:
+                        break
+                
+                if not has_new_ai_data:
                     empty_queue_streak += 1
-                    # 只有在没有新数据时才 continue，有新数据必然有新画面
-                    continue
+                    # 没有 continue 是为了无阻塞继续显示新画面
 
                 # 从共享内存深拷贝出最新画面
                 current_frame = self.shm_array.copy()
@@ -212,11 +233,19 @@ class TrafficMonitorEngine:
 
                 # --- C. 核心处理 ---
                 self.current_frame_id += 1
-                detections = self.vision_pipeline.process(current_frame, last_hailo_data)
-                self.process_frame(current_frame, detections, self.current_frame_id, frame_timestamp=now)
+                if has_new_ai_data:
+                    # 有新AI数据：全量运行追踪、过滤和入库
+                    detections = self.vision_pipeline.process(current_frame, last_hailo_data)
+                    cached_detections = detections  # 更新缓存
+                    
+                    # 只有在这里才执行耗时的空间测算与数据库写入
+                    self.process_frame(current_frame, detections, self.current_frame_id, frame_timestamp=now)
+                else:
+                    # 无新AI数据：跳过业务处理，直接使用上一帧的检测框用于画图
+                    detections = cached_detections
 
                 # --- D. 渲染分发 ---
-                if self.frame_callback:
+                if self.frame_callback and detections is not None:
                     # 计算跨越整个生命周期的真实帧率
                     current_loop_time = time.perf_counter()
                     real_elapsed = current_loop_time - last_loop_time
