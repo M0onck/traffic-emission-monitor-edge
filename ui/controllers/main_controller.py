@@ -1252,8 +1252,8 @@ class MainController:
         try:
             usage = shutil.disk_usage(path)
             if usage.free < MIN_FREE_BYTES:
-                # 寻找该目录下所有的 .mp4 文件
-                files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.mp4')]
+                # 使用 endswith 的元组传参，同时识别 mp4 和 mkv
+                files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(('.mp4', '.mkv'))]
                 if not files: return
                 
                 # 按照文件创建时间排序，找到最旧的

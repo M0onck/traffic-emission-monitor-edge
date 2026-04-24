@@ -2,6 +2,7 @@ import gi
 import numpy as np
 import os
 import time
+from datetime import datetime
 import logging
 import infra.config.loader as cfg
 
@@ -81,8 +82,8 @@ class GstPipelineManager:
         """
         每次录制切片时由 GStreamer 回调，动态生成含有精确当前时间戳的文件名
         """
-        current_time = int(time.time())
-        filename = f"{self.session_id}_seq{fragment_id:05d}_start{current_time}.mkv"
+        current_time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.session_id}_seq{fragment_id:05d}_start{current_time_str}.mkv"
         return os.path.join(self.config.RECORD_SAVE_PATH, filename)
 
     def _on_ai_sample(self, sink):
@@ -252,10 +253,10 @@ class GstPipelineManager:
             # 发送 EOS 信号：保证所有缓冲数据落盘，mp4 文件拥有合法的 moov 尾部头
             self.pipeline.send_event(Gst.Event.new_eos())
             
-            # 总线等待：给予系统最多 2 秒处理完结帧
+            # 总线等待：给予系统最多 12 秒处理完结帧
             bus = self.pipeline.get_bus()
             if bus:
-                bus.timed_pop_filtered(2 * Gst.SECOND, Gst.MessageType.EOS)
+                bus.timed_pop_filtered(12 * Gst.SECOND, Gst.MessageType.EOS)
                 
             # 彻底物理释放
             self.pipeline.set_state(Gst.State.NULL)

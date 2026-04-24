@@ -89,7 +89,7 @@ class StorageManager:
             
         session_map = {}
         for file in cls.REC_DIR.iterdir():
-            if file.suffix.lower() == '.mp4' and '_seq' in file.name:
+            if file.suffix.lower() in ['.mp4', '.mkv'] and '_seq' in file.name:
                 # 提取 session_id (前缀部分)
                 session_id = file.name.split('_seq')[0]
                 if session_id not in session_map:

@@ -20,6 +20,7 @@ class EngineWorker(QThread):
 
     def run(self):
         """后台线程仅负责启动引擎循环"""
+        self.engine.shutdown_progress_callback = lambda val, msg: self.stop_progress.emit(val, msg)
         if self.engine:
             self.engine.run()
 
