@@ -1,9 +1,8 @@
-import cv2
+import sys
 import queue
 import numpy as np
 import supervision as sv
 import time
-import traceback
 import logging
 import multiprocessing as mp
 from multiprocessing import shared_memory
@@ -178,6 +177,7 @@ class TrafficMonitorEngine:
                     hailo_data = self.bbox_queue.get(timeout=0.1)
                     last_hailo_data = hailo_data
                     empty_queue_streak = 0 # 收到心跳，重置看门狗
+                    self.consecutive_restart_count = 0 # 收到数据说明硬件健康，清零熔断计数
                 except queue.Empty:
                     empty_queue_streak += 1
                     # 只有在没有新数据时才 continue，有新数据必然有新画面
@@ -244,30 +244,49 @@ class TrafficMonitorEngine:
             self.cleanup(self.current_frame_id)
 
     def _restart_daemon(self, config_dict):
-        """看门狗：热重启感知进程"""
-        logger.warning("[Watchdog] 正在清理异常的感知进程...")
+        """看门狗：热重启感知进程 (安全增强版)"""
+        logger.warning(f"[Watchdog] 准备重启感知进程 (累计连续重启: {self.consecutive_restart_count + 1} 次)")
+        
+        # 触发熔断保护：如果连续重启超过 3 次，说明发生了不可逆的硬件死锁
+        if self.consecutive_restart_count >= 3:
+            logger.critical("[Watchdog] 致命错误：连续 3 次拉起硬件失败，NPU或摄像头可能已底层死锁！")
+            logger.critical("[Watchdog] 触发系统级熔断，主动退出主进程...")
+            self._is_running = False
+            sys.exit(1) # 主进程自杀，Docker 会捕捉到异常退出并销毁/重建整个容器环境
+            
+        self.consecutive_restart_count += 1
+
+        # 安全杀死旧进程
         if getattr(self, 'p_daemon', None):
             self.p_daemon.terminate()
             self.p_daemon.join(timeout=2)
             if self.p_daemon.is_alive():
-                self.p_daemon.kill() # 强杀僵尸进程
+                logger.warning("[Watchdog] 进程未响应 SIGTERM，发送 SIGKILL 强杀...")
+                self.p_daemon.kill()
+                self.p_daemon.join(timeout=1)
                 
-        # 清空拥堵的队列，防止残留脏数据毒害新进程
-        while not self.bbox_queue.empty():
-            try: self.bbox_queue.get_nowait()
-            except: pass
+        # 关闭旧队列（不要去试图取数据）
+        try:
+            self.bbox_queue.close()
+            self.bbox_queue.cancel_join_thread()
+        except: pass
+        
+        # 实例化全新的 IPC 对象
+        self.bbox_queue = mp.Queue(maxsize=3)
+        self.stop_event = mp.Event()
+        self.daemon_ready_event = mp.Event()
 
-        logger.info("[Watchdog] 重新初始化 GStreamer 与 PyHailoRT...")
-        self.stop_event.clear() # 确保事件锁为放行状态
-        self.daemon_ready_event.clear() # 重置握手标志
+        logger.info("[Watchdog] 已重建 IPC 通道，重新初始化 GStreamer 与 PyHailoRT...")
         self.p_daemon = mp.Process(
             target=perception_worker,
             args=(self.shm_name, self.frame_shape, self.bbox_queue, self.stop_event, config_dict, self.daemon_ready_event)
         )
         self.p_daemon.daemon = True
         self.p_daemon.start()
+        
+        # 重置超时判定
         self.init_hang_timeout = time.time() + 60.0
-        logger.info(f"[Watchdog] 感知进程重启完成 (PID: {self.p_daemon.pid})，已恢复监控.")
+        logger.info(f"[Watchdog] 感知进程重启请求完成 (PID: {self.p_daemon.pid}).")
 
     def _initialize_geometry(self, frame):
         """动态坐标系适配逻辑"""
