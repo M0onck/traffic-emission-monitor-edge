@@ -106,8 +106,7 @@ class MonitorStartWorker(QThread):
             )
             worker.set_engine(engine)
             
-            self.progress_updated.emit(100, "引擎装配完毕，正在切换运行模式...")
-            self.msleep(300)
+            self.progress_updated.emit(85, "引擎装配完毕，准备拉起视频源与计算节点...")
             
             # 将创建好的对象抛回主线程，由主线程负责执行
             self.finished.emit(True, "", worker, engine)
@@ -286,7 +285,30 @@ class MainController:
         @brief UI 线程回调：渲染图像、刷新数据面板并释放 Worker 锁。
         """
         try:
-            # 1. 无头模式拦截：如果开启了隐藏画面，则跳过 UI 图像的转换与渲染，节省 CPU
+            # 首帧拦截与界面平滑过渡
+            if getattr(self, '_has_first_frame', None) is False:
+                self._has_first_frame = True
+                
+                # 关闭安全看门狗和异常监听
+                if hasattr(self, '_first_frame_timer'):
+                    self._first_frame_timer.stop()
+                try: self.worker.finished.disconnect(self._on_engine_premature_exit)
+                except: pass
+
+                # 进度条真正 100%，触发平滑关闭
+                if hasattr(self, 'start_dialog') and self.start_dialog:
+                    self.start_dialog.update_progress(100, "画面捕获成功，正在切入实时监控...")
+                    # 延时 300ms 关闭，让用户肉眼看清 100% 状态
+                    QTimer.singleShot(300, lambda: self.start_dialog.close_with_anim(QDialog.Accepted))
+                
+                # 延迟执行原来的状态切换与页面路由
+                self.is_collecting = True
+                self.update_nav_buttons()
+                self.update_main_menu_btn_style()
+                self.enter_app(self.view.page_monitor)
+                print(">>> [Controller] 监测引擎首帧到达，系统接管 UI。")
+
+            # 无头模式拦截：如果开启了隐藏画面，则跳过 UI 图像的转换与渲染，节省 CPU
             if not getattr(self, 'is_headless', False):
                 if hasattr(self.view, 'video_canvas'):
                     self.view.video_canvas.update_image(rgb_frame)
@@ -295,8 +317,8 @@ class MainController:
             print(f"[UI异常] 视频帧渲染失败: {e}")
             
         finally:
-            # 3. 核心安全机制：无论是否无头模式，无论渲染是否报错，
-            # 必须调用新版 Worker 的 unlock_frame 释放锁，否则后台引擎会被永久挂起
+            # 核心安全机制：无论是否无头模式，无论渲染是否报错，
+            # 必须调用 Worker 的 unlock_frame 释放锁，否则后台引擎会被永久挂起
             if self.worker:
                 self.worker.unlock_frame()
 
@@ -327,37 +349,66 @@ class MainController:
         print(">>> [Controller] 监控任务已完全终止并回收所有资源。")
 
     def _on_monitor_start_finished(self, success, error_msg, worker_instance, engine_instance):
-        """监测引擎装配完成后的主线程回调"""
-        if hasattr(self, 'start_dialog'):
-            self.start_dialog.close_with_anim(QDialog.Accepted)
+        """监测引擎装配完成后的主线程回调（此时仅为对象创建完毕，尚未出图）"""
+        if not success:
+            if hasattr(self, 'start_dialog'):
+                self.start_dialog.close_with_anim(QDialog.Accepted)
+            EdgeMessageBox(self.view, "引擎启动失败", f"监测引擎装配过程发生异常：\n{error_msg}", is_warning=True).exec_()
+            return
 
-        if success:
-            # 接收子线程建好的实例
-            self.worker = worker_instance
-            self.engine = engine_instance
+        self.worker = worker_instance
+        self.engine = engine_instance
+        
+        # 1. 挂起首帧拦截标志位
+        self._has_first_frame = False 
+        
+        # 2. 更新进度条文字，但不关闭弹窗，利用它的模态阻塞用户点击事件
+        if hasattr(self, 'start_dialog'):
+            self.start_dialog.update_progress(90, "正在拉起 NPU 驱动和 GStreamer，等待首帧画面...")
+
+        # 3. 绑定 UI 回调，所有的业务切换都将在拿到第一帧后执行
+        self.worker.frame_ready.connect(self.on_frame_received)
+        
+        # 4. 绑定异常退出检测（防止底层暴毙导致进度条永远卡死）
+        self.worker.finished.connect(self._on_engine_premature_exit)
+        
+        # 5. 设置 15 秒超时看门狗
+        self._first_frame_timer = QTimer(self.view)
+        self._first_frame_timer.setSingleShot(True)
+        self._first_frame_timer.timeout.connect(self._on_first_frame_timeout)
+        self._first_frame_timer.start(15000)
+
+        # 6. 正式启动底层多进程与计算循环
+        self.worker.start()
+
+    def _on_first_frame_timeout(self):
+        """首帧超时看门狗回调"""
+        if getattr(self, '_has_first_frame', False): return
+        
+        print("[Error] 引擎启动首帧等待超时！")
+        if hasattr(self, 'start_dialog'):
+            self.start_dialog.close_with_anim(QDialog.Rejected)
             
-            # 在主线程安全地绑定 UI 刷新信号
-            self.worker.frame_ready.connect(self.on_frame_received)
+        self.stop_monitoring() # 强制清理可能半路卡死的后台资源
+        EdgeMessageBox(
+            self.view, "引擎启动超时", 
+            "底层传感器或感知节点耗时过长，未能返回画面。", 
+            "请检查摄像头的物理连接，以及 Hailo 驱动状态。", 
+            is_warning=True
+        ).exec_()
+
+    def _on_engine_premature_exit(self):
+        """在首帧到达前，引擎线程意外结束"""
+        if getattr(self, '_has_first_frame', False): return
+        
+        if hasattr(self, '_first_frame_timer'):
+            self._first_frame_timer.stop()
+
+        if hasattr(self, 'start_dialog'):
+            self.start_dialog.close_with_anim(QDialog.Rejected)
             
-            # 启动后台守护线程
-            self.worker.start()
-            
-            # 刷新界面状态
-            self.is_collecting = True
-            self.update_nav_buttons()
-            self.update_main_menu_btn_style()
-            self.enter_app(self.view.page_monitor)
-            
-            print(">>> [Controller] 监控引擎已全面启动。")
-        else:
-            # 失败处理：弹出告警并回退
-            from ui.components.edge_dialog import EdgeMessageBox
-            EdgeMessageBox(
-                self.view, 
-                "引擎启动失败", 
-                f"监测引擎装配过程发生异常：\n{error_msg}", 
-                is_warning=True
-            ).exec_()
+        EdgeMessageBox(self.view, "引擎意外崩溃", "感知进程在输出首帧前异常退出。", "请查看终端控制台的报错日志以获取详情。", is_warning=True).exec_()
+        self.on_engine_finished()
 
     def _init_timers(self):
         """初始化 UI 层的定时刷新器与守护任务"""
@@ -1013,7 +1064,14 @@ class MainController:
 
         usbs = StorageManager.get_available_usbs()
         if not usbs:
-            # 这里复用你之前的弹窗逻辑
+            dialog = EdgeMessageBox(
+                self.view, 
+                "未检测到外部存储", 
+                "请将 U 盘插入树莓派的 USB 接口。", 
+                info_text="系统仅支持导出至挂载于 /media 目录下的设备。",
+                is_warning=True
+            )
+            dialog.exec_()
             return 
         target_usb_path = usbs[0]
 
