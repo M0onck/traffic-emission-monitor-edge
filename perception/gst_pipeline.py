@@ -178,7 +178,7 @@ class GstPipelineManager:
         # --- 2. 源分支（切换摄像头或者视频文件） ---
         if is_camera:
             source_head = (
-                f"tcpclientsrc host=127.0.0.1 port=5000 ! "
+                f"tcpclientsrc host=127.0.0.1 port=5000 do-timestamp=true ! "
                 f"jpegparse ! "
                 f"queue max-size-buffers=1 leaky=downstream ! " 
                 f"jpegdec ! "

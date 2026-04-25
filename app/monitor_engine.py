@@ -72,6 +72,7 @@ class TrafficMonitorEngine:
         self.profile_frames = 0
         self.ocr_on = getattr(self.cfg, 'ENABLE_OCR', False)
         self.motion_on = getattr(self.cfg, 'ENABLE_MOTION', True)
+        # self.consecutive_restart_count = 0
 
     def stop(self):
         """主动阻断主循环，并触发子进程退出事件"""
