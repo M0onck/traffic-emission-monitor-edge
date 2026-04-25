@@ -46,6 +46,23 @@ echo "检查并安装基础宿主机依赖 (如 i2c-tools)..."
 apt-get update -qq
 apt-get install -y -qq i2c-tools
 
+# 7. 安装并配置 v4l2loopback 虚拟摄像头模块
+echo "[Host Setup] 安装并配置 v4l2loopback 虚拟摄像头模块..."
+sudo apt-get update
+sudo apt-get install -y v4l2loopback-dkms v4l2loopback-utils
+
+# 检查模块是否已加载，如果未加载则动态加载
+if ! lsmod | grep -q "^v4l2loopback"; then
+    # video_nr=10 指定生成 /dev/video10
+    # max_buffers=8 增加缓冲池以抗击 Python 层的卡顿
+    # exclusive_caps=1 允许 Chrome/OpenCV 像对待物理相机一样识别它
+    sudo modprobe v4l2loopback video_nr=10 max_buffers=8 exclusive_caps=1
+fi
+
+# 确保开机自启该模块
+echo "v4l2loopback" | sudo tee /etc/modules-load.d/v4l2loopback.conf
+echo "options v4l2loopback video_nr=10 max_buffers=8 exclusive_caps=1" | sudo tee /etc/modprobe.d/v4l2loopback.conf
+
 echo "=============================================================================="
 echo "宿主机硬件初始化完成！"
 echo "变更需要重启才能生效，特别是 PCIe Gen 2、IMX296 的 3.3V PWM 约束以及 I2C 总线。"

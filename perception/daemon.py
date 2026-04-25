@@ -1,3 +1,4 @@
+import os
 import multiprocessing as mp
 from multiprocessing import shared_memory
 import numpy as np
@@ -5,6 +6,7 @@ import time
 import signal
 import logging
 import threading
+import subprocess
 from perception.gst_pipeline import GstPipelineManager
 
 # 导入原生 PyHailoRT
@@ -51,6 +53,27 @@ def parse_hailo_ragged_list(raw_list, conf_threshold=0.45):
 
 def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict, ready_event):
     logger.info("-> [感知进程] 启动，准备挂载 GStreamer 与 PyHailoRT...")
+
+    # 提升当前感知业务进程的优先级
+    try:
+        os.nice(-10)
+        logger.info("[感知进程] 已成功提权，开启实时抢占模式。")
+    except PermissionError:
+        logger.warning("[感知进程] 提权失败，请检查 Docker 启动时是否包含 --cap-add=SYS_NICE")
+
+    # 启动独立虚拟相机进程
+    logger.info("[感知进程] 正在后台启动底层相机采集守护进程 (v4l2loopback)...")
+    feeder_cmd = [
+        "gst-launch-1.0", # "-q",
+        "libcamerasrc", "!",
+        "video/x-raw,,format=NV12,width=640,height=640,framerate=30/1", "!",
+        "v4l2sink", "device=/dev/video10", "sync=false"
+    ]
+    # 使用 Popen 放在后台独立运行，完全剥离于当前的 Python 线程池
+    feeder_process = subprocess.Popen(feeder_cmd)
+
+    # 让主进程沉睡 1.5 秒，给硬件驱动热身和 v4l2loopback 管道准备的时间
+    time.sleep(1.5)
 
     # 捕获看门狗发出的 SIGTERM 信号，触发优雅退出
     def sigterm_handler(signum, frame):
@@ -143,3 +166,14 @@ def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict, read
         try:
             existing_shm.close()
         except: pass
+
+        logger.info("[感知进程] 正在终止独立相机采集进程...")
+        if 'feeder_process' in locals() and feeder_process.poll() is None:
+            feeder_process.terminate() # 发送 SIGTERM 请求优雅退出
+            try:
+                # 等待 2 秒，如果它卡死了就强杀
+                feeder_process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                logger.warning("[感知进程] 采集进程未响应，正在强制结束进程...")
+                feeder_process.kill() # 发送 SIGKILL 强杀
+        logger.info("[感知进程] 资源清理完毕，进程安全退出。")

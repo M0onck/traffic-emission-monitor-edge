@@ -175,8 +175,9 @@ class GstPipelineManager:
                 f"splitmuxsink name=rec_sink muxer=matroskamux max-size-time={segment_ns} "
             )
 
+        # --- 2. 源分支（切换摄像头或者视频文件） ---
         if is_camera:
-            source_head = f"libcamerasrc ! video/x-raw, format=NV12, width={cam_w}, height={cam_h}, framerate=30/1"
+            source_head = f"v4l2src device=/dev/video10 do-timestamp=true ! video/x-raw, format=NV12, width={cam_w}, height={cam_h}, framerate=30/1"
         else:
             abs_path = os.path.abspath(self.video_path)
             source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
