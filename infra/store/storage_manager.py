@@ -37,23 +37,29 @@ class StorageManager:
         usbs = []
         try:
             for item in cls.USB_ROOT.iterdir():
-                if item.is_dir() and not item.name.startswith('.'):
+                if not item.is_dir() or item.name.startswith('.'):
+                    continue
+                    
+                # 情况 1：U盘直接挂载在 /media 下 (例如 /media/USB_DISK)
+                # 使用 ismount 严格校验这是否是一个跨越了物理分区的真实存储设备
+                if os.path.ismount(item):
+                    usbs.append(item)
+                else:
+                    # 情况 2：U盘挂载在操作系统为用户创建的子目录下 (例如 /media/pi/USB_DISK)
                     try:
-                        # 尝试向下探索一层 (应对 /media/username/USB_NAME 的情况)
-                        sub_dirs = [d for d in item.iterdir() if d.is_dir() and not d.name.startswith('.')]
-                        if sub_dirs:
-                            usbs.extend(sub_dirs)
-                        else:
-                            usbs.append(item)
+                        for sub_item in item.iterdir():
+                            if sub_item.is_dir() and not sub_item.name.startswith('.'):
+                                # 必须是真实的物理挂载点，不能将空文件夹误认为 U 盘
+                                if os.path.ismount(sub_item):
+                                    usbs.append(sub_item)
                     except PermissionError:
-                        # 遇到属于其他用户或系统锁定的私有目录，直接无视并跳过
+                        # 遇到系统锁定的私有目录，直接跳过
                         continue
         except PermissionError:
             # 如果连 /media 本身的读取权限都没有
             return []
 
-        # 对收集到的所有疑似路径进行真实 [写权限] 校验
-        # 彻底过滤掉挂载的只读光驱、系统恢复盘等假目标
+        # 最终校验写权限，过滤掉只读光驱、写保护的 U 盘或系统恢复盘
         valid_usbs = [usb for usb in usbs if os.access(usb, os.W_OK)]
         
         return valid_usbs
