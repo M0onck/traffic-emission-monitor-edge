@@ -306,8 +306,19 @@ void parseLineToStruct(const std::string& line) {
         while(std::getline(ss, segment, ',')) { vals.push_back(segment); }
 
         if (vals.size() >= 7) {
-            std::lock_guard<std::mutex> lock(data_mtx);
             try {
+                // 先在局部变量中尝试转换
+                float parsed_humidity = std::stof(vals[1]);
+                
+                // 物理常识过滤
+                // 如果发现 ESP32 传来了不合常理的 0 值
+                // 直接 return 丢弃，保留 shared_data 缓存值
+                if (parsed_humidity <= 0.01f) {
+                    return; 
+                }
+
+                // 若数据健康，获取互斥锁并更新全局共享状态
+                std::lock_guard<std::mutex> lock(data_mtx);
                 shared_data.temp = std::stof(vals[0]);
                 shared_data.humidity = std::stof(vals[1]);
                 shared_data.windSpeed = std::stof(vals[2]);

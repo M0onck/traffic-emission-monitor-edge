@@ -695,12 +695,17 @@ class TrafficMonitorEngine:
         
         # 构建干净的物理时空轨迹数据结构，隔离底层的CV像素与帧率参数
         trajectory_for_db = []
+
+        # 用于覆盖原始的密集轨迹，供 UI 绘图使用
+        downsampled_trajectory = [] 
+
         # 获取当前切片真实的起点时间
         first_time = float(record.get('first_time', 0.0))
         for i in valid_indices:
             p = trajectory[i]
             # 利用 first_time 严格剔除为了平滑算法而保留的历史重叠点
             if float(p['timestamp']) >= first_time:
+                downsampled_trajectory.append(p) # 收集保留下来的完整属性点
                 trajectory_for_db.append({
                     'timestamp': float(p['timestamp']),
                     'x': float(p['raw_x']),   # 映射为纯粹的物理横向坐标 (米)
@@ -712,6 +717,10 @@ class TrafficMonitorEngine:
 
         # 将打包好的纯净轨迹挂载到 record，供 _handle_exits 写入 Veh_Raw
         record['trajectory_blob_data'] = trajectory_for_db
+
+        # 使用降采样后的轨迹覆盖原有的高频轨迹
+        # 因为随后 _handle_exits 会将 record 发送给 UI，这样 UI 就会使用这些稀疏的抽样点来绘制平滑曲线，与数据库保持一致。
+        record['trajectory'] = downsampled_trajectory
 
     def _prepare_labels(self, detections, frame_shape):
         img_h, img_w = frame_shape[:2]  
