@@ -276,7 +276,7 @@ class TrafficMonitorEngine:
             self.cleanup(self.current_frame_id)
 
     def _restart_daemon(self, config_dict):
-        """看门狗：热重启感知进程 (安全增强版)"""
+        """看门狗：热重启感知进程"""
         logger.warning(f"[Watchdog] 准备重启感知进程 (累计连续重启: {self.consecutive_restart_count + 1} 次)")
         
         # 触发熔断保护：如果连续重启超过 3 次，说明发生了不可逆的硬件死锁
@@ -288,19 +288,22 @@ class TrafficMonitorEngine:
             
         self.consecutive_restart_count += 1
 
-        # 安全杀死旧进程
+        # 安全清除旧进程
         if getattr(self, 'p_daemon', None):
-            self.p_daemon.terminate()
-            # 给足子进程执行 try...finally 内部 EOS 的时间
-            self.p_daemon.join(timeout=12) 
-            
+            # 如果子进程是因为卡死而导致重启，在这里亲手干掉它
             if self.p_daemon.is_alive():
-                logger.critical("[Watchdog] 进程耗时12秒仍未响应，发生底层死锁，发送 SIGKILL 强杀.")
-                self.p_daemon.kill()
-                self.p_daemon.join(timeout=1)
+                self.p_daemon.terminate()
+                self.p_daemon.join(timeout=12) 
                 
-                # 既然发生了内核强杀/断电，立刻唤醒 FFmpeg 修复刚刚留下的断头视频
-                self.heal_broken_mkv_timeline()
+                if self.p_daemon.is_alive():
+                    logger.critical("[Watchdog] 进程耗时12秒仍未响应，发送 SIGKILL 强杀.")
+                    self.p_daemon.kill()
+                    self.p_daemon.join(timeout=1)
+            
+            # 将修复机制提取到 if 外部
+            # 无论进程是刚才被看门狗 kill 掉的，还是用 kill -9 抹杀的，
+            # 或者是 C++ 底层段错误暴毙的，只要触发了重启，上一个视频必然是断头的，必须立刻修复
+            self.heal_broken_mkv_timeline()
                 
         # 关闭旧队列（不要去试图取数据）
         try:
@@ -333,24 +336,31 @@ class TrafficMonitorEngine:
             
             search_pattern = os.path.join(record_dir, f"{session_id}_seq*.mkv")
             files = glob.glob(search_pattern)
+            
+            # 剔除掉上次可能残留的 .tmp.mkv 临时文件
+            files = [f for f in files if not f.endswith('.tmp.mkv')]
             if not files: return
             
-            # 找到最新创建的（也是刚刚因为强杀没封口的）那个视频
+            # 找到最新创建的（刚刚没封口的）那个视频
             latest_file = max(files, key=os.path.getctime)
             logger.warning(f"[Watchdog] 启动视频修复机制，正在修复断裂的时间轴: {latest_file}")
             
             tmp_file = latest_file + ".tmp.mkv"
             
-            subprocess.run([
+            # 捕获 stderr 以供 debug
+            result = subprocess.run([
                 "ffmpeg", "-y", "-err_detect", "ignore_err",
                 "-i", latest_file, "-c", "copy", tmp_file
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], capture_output=True, text=True)
             
-            os.replace(tmp_file, latest_file)
-            logger.info("[Watchdog] MKV 视频文件时间轴重建完毕.")
+            if result.returncode == 0:
+                os.replace(tmp_file, latest_file)
+                logger.info("[Watchdog] MKV 视频文件时间轴重建完毕.")
+            else:
+                logger.error(f"[Watchdog] FFmpeg 修复失败，退出码: {result.returncode}。错误原因: {result.stderr}")
             
         except Exception as e:
-            logger.error(f"[Watchdog] 视频修复流程失败: {e}")
+            logger.error(f"[Watchdog] 视频修复流程发生意外异常: {e}")
 
     def _initialize_geometry(self, frame):
         """动态坐标系适配逻辑"""
