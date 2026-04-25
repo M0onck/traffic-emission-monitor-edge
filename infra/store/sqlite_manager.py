@@ -172,7 +172,7 @@ class DatabaseManager:
             self.conn.execute("DELETE FROM Env_Raw WHERE session_id = ?", (session_id,))
             self.conn.execute("DELETE FROM Veh_Raw WHERE session_id = ?", (session_id,))
             self.conn.execute("DELETE FROM Veh_Sum WHERE session_id = ?", (session_id,))
-            self.conn.execute("DELETE FROM Aligned_Dataset WHERE session_id = ?", (session_id,))
+            self.conn.execute("DELETE FROM Aligned_Snapshots WHERE session_id = ?", (session_id,))
             self.conn.execute("DELETE FROM Session_Task WHERE session_id = ?", (session_id,))
             self.conn.commit()
             print(f">>> [Database] 任务 {session_id} 数据已被彻底删除。")
@@ -187,7 +187,7 @@ class DatabaseManager:
             self.conn.execute("DELETE FROM Env_Raw")
             self.conn.execute("DELETE FROM Veh_Raw")
             self.conn.execute("DELETE FROM Veh_Sum")
-            self.conn.execute("DELETE FROM Aligned_Dataset")
+            self.conn.execute("DELETE FROM Aligned_Snapshots")
             self.conn.execute("DELETE FROM Session_Task")
             self.conn.commit()
             print(">>> [Database] 所有历史数据已被清空。")
@@ -278,31 +278,40 @@ class DatabaseManager:
         else:
             print("[Database Error] SQL模板 'insert_veh_sum' 未定义")
 
-    def insert_aligned_dataset(self, session_id: str, aligned_timestamp: float, 
-                               pmc_raw: float, pmc_baseline: float, delta_c_flux: float, 
-                               e_traffic: float, d_trans: float, w_cross: float, delta_tv: float):
+    def insert_aligned_snapshot(self, snapshot: dict):
         """
-        写入对齐后的多源数据集，用于后续气象归一化反演
+        写入对齐后的 L2 级物理切片快照
         """
-        sql = self.queries.get('insert_aligned_dataset')
+        sql = self.queries.get('insert_aligned_snapshot')
         if sql:
-            params = (session_id, float(aligned_timestamp), 
-                      float(pmc_raw), float(pmc_baseline), float(delta_c_flux), 
-                      float(e_traffic), float(d_trans), float(w_cross), float(delta_tv))
+            # 安全提取字典，空值写入 NULL (None)
+            params = (
+                snapshot['session_id'], 
+                float(snapshot['aligned_timestamp']), 
+                snapshot.get('air_temp'), 
+                snapshot.get('ground_temp'), 
+                snapshot.get('humidity'), 
+                snapshot.get('wind_speed'), 
+                snapshot.get('wind_dir'), 
+                snapshot.get('pm25'), 
+                snapshot.get('pm10'),
+                int(snapshot['active_vehicle_count']),
+                snapshot['vehicles_data'] # 直接存入 JSON 字符串
+            )
             try:
                 self.conn.execute(sql, params)
                 self.conn.commit()
             except Exception as e:
-                print(f"[Database Error] 插入 Aligned_Dataset 失败: {e}")
+                print(f"[Database Error] 插入 Aligned_Snapshots 失败: {e}")
         else:
-            print("[Database Error] SQL模板 'insert_aligned_dataset' 未定义")
+            print("[Database Error] SQL模板 'insert_aligned_snapshot' 未定义")
 
     def get_table_data_for_export(self, table_name: str, session_id: str):
         """
         根据表名和 session_id 获取所有原始数据记录及表头，用于 CSV 导出
         """
         # 基本的白名单防御，防止 SQL 注入或意外读取系统表
-        allowed_tables = ["Veh_Sum", "Veh_Raw", "Env_Raw", "Aligned_Dataset", "Session_Task"]
+        allowed_tables = ["Veh_Sum", "Veh_Raw", "Env_Raw", "Aligned_Snapshots", "Session_Task"]
         if table_name not in allowed_tables:
             print(f"[Database Error] 尝试导出的表名 {table_name} 不合法。")
             return None, None
@@ -326,6 +335,42 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"[Database Error] 导出数据时查询表 {table_name} 失败: {e}")
             return None, None
+
+    def get_nearest_env_raw(self, session_id: str, target_time: float, max_tolerance: float) -> dict:
+        """获取离目标时间戳最近的一条环境记录"""
+        sql = self.queries.get('get_nearest_env_raw')
+        if not sql: return {}
+        try:
+            cursor = self.conn.cursor()
+            # 对应 SQL 中的 4 个 '?' : session_id, target_time, max_tolerance, target_time
+            cursor.execute(sql, (session_id, target_time, max_tolerance, target_time))
+            row = cursor.fetchone()
+            if row:
+                cols = [column[0] for column in cursor.description]
+                result = dict(zip(cols, row))
+                cursor.close()
+                return result
+            cursor.close()
+            return {}
+        except sqlite3.Error as e:
+            print(f"[Database Error] get_nearest_env_raw 失败: {e}")
+            return {}
+
+    def get_active_vehicles_during(self, session_id: str, target_time: float) -> list:
+        """获取在特定时间点处于场内的所有车辆及其原始轨迹 BLOB"""
+        sql = self.queries.get('get_active_vehicles_during')
+        if not sql: return []
+        try:
+            cursor = self.conn.cursor()
+            # 对应 SQL 中的 3 个 '?' : session_id, target_time, target_time
+            cursor.execute(sql, (session_id, target_time, target_time))
+            rows = cursor.fetchall()
+            cols = [column[0] for column in cursor.description]
+            cursor.close()
+            return [dict(zip(cols, row)) for row in rows]
+        except sqlite3.Error as e:
+            print(f"[Database Error] get_active_vehicles_during 失败: {e}")
+            return []
 
     def close(self):
         try:

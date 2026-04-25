@@ -83,7 +83,7 @@ class AppBootstrap:
         # 1. 基础设施层
         StorageManager.ensure_structure()
         db = DatabaseManager(db_path=config.DB_PATH, fps=config.FPS)
-        force_delay = config.ALIGNMENT_DELAY_SEC if config.RUN_MODE == 'inference' else float('inf')
+        force_delay = getattr(config, 'ALIGNMENT_DELAY_SEC', 60.0)
 
         # 2. 气象站实例
         try:
@@ -117,16 +117,15 @@ class AppBootstrap:
         norm_source_points = np.array(config.SOURCE_POINTS, dtype=np.float32) if getattr(config, 'SOURCE_POINTS', None) else None
         visualizer = Visualizer(calibration_points=target_points, target_fps=config.FPS)
 
-        # --- 核心新增：按需启动后台对齐进程 ---
-        alignment_proc = None
-        if config.RUN_MODE == 'inference':
-            alignment_proc = ctx.Process(
-                target=AppBootstrap._run_alignment_worker,
-                args=(config, sync_queue, stop_event),
-                daemon=True
-            )
-            alignment_proc.start() # 在此处启动，由于是阻塞队列，它会安静地等待
-            print(">>> [Bootstrap] 延迟对齐后台进程已挂载。")
+        # --- 启动后台对齐进程 ---
+        # 无论当前是采集模式还是推理模式，只要系统拉起，就无条件启动 L2 级快照生产线
+        alignment_proc = ctx.Process(
+            target=AppBootstrap._run_alignment_worker,
+            args=(config, sync_queue, stop_event),
+            daemon=True
+        )
+        alignment_proc.start() # 在此处启动，由于是阻塞队列，它会安静地等待主引擎的 tick
+        print(">>> [Bootstrap] 延迟对齐后台进程已挂载。")
 
         # 6. 封装最终字典
         components = {
