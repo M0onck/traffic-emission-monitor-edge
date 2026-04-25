@@ -170,7 +170,7 @@ class GstPipelineManager:
                 f" t. ! queue max-size-buffers=60 ! "
                 f"videorate ! "  
                 f"videoconvert ! video/x-raw,format=I420 ! "
-                f"x264enc speed-preset=ultrafast tune=zerolatency threads=4 bitrate=2048 key-int-max=60 ! "
+                f"x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 key-int-max=60 ! "
                 f"h264parse config-interval=1 ! "
                 f"splitmuxsink name=rec_sink muxer=matroskamux max-size-time={segment_ns} "
             )
