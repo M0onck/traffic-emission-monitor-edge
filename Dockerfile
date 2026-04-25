@@ -49,6 +49,7 @@ RUN apt-get update && apt-get install -y \
     libgles2-mesa \
     i2c-tools \
     v4l-utils \
+    ffmpeg \
     gnupg \
     software-properties-common \
     wget \

@@ -1,4 +1,7 @@
 import sys
+import os
+import glob
+import subprocess
 import queue
 import numpy as np
 import supervision as sv
@@ -288,11 +291,16 @@ class TrafficMonitorEngine:
         # 安全杀死旧进程
         if getattr(self, 'p_daemon', None):
             self.p_daemon.terminate()
-            self.p_daemon.join(timeout=2)
+            # 给足子进程执行 try...finally 内部 EOS 的时间
+            self.p_daemon.join(timeout=12) 
+            
             if self.p_daemon.is_alive():
-                logger.warning("[Watchdog] 进程未响应 SIGTERM，发送 SIGKILL 强杀...")
+                logger.critical("[Watchdog] 进程耗时12秒仍未响应，发生底层死锁，发送 SIGKILL 强杀.")
                 self.p_daemon.kill()
                 self.p_daemon.join(timeout=1)
+                
+                # 既然发生了内核强杀/断电，立刻唤醒 FFmpeg 修复刚刚留下的断头视频
+                self.heal_broken_mkv_timeline()
                 
         # 关闭旧队列（不要去试图取数据）
         try:
@@ -316,6 +324,33 @@ class TrafficMonitorEngine:
         # 重置超时判定
         self.init_hang_timeout = time.time() + 60.0
         logger.info(f"[Watchdog] 感知进程重启请求完成 (PID: {self.p_daemon.pid}).")
+
+    def heal_broken_mkv_timeline(self):
+        """利用 FFmpeg 重建因强杀丢失的 MKV 时间轴"""
+        try:
+            record_dir = getattr(self.cfg, 'RECORD_SAVE_PATH', 'data/recorded_videos')
+            session_id = getattr(self, 'current_session_id', 'unknown')
+            
+            search_pattern = os.path.join(record_dir, f"{session_id}_seq*.mkv")
+            files = glob.glob(search_pattern)
+            if not files: return
+            
+            # 找到最新创建的（也是刚刚因为强杀没封口的）那个视频
+            latest_file = max(files, key=os.path.getctime)
+            logger.warning(f"[Watchdog] 启动视频修复机制，正在修复断裂的时间轴: {latest_file}")
+            
+            tmp_file = latest_file + ".tmp.mkv"
+            
+            subprocess.run([
+                "ffmpeg", "-y", "-err_detect", "ignore_err",
+                "-i", latest_file, "-c", "copy", tmp_file
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            os.replace(tmp_file, latest_file)
+            logger.info("[Watchdog] MKV 视频文件时间轴重建完毕.")
+            
+        except Exception as e:
+            logger.error(f"[Watchdog] 视频修复流程失败: {e}")
 
     def _initialize_geometry(self, frame):
         """动态坐标系适配逻辑"""
