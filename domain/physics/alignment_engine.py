@@ -62,13 +62,21 @@ class AlignmentEngine:
         active_rows = self.db.get_active_vehicles_during(session_id, target_time)
         
         snapshot_list = []
+        seen_tids = set() # 车辆去重集合
+
         for row in active_rows:
             tid = row['tracker_id']
+            if tid in seen_tids:
+                continue # 同一辆车仅存一份快照
             v_type = row['vehicle_type']
             
             try:
                 # 解析轨迹 JSON (格式: [{"timestamp":..., "x":..., "v":...}, ...])
                 trajectory = json.loads(row['trajectory_blob'])
+
+                # 如果轨迹确实为空，直接跳过
+                if not trajectory:
+                    continue
                 
                 # 寻找离 target_time 最近的一个轨迹点
                 # 由于轨迹是以 5Hz 记录的，最近点的误差通常在 100ms 以内
@@ -78,6 +86,9 @@ class AlignmentEngine:
                 if abs(nearest_pt['timestamp'] - target_time) > 1.0:
                     continue
                 
+                # 记录该车已处理
+                seen_tids.add(tid)
+
                 snapshot_list.append({
                     'tid': tid,
                     'type': v_type,
