@@ -18,13 +18,13 @@ services:
       - video
       - dialout
       - i2c
+      - render
     # 赋予容器访问特定硬件设备节点的权限
     devices:
       - "/dev/hailo0:/dev/hailo0"                     # Hailo-8 NPU
       - "/dev/dri:/dev/dri"                           # V3D 7.1 硬件图形加速
       - "/dev/i2c-1:/dev/i2c-1"                       # MLX90640 热成像仪
       - "/dev/ttyUSB0:/dev/ttyUSB0"                   # 气象站 (按实际修改)
-      - "/dev/video0:/dev/video0"                     # IMX296 摄像头
       - "/dev/dma_heap:/dev/dma_heap"                 # DMA 堆内存
     volumes:
       - /tmp:/tmp                                     # 其他共享内存或管道
@@ -35,8 +35,6 @@ services:
       - /mnt/nvmessd/data:/app/data                   # M.2 固态硬盘映射，用于业务数据挂载
       - /media:/media:rshared                         # 外部 U 盘预留动态挂载点
       - /sys/class/drm:/sys/class/drm:ro              # 解决 ONNX 探测不到底层 DRM GPU 节点的问题
-    # 分配足够的共享内存
-    shm_size: '2gb'
     logging:
       # 防止日志无限增长撑爆树莓派 SD 卡
       driver: "json-file"

@@ -35,20 +35,18 @@ RUN apt-get update && apt-get install -y \
     libgl1 \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
+    gstreamer1.0-tools \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
     gstreamer1.0-libav \
-    gstreamer1.0-libcamera \
     gstreamer1.0-gl \
-    libcamera-tools \
     libglib2.0-dev \
     libgl1-mesa-dev \
     libgl1-mesa-dri \
     libegl1-mesa \
     libgles2-mesa \
     i2c-tools \
-    v4l-utils \
     ffmpeg \
     gnupg \
     software-properties-common \

@@ -177,7 +177,13 @@ class GstPipelineManager:
 
         # --- 2. 源分支（切换摄像头或者视频文件） ---
         if is_camera:
-            source_head = f"v4l2src device=/dev/video10 do-timestamp=true ! video/x-raw, format=NV12, width={cam_w}, height={cam_h}, framerate=30/1"
+            source_head = (
+                f"tcpclientsrc host=127.0.0.1 port=5000 ! "
+                f"jpegparse ! "
+                f"queue max-size-buffers=1 leaky=downstream ! " 
+                f"jpegdec ! "
+                f"videoconvert ! video/x-raw, format=RGBA"
+            )
         else:
             abs_path = os.path.abspath(self.video_path)
             source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
