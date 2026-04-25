@@ -83,7 +83,10 @@ class AppBootstrap:
         # 1. 基础设施层
         StorageManager.ensure_structure()
         db = DatabaseManager(db_path=config.DB_PATH, fps=config.FPS)
-        force_delay = getattr(config, 'ALIGNMENT_DELAY_SEC', 60.0)
+        alignment_delay = getattr(config, 'ALIGNMENT_DELAY_SEC', 60.0)
+        # 强制落盘时间必须小于延迟窗口，留出安全期
+        # 保证对齐引擎回头查数据时，车辆数据已经在数据库里了
+        force_delay = max(3.0, alignment_delay - 3.0)
 
         # 2. 气象站实例
         try:

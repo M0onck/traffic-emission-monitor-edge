@@ -17,40 +17,52 @@ class AlignmentDaemon:
         self.config = config
         self.sync_queue = sync_queue
         self.stop_event = stop_event
-        
-        # 为守护进程独立实例化一个 DB Manager。
-        # 这样能彻底避免与主视界 UI / 感知进程争抢同一个 SQLite 内存游标，提高并发安全性
         self.db = DatabaseManager(config.DB_PATH, getattr(config, 'FPS', 30.0))
-        
-        # 实例化改版后的轻量级对齐引擎
         self.engine = AlignmentEngine(self.db)
+        
+        # 记录上一次成功对齐的时间戳，用于断层补齐
+        self.last_aligned_time = None 
+        self.current_session = None
 
     def run(self):
-        logger.info("[AlignmentDaemon] 延迟对齐守护进程已启动，开始生成物理时空快照...")
+        logger.info("[AlignmentDaemon] 延迟对齐守护进程已启动...")
         
-        while not (self.stop_event and self.stop_event.is_set()):
-            try:
-                # 阻塞等待主引擎推送时间戳信号 (timeout 保证退出时能响应 stop_event)
-                session_id, latest_timestamp = self.sync_queue.get(timeout=2.0)
-                
-                # 1. 核心动作：生成对齐快照
-                snapshot = self.engine.process_alignment_tick(session_id, latest_timestamp)
-                
-                if snapshot:
-                    # 2. 无差别持久化：所有模式下，都将 1Hz 纯净数据存入数据库
-                    self.db.insert_aligned_snapshot(snapshot)
+        try:
+            while not (self.stop_event and self.stop_event.is_set()):
+                try:
+                    session_id, latest_timestamp = self.sync_queue.get(timeout=1.0)
+                    self.current_session = session_id
                     
-                    # 3. 业务分流：仅在“推理模式”下，将数据喂给后续的模型流
-                    if getattr(self.config, 'MODE', 'collect') == 'inference':
-                        # 在此处接入未来的预测模型管道，例如:
-                        # model_predictor.predict(snapshot)
-                        pass
+                    # 初始化基准时间
+                    if self.last_aligned_time is None:
+                        self.last_aligned_time = latest_timestamp - 1.0
+
+                    # 如果由于看门狗强杀导致主线程卡顿，latest_timestamp 突然跳跃了 12 秒
+                    # 这个 while 循环会精准地逐秒推进，把漏掉的 12 秒快照全部补齐
+                    while self.last_aligned_time < latest_timestamp:
+                        target_tick = self.last_aligned_time + 1.0
+                        
+                        # 防止由于浮点精度问题超调
+                        if target_tick > latest_timestamp:
+                            break
+                            
+                        snapshot = self.engine.process_alignment_tick(session_id, target_tick)
+                        if snapshot:
+                            self.db.insert_aligned_snapshot(snapshot)
+                            if getattr(self.config, 'MODE', 'collect') == 'inference':
+                                pass # TODO 送入预测模型
+                                
+                        self.last_aligned_time = target_tick
+                        
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    logger.exception("[AlignmentDaemon] 守护进程内部发生异常.")
+                    
+        finally:
+            # 停机后资源回收
+            if self.current_session:
+                logger.info(f"[AlignmentDaemon] 收到停机指令。已舍弃末尾 {self.config.ALIGNMENT_DELAY_SEC} 秒的未决数据。")
                 
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.exception("[AlignmentDaemon] 守护进程内部发生异常.")
-                
-        # 安全退出前清理独立连接
-        self.db.close()
-        logger.info("[AlignmentDaemon] 延迟对齐守护进程已安全退出.")
+            self.db.close()
+            logger.info("[AlignmentDaemon] 数据库连接已释放，守护进程安全退出.")
