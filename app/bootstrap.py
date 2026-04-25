@@ -66,9 +66,14 @@ class AppBootstrap:
     """
     
     @staticmethod
-    def _run_alignment_worker(config, sync_queue, stop_event):
-        """对齐守护进程的入口隔离函数"""
-        daemon = AlignmentDaemon(config, sync_queue, stop_event)
+    def _run_alignment_worker(sync_queue, stop_event):
+        # 在新进程内部导入配置文件
+        # 这样每次子进程苏醒时，都会自动获得属于自己的有效 cfg 对象
+        import infra.config.loader as cfg 
+        from app.alignment_daemon import AlignmentDaemon
+
+        # 将刚刚导入的 cfg 传给守护进程
+        daemon = AlignmentDaemon(cfg, sync_queue, stop_event) 
         daemon.run()
 
     @staticmethod
@@ -124,7 +129,7 @@ class AppBootstrap:
         # 无论当前是采集模式还是推理模式，只要系统拉起，就无条件启动 L2 级快照生产线
         alignment_proc = ctx.Process(
             target=AppBootstrap._run_alignment_worker,
-            args=(config, sync_queue, stop_event),
+            args=(sync_queue, stop_event),
             daemon=True
         )
         alignment_proc.start() # 在此处启动，由于是阻塞队列，它会安静地等待主引擎的 tick
