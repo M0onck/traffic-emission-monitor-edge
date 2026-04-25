@@ -242,7 +242,12 @@ class TrafficMonitorEngine:
                     cached_detections = detections  # 更新缓存
                     
                     # 只有在这里才执行耗时的空间测算与数据库写入
-                    self.process_frame(current_frame, detections, self.current_frame_id, frame_timestamp=now)
+                    # 接收处理并物理过滤后的 detections
+                    filtered_detections = self.process_frame(current_frame, detections, self.current_frame_id, frame_timestamp=now)
+
+                    # 更新缓存，确保 UI 画面与数据库严格一致
+                    cached_detections = filtered_detections  
+                    detections = filtered_detections
                 else:
                     # 无新AI数据：跳过业务处理，直接使用上一帧的检测框用于画图
                     detections = cached_detections
@@ -468,22 +473,8 @@ class TrafficMonitorEngine:
                         timestamp=frame_timestamp
                     )
         self.profile_stats['06_kinematics'] += (time.perf_counter() - t_start)
-
-        # --- Step 5: 可视化渲染 ---
-        annotated_frame = None
-        if not getattr(self, 'headless_mode', False):
-            t_start = time.perf_counter()
-            # 传入所有追踪到的目标
-            filtered_detections = detections
-            
-            # 为真实车辆和正在识别中的车辆生成 UI 标签数据
-            label_data_list = self._prepare_labels(filtered_detections, frame.shape)
-
-            # 传递过滤后的数据给视觉渲染器
-            annotated_frame = self.visualizer.render(frame, filtered_detections, label_data_list, fps=current_fps)
-            self.profile_stats['07_visualizer_render'] += (time.perf_counter() - t_start)
         
-        return annotated_frame
+        return detections
 
     def _dispatch_plate_tasks(self, frame, frame_id, detections):
         """派发车牌识别任务给子进程"""
@@ -762,10 +753,15 @@ class TrafficMonitorEngine:
                 crop_w = crop_x2 - crop_x1
                 crop_h = crop_y2 - crop_y1
                 
-                rel_lms = plate_info['rel_landmarks']
-                # 将历史比例映射到当前车辆的位置
-                abs_lms = rel_lms * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
-                data.plate_points = abs_lms
+                # 防止 OCR 模型返回空关键点导致系统崩溃
+                rel_lms = plate_info.get('rel_landmarks')
+                if rel_lms is not None:
+                    try:
+                        # 将历史比例映射到当前车辆的位置
+                        abs_lms = np.array(rel_lms) * np.array([crop_w, crop_h]) + np.array([crop_x1, crop_y1])
+                        data.plate_points = abs_lms
+                    except Exception as e:
+                        logger.debug(f"[DEBUG] 车牌关键点映射失败: {e}")
 
                 # ====== 调试打印 ======
                 logger.debug(f"[DEBUG] 成功生成 TID={tid} 的 UI 车牌框坐标")
