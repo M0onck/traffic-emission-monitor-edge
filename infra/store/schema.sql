@@ -63,26 +63,28 @@ CREATE TABLE IF NOT EXISTS Veh_Sum (
 );
 
 -- ==============================================================================
--- 5. 多源数据对齐表 (Aligned Dataset)
--- 用途: 由延迟对齐引擎生成，严格对齐论文中 "基于机器学习的气象归一化" 的模型输入特征
+-- 5. 多源数据对齐快照表 (Aligned Snapshots)
+-- 用途: 由延迟对齐引擎生成，以1Hz频率严格对齐物理世界的时间轴。
+--       像快照切片一样忠实记录过去某一秒的环境变量读数与车辆在场状态，
+--       作为后续排队论分析、科研导出或轻量化深度学习模型的基础数据集。
 -- ==============================================================================
-CREATE TABLE IF NOT EXISTS Aligned_Dataset (
+CREATE TABLE IF NOT EXISTS Aligned_Snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT,
-    aligned_timestamp REAL,               -- 对齐后的绝对时间戳 (T_now - x s)
+    session_id TEXT NOT NULL,             -- 关联当前任务
+    aligned_timestamp REAL NOT NULL,      -- 对齐后的绝对物理时间戳 (T_now - 延迟窗口)
     
-    -- 目标响应变量 (Target Variable)：道路扬尘累积通量
-    pmc_raw REAL,                         -- 原始粗颗粒物浓度 (PM10 - PM2.5)
-    pmc_baseline REAL,                    -- 动态本底 (过去n分钟 pmc_raw 的滑动极小值)
-    delta_c_flux REAL,                    -- 扬尘累积通量 (\Delta C_flux,t)，时间窗内有效粗颗粒物积分
+    -- ================= 环境快照 (Environmental Snapshot) =================
+    air_temp REAL,                        -- 空气温度
+    ground_temp REAL,                     -- 地面温度 (热成像仪)
+    humidity REAL,                        -- 相对湿度
+    wind_speed REAL,                      -- 风速 (m/s)
+    wind_dir REAL,                        -- 风向角
+    pm25 REAL,                            -- PM2.5 瞬时浓度
+    pm10 REAL,                            -- PM10 瞬时浓度
     
-    -- 排放驱动特征 (Emission Driver)：交通绝对动力学做功能量
-    e_traffic REAL,                       -- 交通总做功能量 (E_traffic,t)，包含质量惩罚修正的绝对VSP积分
-    
-    -- 空间与气象调节特征 (Dispersion Modulators)
-    d_trans REAL,                         -- 质量加权调和等效传输距离 (D_trans,t)，精确刻画非线性距离衰减效应
-    w_cross REAL,                         -- 有效横风扰动分量 (W_cross)，正负号表征对扬尘的定向携带方向
-    delta_tv REAL,                        -- 路气虚温差 (\Delta Tv)，表征大气稳定度与垂直湍流混合对流强度
+    -- ================= 交通快照 (Traffic Snapshot) =====================
+    active_vehicle_count INTEGER NOT NULL,-- 此时刻画面中未离场的车辆总数
+    vehicles_data TEXT NOT NULL,          -- JSON数组，记录瞬时运动学: [{"tid": 1, "type": "LDV", "x": 10.2, "y": 20.5, "v": 12.5, "a": 0.5, "vsp": 15.2}, ...]
     
     FOREIGN KEY(session_id) REFERENCES Session_Task(session_id)
 );
@@ -93,4 +95,4 @@ CREATE TABLE IF NOT EXISTS Aligned_Dataset (
 CREATE INDEX IF NOT EXISTS idx_env_session_time ON Env_Raw(session_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_veh_sum_session ON Veh_Sum(session_id);
 CREATE INDEX IF NOT EXISTS idx_veh_raw_session_time ON Veh_Raw(session_id, exit_time);
-CREATE INDEX IF NOT EXISTS idx_aligned_session_time ON Aligned_Dataset(session_id, aligned_timestamp);
+CREATE INDEX IF NOT EXISTS idx_aligned_snapshot_time ON Aligned_Snapshots(session_id, aligned_timestamp);

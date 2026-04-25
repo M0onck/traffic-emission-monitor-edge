@@ -1,190 +1,94 @@
-# 文件路径: domain/physics/alignment_engine.py
+# domain/physics/alignment_engine.py
 import json
-import math
-import sqlite3
-import numpy as np
 import logging
-from infra.store.sqlite_manager import DatabaseManager
+import time
+from typing import Dict, Any, List
 import infra.config.loader as cfg
 
 logger = logging.getLogger(__name__)
 
-class DelayedAlignmentEngine:
+class AlignmentEngine:
     """
-    [业务层] 延迟对齐与特征重构引擎
-    职责: 基于滞后时间基准 (T_align)，定期扫描数据库，计算宏观时间窗内的扬尘累积通量、
-          交通绝对做功能量积分以及微气象调节特征，并将深度对齐后的结果持久化到 Aligned_Dataset 表。
+    [业务层] 延迟对齐引擎 (1Hz 快照版)
+    职责: 定期扫描数据库，以 T_now - Delay 为基准时间点，
+          横向切片式地提取该时刻的环境数据与所有存活车辆的瞬时运动学状态。
     """
-    def __init__(self, config: dict, db_path: str):
-        self.db_path = db_path
+    def __init__(self, db_manager):
+        self.db = db_manager
         
-        # 1. 解析时间窗口参数
-        self.delay_sec = cfg.ALIGNMENT_DELAY_SEC
-        self.int_win_sec = cfg.INTEGRATION_WINDOW_SEC
-        self.base_win_min = cfg.BASELINE_WINDOW_MINUTE
-        self.align_interval = cfg.DB_ALIGN_INTERVAL_SEC
+        # 1. 解析时间对齐参数
+        self.delay_sec = getattr(cfg, 'ALIGNMENT_DELAY_SEC', 60.0)
+        self.max_env_tolerance = 2.0  # 环境数据匹配的最大容差 (秒)
 
-        # 2. 解析物理先验参数
-        self.wx_pos = cfg.WEATHER_STATION_X_POS
-        self.road_dir = cfg.ROAD_DIRECTION_ANGLE
-        self.nev_penalty = cfg.NEV_MASS_PENALTY_RATIO
+    def process_alignment_tick(self, session_id: str, current_system_time: float) -> Dict[str, Any]:
+        """
+        执行单次 1Hz 对齐拨号，产出该时刻的物理世界快照
+        """
+        # 计算当前需要对齐的历史锚点时间戳
+        target_time = current_system_time - self.delay_sec
+        
+        # 1. 提取该时刻的环境数据快照 (取最接近 target_time 的一条记录)
+        env_data = self.db.get_nearest_env_raw(session_id, target_time, self.max_env_tolerance)
+        
+        # 2. 提取该时刻的场内车辆运动学快照
+        vehicles_snapshot = self._extract_vehicles_at_time(session_id, target_time)
+        
+        if not vehicles_snapshot and not env_data:
+            return None
 
-        # 基础质量先验 (吨) - 用于从运动学参数重构绝对动能
-        self.mass_priors = {"LDV": 1.5, "HDV": 15.0} 
-        self.last_align_time = 0.0
+        # 3. 构造标准的 L2 级对齐快照数据结构
+        snapshot = {
+            'session_id': session_id,
+            'aligned_timestamp': target_time,
+            'air_temp': env_data.get('air_temp') if env_data else None,
+            'ground_temp': env_data.get('ground_temp') if env_data else None,
+            'humidity': env_data.get('humidity') if env_data else None,
+            'wind_speed': env_data.get('wind_speed') if env_data else None,
+            'wind_dir': env_data.get('wind_dir') if env_data else None,
+            'pm25': env_data.get('pm25_raw') if env_data else None,
+            'pm10': env_data.get('pm10_raw') if env_data else None,
+            'active_vehicle_count': len(vehicles_snapshot),
+            'vehicles_data': json.dumps(vehicles_snapshot) # 序列化为 JSON 存储
+        }
+        
+        logger.debug(f"[Alignment] 已生成 T={target_time:.1f} 的物理快照，包含 {len(vehicles_snapshot)} 辆车")
+        return snapshot
 
-    def align_step(self, session_id: str, current_timestamp: float):
-        """执行单步延迟对齐作业"""
-        t_align = current_timestamp - self.delay_sec
-
-        # 根据配置的滑动步长 (interval) 进行拦截，预留 1.0 秒容错防止浮点精度丢失漏执行
-        if t_align - self.last_align_time < (self.align_interval - 1.0):
-            return
-        self.last_align_time = t_align
-
-        # 定义积分窗口 [t_start, t_align] 和基线窗口 [t_base_start, t_align]
-        t_start = t_align - self.int_win_sec
-        t_base_start = t_align - (self.base_win_min * 60.0)
-
-        # 在线程内独立实例化 DatabaseManager，保障多线程并发读取的 SQLite 安全性
-        db = DatabaseManager(self.db_path)
-        try:
-            # =======================================================
-            # 1. 获取目标响应变量与本底 (对应论文公式)
-            # =======================================================
-            # 1.1 计算动态本底 (过去 baseline_window_minute 内的粗颗粒物极小值)
-            db.cursor.execute(
-                "SELECT MIN(pm10_raw - pm25_raw) FROM Env_Raw WHERE session_id = ? AND timestamp BETWEEN ? AND ?",
-                (session_id, t_base_start, t_align)
-            )
-            row = db.cursor.fetchone()
-            pmc_baseline = row[0] if row and row[0] is not None else 0.0
-
-            # 1.2 获取当前积分窗口内的气象时序序列
-            db.cursor.execute(
-                "SELECT timestamp, pm25_raw, pm10_raw, wind_speed, wind_dir, air_temp, humidity, ground_temp "
-                "FROM Env_Raw WHERE session_id = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC",
-                (session_id, t_start, t_align)
-            )
-            env_rows = db.cursor.fetchall()
+    def _extract_vehicles_at_time(self, session_id: str, target_time: float) -> List[Dict[str, Any]]:
+        """
+        根据时间戳，从 Veh_Raw 表的轨迹 BLOB 中捞出该时刻在场的所有车辆及其瞬时状态
+        """
+        # 从数据库中获取所有在 target_time 期间处于场内的车辆记录
+        active_rows = self.db.get_active_vehicles_during(session_id, target_time)
+        
+        snapshot_list = []
+        for row in active_rows:
+            tid = row['tracker_id']
+            v_type = row['vehicle_type']
             
-            if not env_rows:
-                return # 窗口内缺失气象数据，无法对齐
-
-            # 取 T_align 时刻的最末态微气象特征
-            latest_env = env_rows[-1]
-            pmc_raw = latest_env[2] - latest_env[1]
-
-            # 1.3 积分计算扬尘累积通量 (Delta_C_flux)
-            delta_c_flux = 0.0
-            for i in range(1, len(env_rows)):
-                dt = env_rows[i][0] - env_rows[i-1][0]
-                pmc_i = env_rows[i][2] - env_rows[i][1]
-                # 对有效增量进行黎曼积分： \int max(1.0, PMC - Base) dt
-                delta_c_flux += max(1.0, pmc_i - pmc_baseline) * dt
-
-            # =======================================================
-            # 2. 排放驱动特征与空间分布重构 
-            # =======================================================
-            db.cursor.execute(
-                "SELECT vehicle_type, energy_type, trajectory_blob "
-                "FROM Veh_Raw WHERE session_id = ? AND exit_time >= ? AND entry_time <= ?",
-                (session_id, t_start, t_align) # 提取时间窗内交集的车辆
-            )
-            veh_rows = db.cursor.fetchall()
-
-            e_traffic = 0.0
-            sum_m = 0.0           # 窗口内所有车辆的静态总质量 (分子)
-            sum_m_div_d = 0.0     # 质量加权空间临近度 (分母)
-
-            for v_type, e_type, blob in veh_rows:
-                # 质量分配与新能源修正
-                base_type = v_type.split('-')[0] if v_type else "LDV"
-                m_i = self.mass_priors.get(base_type, 1.5)
-                if e_type == "Electric":
-                    m_i *= self.nev_penalty
-
-                try:
-                    traj = json.loads(blob)
-                except Exception:
+            try:
+                # 解析轨迹 JSON (格式: [{"timestamp":..., "x":..., "v":...}, ...])
+                trajectory = json.loads(row['trajectory_blob'])
+                
+                # 寻找离 target_time 最近的一个轨迹点
+                # 由于轨迹是以 5Hz 记录的，最近点的误差通常在 100ms 以内
+                nearest_pt = min(trajectory, key=lambda p: abs(p['timestamp'] - target_time))
+                
+                # 容差过滤：如果最近的点离目标时间超过 1 秒，说明存在数据断层，不计入快照
+                if abs(nearest_pt['timestamp'] - target_time) > 1.0:
                     continue
                 
-                e_i_vehicle = 0.0
-                x_sum, pt_count = 0.0, 0
+                snapshot_list.append({
+                    'tid': tid,
+                    'type': v_type,
+                    'x': round(nearest_pt.get('x', 0.0), 3),
+                    'y': round(nearest_pt.get('y', 0.0), 3),
+                    'v': round(nearest_pt.get('v', 0.0), 3),
+                    'a': round(nearest_pt.get('a', 0.0), 3),
+                    'vsp': round(nearest_pt.get('vsp', 0.0), 3)
+                })
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.error(f"[Alignment] 解析 TID={tid} 的轨迹数据失败: {e}")
+                continue
                 
-                # 在时间窗内对单车高频VSP进行数值积分
-                traj.sort(key=lambda p: p.get('timestamp', 0))
-                for i in range(1, len(traj)):
-                    p_prev = traj[i-1]
-                    p = traj[i]
-                    t_p = p.get('timestamp', 0.0)
-                    
-                    if t_start <= t_p <= t_align:
-                        dt = t_p - p_prev.get('timestamp', 0.0)
-                        if 0 < dt < 0.5: # 剔除由于追踪中断造成的异常大跨步时间
-                            vsp = p.get('vsp', 0.0)
-                            # 对 VSP 取绝对值，量化路面的绝对机械扰动剥离潜力
-                            e_point = abs(vsp) * m_i * dt
-                            e_i_vehicle += e_point
-                            x_sum += p.get('x', 0.0)
-                            pt_count += 1
-                            
-                if e_i_vehicle > 0 and pt_count > 0:
-                    # 1. 累加交通总做功 (干预变量)
-                    e_traffic += e_i_vehicle
-                    
-                    # 2. 计算本车的平均物理坐标并施加安全极小值保护
-                    avg_x = x_sum / pt_count
-                    d_i = max(abs(avg_x - self.wx_pos), 0.1) 
-                    
-                    # 3. 仅使用物理静质量和空间距离构建空间特征
-                    sum_m += m_i
-                    sum_m_div_d += (m_i / d_i)
-
-            # 基于纯物理静质量重构“质量加权等效调和传输距离” (D_trans)
-            # 规避目标泄露，且精准捕获近场重卡对等效污染源质心的牵引效应
-            d_trans = (sum_m / sum_m_div_d) if sum_m_div_d > 0 else 999.0 # 当没有车时，给一个代表极远距离的安全值
-
-            # =======================================================
-            # 3. 空间与气象调节特征构建 
-            # =======================================================
-            w_spd, w_dir = latest_env[3], latest_env[4]
-            t_air, rh, t_road = latest_env[5], latest_env[6], latest_env[7]
-
-            # 3.1 有效横风扰动
-            # 注意气象方位角逻辑。此时正值代表吹向传感器，负值代表背离
-            w_cross = -w_spd * math.sin(math.radians(w_dir - self.road_dir))
-
-            # 3.2 热力学虚温差 (带比湿推导)
-            e_s = 6.112 * math.exp(17.67 * t_air / (t_air + 243.5)) # 饱和水汽压
-            e_actual = (rh / 100.0) * e_s                           # 实际水汽压
-            q = (0.622 * e_actual) / (1013.25 - 0.378 * e_actual)   # 比湿 (kg/kg)
-            delta_tv = (t_road - t_air) * (1 + 0.61 * q)            # 虚温差
-
-            # =======================================================
-            # 4. 落盘持久化
-            # =======================================================
-            # 在落盘前注入一条详细的 DEBUG 日志，展示对齐断面的核心特征
-            logger.debug(
-                f"[延迟对齐] T={t_align:.1f} | Flux={delta_c_flux:.2f}, "
-                f"E_trf={e_traffic:.2E}, D_trans={d_trans:.1f}m, "
-                f"W_crs={w_cross:.2f}, dT_v={delta_tv:.2f}"
-            )
-
-            db.insert_aligned_dataset(
-                session_id=session_id,
-                aligned_timestamp=t_align,
-                pmc_raw=pmc_raw,
-                pmc_baseline=pmc_baseline,
-                delta_c_flux=delta_c_flux,
-                e_traffic=e_traffic,
-                d_trans=d_trans,
-                w_cross=w_cross,
-                delta_tv=delta_tv
-            )
-
-        except Exception as e:
-            # 捕获如除以零、JSON 解析失败、DB 锁定等报错
-            logger.exception("特征计算或落盘过程中发生异常")
-        finally:
-            db.close()
+        return snapshot_list
