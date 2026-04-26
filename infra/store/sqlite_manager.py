@@ -3,6 +3,7 @@ import json
 import os
 import numpy as np
 import re # 正则表达式
+import threading
 from typing import List, Dict, Any
 
 class NumpyEncoder(json.JSONEncoder):
@@ -29,6 +30,9 @@ class DatabaseManager:
             os.makedirs(db_dir, exist_ok=True)
         self.db_path = db_path
         self.fps = fps
+
+        # 初始化线程同步锁
+        self.lock = threading.Lock()
 
         # 允许后台线程读写
         self.conn = sqlite3.connect(
@@ -63,7 +67,7 @@ class DatabaseManager:
 
     def _load_queries(self) -> Dict[str, str]:
         """
-        [核心逻辑] 解析 queries.sql 文件
+        解析 queries.sql 文件
         返回格式: {'insert_micro_log': 'INSERT INTO...', ...}
         """
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -215,8 +219,9 @@ class DatabaseManager:
                 float(env_data.get('ground_temp', 0.0))
             )
             try:
-                self.conn.execute(sql, params)
-                self.conn.commit() # 1Hz的写入频率较低，由于开启了WAL模式，直接commit保证实时性无压力
+                with self.lock:
+                    self.conn.execute(sql, params)
+                    self.conn.commit() # 1Hz的写入频率较低，由于开启了WAL模式，直接commit保证实时性无压力
             except Exception as e:
                 print(f"[Database Error] 插入 Env_Raw 失败: {e}")
         else:
@@ -240,8 +245,9 @@ class DatabaseManager:
                     float(exit_time),
                     trajectory_blob
                 )
-                self.conn.execute(sql, params)
-                self.conn.commit() 
+                with self.lock:
+                    self.conn.execute(sql, params)
+                    self.conn.commit() 
             except Exception as e:
                 print(f"[Database Error] 插入 Veh_Raw 失败: {e}")
         else:
@@ -271,8 +277,9 @@ class DatabaseManager:
         sql = self.queries.get('insert_veh_sum')
         if sql:
             try:
-                self.conn.execute(sql, params)
-                self.conn.commit()
+                with self.lock:
+                    self.conn.execute(sql, params)
+                    self.conn.commit()
             except Exception as e:
                 print(f"[Database Error] insert_veh_sum 失败: {e}")
         else:
@@ -299,8 +306,9 @@ class DatabaseManager:
                 snapshot['vehicles_data'] # 直接存入 JSON 字符串
             )
             try:
-                self.conn.execute(sql, params)
-                self.conn.commit()
+                with self.lock:
+                    self.conn.execute(sql, params)
+                    self.conn.commit()
             except Exception as e:
                 print(f"[Database Error] 插入 Aligned_Snapshots 失败: {e}")
         else:

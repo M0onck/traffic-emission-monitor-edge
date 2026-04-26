@@ -44,24 +44,33 @@ usermod -aG i2c,dialout "$REAL_USER" || true
 # 6. 系统工具链预装 (如果需要宿主机层面的驱动，如 HailoRT 基础依赖，可在此处追加)
 echo "检查并安装基础宿主机依赖 (如 i2c-tools)..."
 apt-get update -qq
-apt-get install -y -qq i2c-tools
+apt-get install -y -qq i2c-tools rpicam-apps
 
-# 7. 安装并配置 v4l2loopback 虚拟摄像头模块
-echo "[Host Setup] 安装并配置 v4l2loopback 虚拟摄像头模块..."
-sudo apt-get update
-sudo apt-get install -y v4l2loopback-dkms v4l2loopback-utils
+# 7. 配置与启动底层 TCP 相机推流服务 (camera-feeder)
+echo "[Host Setup] 创建并配置 TCP MJPEG 相机推流守护进程 (camera-feeder.service)..."
+SERVICE_FILE="/etc/systemd/system/camera-feeder.service"
 
-# 检查模块是否已加载，如果未加载则动态加载
-if ! lsmod | grep -q "^v4l2loopback"; then
-    # video_nr=10 指定生成 /dev/video10
-    # max_buffers=8 增加缓冲池以抗击 Python 层的卡顿
-    # exclusive_caps=1 允许 Chrome/OpenCV 像对待物理相机一样识别它
-    sudo modprobe v4l2loopback video_nr=10 max_buffers=8 exclusive_caps=1
-fi
+cat <<EOF > "$SERVICE_FILE"
+[Unit]
+Description=TCP MJPEG Camera Server (rpicam-vid)
+After=network.target
 
-# 确保开机自启该模块
-echo "v4l2loopback" | sudo tee /etc/modules-load.d/v4l2loopback.conf
-echo "options v4l2loopback video_nr=10 max_buffers=8 exclusive_caps=1" | sudo tee /etc/modprobe.d/v4l2loopback.conf
+[Service]
+Type=simple
+User=$REAL_USER
+# 使用原生 rpicam-vid 输出 1456x1088 30fps MJPEG 视频流，并监听本机 5000 端口
+ExecStart=/usr/bin/rpicam-vid -t 0 --width 1456 --height 1088 --framerate 30 --codec mjpeg --listen -o tcp://0.0.0.0:5000
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 重新加载 Systemd，设置开机自启并立刻启动服务
+systemctl daemon-reload
+systemctl enable camera-feeder.service
+systemctl restart camera-feeder.service
 
 echo "=============================================================================="
 echo "宿主机硬件初始化完成！"
