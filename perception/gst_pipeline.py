@@ -155,27 +155,7 @@ class GstPipelineManager:
         cam_w, cam_h = 1456, 1088
         out_w, out_h = self.out_w, self.out_h
 
-        # 如果强制不录像，或者全局开关没开，则不构建录像分支
-        enable_rec = getattr(self.config, 'ENABLE_RECORD', False)
-        if self.force_no_record:
-            enable_rec = False
-        
-        # --- 1. 录像分支 ---
-        record_branch = ""
-        if is_camera and enable_rec:
-            os.makedirs(cfg.RECORD_SAVE_PATH, exist_ok=True)
-            segment_ns = int(cfg.RECORD_SEGMENT_MIN * 60 * 1000000000)
-
-            record_branch = (
-                f" t. ! queue max-size-buffers=60 ! "
-                f"videorate ! "  
-                f"videoconvert ! video/x-raw,format=I420 ! "
-                f"x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 key-int-max=60 ! "
-                f"h264parse config-interval=1 ! "
-                f"splitmuxsink name=rec_sink muxer=matroskamux max-size-time={segment_ns} "
-            )
-
-        # --- 2. 源分支（切换摄像头或者视频文件） ---
+        # --- 1. 源分支（切换摄像头或者视频文件） ---
         if is_camera:
             source_head = (
                 f"tcpclientsrc host=127.0.0.1 port=5000 do-timestamp=true ! "
@@ -188,12 +168,34 @@ class GstPipelineManager:
             abs_path = os.path.abspath(self.video_path)
             source_head = f"filesrc location={abs_path} ! decodebin ! video/x-raw ! videoconvert ! video/x-raw, format=NV12"
 
+        # --- 2. 录像分支 ---
+
+        # 如果强制不录像，或者全局开关没开，则不构建录像分支
+        enable_rec = getattr(self.config, 'ENABLE_RECORD', False)
+        if self.force_no_record:
+            enable_rec = False
+        
+        record_branch = ""
+        if is_camera and enable_rec:
+            os.makedirs(cfg.RECORD_SAVE_PATH, exist_ok=True)
+            segment_ns = int(cfg.RECORD_SEGMENT_MIN * 60 * 1000000000)
+
+            record_branch = (
+                f" t. ! queue max-size-buffers=60 ! "
+                f"videoconvert ! video/x-raw,format=I420 ! "
+                f"x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 key-int-max=60 ! "
+                f"h264parse config-interval=1 ! "
+                f"splitmuxsink name=rec_sink muxer-factory=matroskamux "
+                f"max-size-time={segment_ns} async-finalize=true "
+            )
+
+        # --- 3. GPU 去畸变主干 ---
+
         crop_left = (cam_w - out_w) // 2
         crop_right = cam_w - out_w - crop_left
         crop_top = (cam_h - out_h) // 2
         crop_bottom = cam_h - out_h - crop_top
 
-        # --- 3. GPU 去畸变主干 ---
         source_section = (
             f"{source_head} ! "
             f"glupload ! glcolorconvert ! "
@@ -298,4 +300,3 @@ class GstPipelineManager:
             # 显式删除引用，加速 GStreamer 内部的 unref
             del self._last_buffer
             del self._last_map_info
-

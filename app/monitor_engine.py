@@ -135,7 +135,7 @@ class TrafficMonitorEngine:
 
             # 看门狗计数器
             empty_queue_streak = 0  
-            MAX_STREAK = 30  # 30次超时(每次0.1s) = 约3秒钟无响应
+            MAX_STREAK = 300  # 约 10 秒
             self.init_hang_timeout = time.time() + 60.0 # 绝对超时上限，防止底层 C++ 连初始化都卡死（例如 I2C 硬件锁死）
 
             # 用于标记是否已进行坐标轴初始化
@@ -183,7 +183,7 @@ class TrafficMonitorEngine:
                 # 状态 3：握手已完成，进入严格心跳监视阶段
                 else:
                     if empty_queue_streak > MAX_STREAK:
-                        logger.error("[Watchdog] 感知进程超过3秒无画面输出. 正在尝试重启...")
+                        logger.error(f"[Watchdog] 感知进程超过 {MAX_STREAK/30:.1f} 秒无画面输出. 正在尝试重启...")
                         self._restart_daemon(config_dict)
                         empty_queue_streak = 0
                         last_hailo_data = []
