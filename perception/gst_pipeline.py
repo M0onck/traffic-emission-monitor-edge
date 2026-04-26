@@ -83,7 +83,7 @@ class GstPipelineManager:
         每次录制切片时由 GStreamer 回调，动态生成含有精确当前时间戳的文件名
         """
         current_time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{self.session_id}_seq{fragment_id:05d}_start{current_time_str}.mkv"
+        filename = f"{self.session_id}_seq{fragment_id:05d}_start{current_time_str}.mp4"
         return os.path.join(self.config.RECORD_SAVE_PATH, filename)
 
     def _on_ai_sample(self, sink):
@@ -183,10 +183,10 @@ class GstPipelineManager:
             record_branch = (
                 f" t. ! queue max-size-buffers=60 ! "
                 f"videoconvert ! video/x-raw,format=I420 ! "
+                f"videorate skip-to-first=true ! video/x-raw, framerate=30/1 ! "
                 f"x264enc speed-preset=ultrafast tune=zerolatency threads=1 bitrate=2048 key-int-max=60 ! "
                 f"h264parse config-interval=1 ! "
-                f"splitmuxsink name=rec_sink muxer-factory=matroskamux "
-                f"max-size-time={segment_ns} async-finalize=true "
+                f"splitmuxsink name=rec_sink muxer-factory=mp4mux max-size-time={segment_ns} async-finalize=true "
             )
 
         # --- 3. GPU 去畸变主干 ---

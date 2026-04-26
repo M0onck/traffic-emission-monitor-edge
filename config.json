@@ -13,8 +13,8 @@
     "libthermal_path": "build/lib/libmlx90640_driver.so"
   },
   "record_options": {
-    "enable_record": false,
-    "segment_length_min": 10,
+    "enable_record": true,
+    "segment_length_min": 5,
     "save_path": "data/recorded_videos"
   },
   "display": {
