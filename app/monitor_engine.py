@@ -368,6 +368,41 @@ class TrafficMonitorEngine:
         except Exception as e:
             logger.error(f"[Watchdog] 视频修复流程发生意外异常: {e}")
 
+    def heal_all_session_videos(self):
+        """结算时批量修复当前 Session 的所有视频时间轴（强制归零）"""
+        try:
+            record_dir = getattr(self.cfg, 'RECORD_SAVE_PATH', 'data/recorded_videos')
+            session_id = getattr(self, 'current_session_id', 'unknown')
+            
+            # 搜索当前任务所有的切片文件
+            search_pattern = os.path.join(record_dir, f"{session_id}_seq*.mkv")
+            files = glob.glob(search_pattern)
+            
+            for file_path in files:
+                if ".tmp.mkv" in file_path or "_fixed.mkv" in file_path:
+                    continue
+                    
+                tmp_file = file_path.replace(".mkv", "_fixed.mkv")
+                logger.info(f"[Cleanup] 正在无损重构视频时间轴: {os.path.basename(file_path)}")
+                
+                # 加入 -avoid_negative_ts make_zero
+                # 这会强制剥离底层的系统绝对运行时间，让时间戳严格从 00:00:00 开始
+                result = subprocess.run([
+                    "ffmpeg", "-y", "-err_detect", "ignore_err",
+                    "-i", file_path, 
+                    "-c", "copy", 
+                    "-avoid_negative_ts", "make_zero",
+                    tmp_file
+                ], capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    os.replace(tmp_file, file_path)
+                else:
+                    logger.error(f"[Cleanup] FFmpeg 修复失败，文件: {file_path}。错误原因: {result.stderr}")
+                    
+        except Exception as e:
+            logger.error(f"[Cleanup] 批量修复视频时间轴发生意外异常: {e}")
+
     def _initialize_geometry(self, frame):
         """动态坐标系适配逻辑"""
         h, w = frame.shape[:2]
@@ -839,6 +874,11 @@ class TrafficMonitorEngine:
         # 伪造一个未来的绝对时间戳 (当前时间 + 1000秒)，强制所有未结算的车辆触发超时离场
         force_exit_timestamp = time.time() + 1000.0
         self._handle_exits(final_frame_id + 1000, force_exit_timestamp)
+
+        is_recording = getattr(self.cfg, 'ENABLE_RECORD', False) and getattr(self.cfg, 'USE_CAMERA', False)
+        if is_recording:
+            report_progress(80, "正在重构切片视频的时间轴...")
+            self.heal_all_session_videos()
 
         # ==========================================
         # 4. 异步 OCR 工作池回收

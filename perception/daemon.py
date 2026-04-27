@@ -53,13 +53,6 @@ def parse_hailo_ragged_list(raw_list, conf_threshold=0.45):
 def perception_worker(shm_name, shape, bbox_queue, stop_event, config_dict, ready_event):
     logger.info("-> [感知进程] 启动，准备挂载 GStreamer 与 PyHailoRT...")
 
-    # 提升当前感知业务进程的优先级
-    try:
-        os.nice(-10)
-        logger.info("[感知进程] 已成功提权，开启实时抢占模式。")
-    except PermissionError:
-        logger.warning("[感知进程] 提权失败，请检查 Docker 启动时是否包含 --cap-add=SYS_NICE")
-
     # 捕获看门狗发出的 SIGTERM 信号，触发优雅退出
     def sigterm_handler(signum, frame):
         logger.warning(f"[感知进程] 收到终止信号 ({signum})，正在触发安全停止，保存视频封口...")
