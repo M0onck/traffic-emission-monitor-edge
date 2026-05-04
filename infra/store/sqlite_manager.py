@@ -147,9 +147,9 @@ class DatabaseManager:
             print(f"[Database Error] 查询 Session_Task 失败: {e}")
             return []
 
-    def update_session_parameters(self, session_id: str, calibration_data: dict, priors_data: dict):
+    def update_session_parameters(self, session_id: str, calibration_params_json: str, physical_priors_json: str):
         """
-        将 UI 传来的标定和物理先验参数与 session_id 绑定并落盘
+        将 UI 传来的标定和物理先验参数 (已转为JSON字符串) 与 session_id 绑定并落盘
         """
         query = """
             UPDATE Session_Task
@@ -158,16 +158,17 @@ class DatabaseManager:
             WHERE session_id = ?
         """
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
+            # 统一使用 self.conn 和线程锁，移除所有多余的 json.dumps
+            with self.lock:
+                self.conn.execute(
                     query,
-                    (json.dumps(calibration_data), json.dumps(priors_data), session_id)
+                    (calibration_params_json, physical_priors_json, session_id)
                 )
-                conn.commit()
-        except sqlite3.Error as e:
-            self.logger.error(f"更新 Session 参数失败: {e}")
-            raise
+                self.conn.commit()
+                print(f">>> [Database] 成功更新任务 {session_id} 的标定与物理先验参数")
+        except Exception as e:
+            # 移除不存在的 self.logger，统一用 print
+            print(f"[Database Error] 更新 Session 参数失败: {e}")
 
     def fetch_macro_records_by_session(self, session_id: str, limit: int = 50) -> List[tuple]:
         """获取指定采集任务的车辆记录"""

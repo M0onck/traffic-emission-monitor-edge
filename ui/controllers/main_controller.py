@@ -90,14 +90,17 @@ class MonitorStartWorker(QThread):
                     calib_dict = self.controller.cfg.get_calibration_params_for_db()
                     priors_dict = self.controller.cfg.get_physical_priors_for_db()
                     
+                    calib_json = json.dumps(calib_dict)
+                    priors_json = json.dumps(priors_dict)
+
                     self.controller.db.update_session_parameters(
-                        session_id=self.controller.current_session_id,
-                        calibration_params=json.dumps(calib_dict),
-                        physical_priors=json.dumps(priors_dict)
+                        self.controller.current_session_id,
+                        calib_json,
+                        priors_json
                     )
                 except Exception as db_err:
                     print(f"[Warning] 写入标定参数至数据库失败: {db_err}")
-                    
+
             # --- 步骤 2: 硬件控制权移交 ---
             self.progress_updated.emit(40, "正在释放标定画布的摄像头管线...")
             if getattr(self.controller, 'global_camera', None):

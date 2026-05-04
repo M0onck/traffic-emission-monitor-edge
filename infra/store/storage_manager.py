@@ -126,12 +126,12 @@ class StorageManager:
         target_dir.mkdir(parents=True, exist_ok=True)
         
         # 2. 定义需要导出的核心业务表
-        # 新增 Aligned_snapshot (对齐快照) 和 Session_Task (会话参数/物理先验)
+        # 新增 Aligned_Snapshots (对齐快照) 和 Session_Task (会话参数/物理先验)
         tables_to_export = [
             "Veh_Sum", 
             "Veh_Raw", 
             "Env_Raw", 
-            "Aligned_snapshot", 
+            "Aligned_Snapshots", 
             "Session_Task"
         ]
         exported_files = []
