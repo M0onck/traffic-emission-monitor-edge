@@ -126,12 +126,21 @@ class StorageManager:
         target_dir.mkdir(parents=True, exist_ok=True)
         
         # 2. 定义需要导出的核心业务表
-        tables_to_export = ["Veh_Sum", "Veh_Raw", "Env_Raw"]
+        # 新增 Aligned_snapshot (对齐快照) 和 Session_Task (会话参数/物理先验)
+        tables_to_export = [
+            "Veh_Sum", 
+            "Veh_Raw", 
+            "Env_Raw", 
+            "Aligned_snapshot", 
+            "Session_Task"
+        ]
         exported_files = []
 
         for table in tables_to_export:
             cols, rows = db_manager.get_table_data_for_export(table, session_id)
+            # 如果表不存在或没数据，直接跳过当前表，继续下一个
             if not cols or not rows:
+                logger.warning(f"表 {table} 中没有关联 session_id: {session_id} 的数据，已跳过导出")
                 continue
                 
             csv_path = target_dir / f"{table}.csv"

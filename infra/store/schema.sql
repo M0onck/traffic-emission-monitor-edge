@@ -7,7 +7,9 @@ CREATE TABLE IF NOT EXISTS Session_Task (
     start_time REAL,                      -- 任务开始时间戳
     end_time REAL,                        -- 任务结束时间戳 (任务进行中为 NULL)
     location_desc TEXT,                   -- 监测点位描述 (例如 "交叉路口A")
-    status TEXT                           -- 当前状态 ('recording', 'flushing', 'completed')
+    status TEXT,                          -- 当前状态 ('recording', 'flushing', 'completed')
+    calibration_params TEXT,              -- 存储标定参数 (JSON序列化)
+    physical_priors TEXT                  -- 存储物理先验参数 (JSON序列化)
 );
 
 -- ==============================================================================
