@@ -80,10 +80,24 @@ class MonitorStartWorker(QThread):
             self.controller.cfg.CURRENT_SESSION_ID = self.controller.current_session_id
 
             if hasattr(self.controller, 'db') and self.controller.db:
-                # 完美复刻原版逻辑，读取 LOCATION_DESC
+                # 读取 LOCATION_DESC
                 location_desc = getattr(self.controller.cfg, 'LOCATION_DESC', "默认监控点")
+                # 创建会话记录
                 self.controller.db.create_session(self.controller.current_session_id, time.time(), location_desc)
 
+                import json
+                try:
+                    calib_dict = self.controller.cfg.get_calibration_params_for_db()
+                    priors_dict = self.controller.cfg.get_physical_priors_for_db()
+                    
+                    self.controller.db.update_session_parameters(
+                        session_id=self.controller.current_session_id,
+                        calibration_params=json.dumps(calib_dict),
+                        physical_priors=json.dumps(priors_dict)
+                    )
+                except Exception as db_err:
+                    print(f"[Warning] 写入标定参数至数据库失败: {db_err}")
+                    
             # --- 步骤 2: 硬件控制权移交 ---
             self.progress_updated.emit(40, "正在释放标定画布的摄像头管线...")
             if getattr(self.controller, 'global_camera', None):

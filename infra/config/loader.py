@@ -180,3 +180,25 @@ def update_record_settings(enable: bool, segment_min: int, path: str):
             json.dump(_cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"配置文件写入失败: {e}")
+
+# --- 标定与物理先验默认占位 ---
+SOURCE_POINTS = []
+PHYS_WIDTH = 20.0
+PHYS_HEIGHT = 20.0
+ROAD_DIRECTION_ANGLE = 0.0
+WEATHER_STATION_X_POS = 0.0
+PHYSICAL_PRIORS = {}
+
+def get_calibration_params_for_db() -> dict:
+    """提取最新的标定和环境参数，格式化为数据库所需的字典"""
+    return {
+        "source_points": SOURCE_POINTS,
+        "phys_width": PHYS_WIDTH,
+        "phys_height": PHYS_HEIGHT,
+        "road_direction_angle": ROAD_DIRECTION_ANGLE,
+        "weather_station_x_pos": WEATHER_STATION_X_POS
+    }
+
+def get_physical_priors_for_db() -> dict:
+    """提取物理分类先验参数字典"""
+    return PHYSICAL_PRIORS
