@@ -18,6 +18,7 @@ from domain.physics.kinematics_smoother import KinematicsSmoother
 from domain.vehicle.physical_filter import PhysicalVehicleFilter
 from domain.physics.vsp_calculator import VSPCalculator
 from domain.physics.opmode_mapper import OpModeMapper
+from domain.physics.env_sanitizer import RawEnvSanitizer
 from perception.vision_pipeline import VisionPipeline
 from perception.daemon import perception_worker
 
@@ -58,6 +59,7 @@ class TrafficMonitorEngine:
         self.box_filter = PhysicalVehicleFilter(self.cfg)
         self.vsp_calc = VSPCalculator(getattr(config, 'physics_params', {}))
         self.opmode_mapper = OpModeMapper(duration_threshold=1.0)
+        self.env_sanitizer = RawEnvSanitizer()
         self.vision_pipeline = VisionPipeline(fps=config.FPS, label_map={
             "car": self.cfg.YOLO_CLASS_CAR, "bus": self.cfg.YOLO_CLASS_BUS, "truck": self.cfg.YOLO_CLASS_TRUCK
         })
@@ -423,20 +425,24 @@ class TrafficMonitorEngine:
         if self.weather_station:
             ws = self.weather_station.get_data()
             if ws.get('isOnline'):
+                # 这里使用 ws.get()，以防偶尔的通信丢包导致 KeyError
                 env_data.update({
-                    'air_temp': ws['temp'], 
-                    'humidity': ws['humidity'], 
-                    'pm25_raw': ws['pm25'],
-                    'pm10_raw': ws['pm10'],
-                    'wind_speed': ws['windSpeed'],
-                    'wind_dir': ws['windDir']
+                    'air_temp': ws.get('temp'), 
+                    'humidity': ws.get('humidity'), 
+                    'pm25_raw': ws.get('pm25'),
+                    'pm10_raw': ws.get('pm10'),
+                    'wind_speed': ws.get('windSpeed'),
+                    'wind_dir': ws.get('windDir')
                 })
+                
         if self.thermal_cam:
             tf = self.thermal_cam.read()
             if tf is not None:
                 env_data['ground_temp'] = float(np.mean(tf[11:13, 15:17]))
+                
         if env_data:
-            self.db.insert_env_raw(self.current_session_id, timestamp, env_data)
+            sanitized_env = self.env_sanitizer.sanitize(env_data)
+            self.db.insert_env_raw(self.current_session_id, timestamp, sanitized_env)
 
     def process_frame(self, frame, detections, frame_id, current_fps=0.0, frame_timestamp=0.0):
         """
