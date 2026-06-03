@@ -11,6 +11,7 @@ import infra.config.loader as cfg
 from ui.components.speed_curve import SpeedCurveWidget
 from ui.components.calibration_canvas import CalibrationCanvas
 from ui.components.video_canvas import VideoCanvas
+from ui.components.cloud_sync_panel import CloudSyncPanel
 
 class MainWindow(QMainWindow):
     """纯粹的 View 层：只负责界面布局，不处理业务逻辑"""
@@ -117,6 +118,7 @@ class MainWindow(QMainWindow):
         self.init_page_monitor()       # 运行面板
         self.init_page_weather_calib() # 气象站校准页面
         self.init_page_db_browser()    # 数据库浏览页面
+        self.init_page_cloud_sync()    # 云同步页面
         self.init_page_settings()      # 总设置界面
 
     def init_page_main_menu(self):
@@ -184,7 +186,7 @@ class MainWindow(QMainWindow):
         app_title.setStyleSheet("color: #ffffff;")
         app_title.setAlignment(Qt.AlignCenter)
         right_layout.addWidget(app_title)
-        right_layout.addSpacing(30)
+        right_layout.addSpacing(15)
 
         self.btn_app1 = QPushButton("多源数据采集")
         self.btn_app1.setFont(QFont("Arial", 14, QFont.Bold))
@@ -198,11 +200,17 @@ class MainWindow(QMainWindow):
         self.btn_app3.setFont(QFont("Arial", 14, QFont.Bold))
         self.btn_app3.setStyleSheet(self.style_hollow_white)
 
+        self.btn_app4 = QPushButton("云端状态同步")
+        self.btn_app4.setFont(QFont("Arial", 14, QFont.Bold))
+        self.btn_app4.setStyleSheet(self.style_hollow_white)
+
         right_layout.addWidget(self.btn_app1)
-        right_layout.addSpacing(15)
+        right_layout.addSpacing(10)
         right_layout.addWidget(self.btn_app2)
-        right_layout.addSpacing(15)
+        right_layout.addSpacing(10)
         right_layout.addWidget(self.btn_app3)
+        right_layout.addSpacing(10)          
+        right_layout.addWidget(self.btn_app4)
         right_layout.addStretch()
         
         # 创建底部水平布局
@@ -1072,6 +1080,11 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.db_table)
         self.stack.addWidget(self.page_db_browser)
+
+    def init_page_cloud_sync(self):
+        """云端同步面板"""
+        self.page_cloud_sync = CloudSyncPanel()
+        self.stack.addWidget(self.page_cloud_sync)
 
     def closeEvent(self, event):
         """窗口关闭时，转交 Controller 处理清理工作"""

@@ -465,6 +465,7 @@ class MainController:
         self.view.btn_app1.clicked.connect(self.route_app1_click)
         self.view.btn_app2.clicked.connect(self.route_app2_click)
         self.view.btn_app3.clicked.connect(self.route_app3_click)
+        self.view.btn_app4.clicked.connect(self.route_app4_click)
         self.view.btn_headless.clicked.connect(self.toggle_headless)
 
         # 绑定气象站的校准按钮事件
@@ -564,6 +565,10 @@ class MainController:
         """跳转至历史数据浏览页面"""
         self.enter_app(self.view.page_db_browser)
         self.handle_db_refresh() # 进入时自动拉取一次最新数据
+
+    def route_app4_click(self):
+        """跳转至云端同步页面"""
+        self.enter_app(self.view.page_cloud_sync)
     
     def toggle_headless(self):
         # 翻转状态
