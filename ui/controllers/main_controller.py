@@ -19,7 +19,27 @@ import perception.gst_pipeline as gst
 from app.monitor_engine import TrafficMonitorEngine
 from ui.workers.engine_worker import EngineWorker
 import time
+import requests
 from datetime import datetime
+
+class CloudUploadThread(QThread):
+    """后台异步上传快照至云端服务器"""
+    def __init__(self, payload):
+        super().__init__()
+        self.payload = payload
+        # 这里预设了 FastAPI 云端服务器的地址，可按需修改
+        self.url = "http://118.195.188.229:8000/api/edge/snapshot"
+
+    def run(self):
+        try:
+            # 设置较短的 timeout 防止线程长期挂起
+            res = requests.post(self.url, json=self.payload, timeout=3.0)
+            if res.status_code == 200:
+                print(f"[CloudSync] 快照上传成功: {self.payload['session_id']}")
+            else:
+                print(f"[CloudSync] 上传失败，服务器返回: {res.status_code}")
+        except Exception as e:
+            print(f"[CloudSync] 网络异常: {e}")
 
 class InitWorker(QThread):
     """负责系统启动时的硬件与算法初始化，避免主界面卡顿"""
@@ -456,6 +476,10 @@ class MainController:
         self.dash_timer.timeout.connect(self.update_timer_tasks)
         self.dash_timer.start(100) # 10 Hz 刷新率
 
+        # 云端同步守护定时器 (默认未开启，等待开关触发)
+        self.cloud_sync_timer = QTimer(self.view)
+        self.cloud_sync_timer.timeout.connect(self.process_cloud_sync_tick)
+
     def bind_signals(self):
         """将视图组件的事件绑定到控制器的逻辑上"""
         self.view.btn_home.clicked.connect(self.return_to_home)
@@ -477,6 +501,11 @@ class MainController:
         self.view.btn_delete_db.clicked.connect(self.show_batch_delete_dialog)
         self.view.btn_export_db.clicked.connect(self.handle_export_db_data)
         self.view.session_combo.currentIndexChanged.connect(self.update_db_table)
+
+        # 云端同步界面绑定
+        cloud_dash = self.view.page_cloud_sync.dashboard_page
+        cloud_dash.sync_toggle_btn.toggled.connect(self.handle_cloud_sync_toggle)
+        cloud_dash.interval_combo.currentIndexChanged.connect(self.handle_cloud_sync_interval)
 
         # 设置界面相关按钮的绑定
         self.view.btn_settings.clicked.connect(self.route_settings_click)
@@ -1517,3 +1546,134 @@ class MainController:
             for col_idx, item in enumerate(items):
                 item.setTextAlignment(Qt.AlignCenter)
                 self.view.db_table.setItem(row_idx, col_idx, item)
+
+    # ==========================================
+    # 云端状态同步核心业务逻辑
+    # ==========================================
+    def handle_cloud_sync_interval(self):
+        """当用户改变下拉菜单时，动态更新定时器时间"""
+        dash = self.view.page_cloud_sync.dashboard_page
+        text = dash.interval_combo.currentText()
+        sec = int(text.split()[0]) # 提取 10, 30, 60
+        self.cloud_sync_timer.setInterval(sec * 1000)
+
+    def handle_cloud_sync_toggle(self, checked):
+        """处理同步开关"""
+        dash = self.view.page_cloud_sync.dashboard_page
+        if checked:
+            self.handle_cloud_sync_interval() # 设定时间
+            self.cloud_sync_timer.start()
+            self.process_cloud_sync_tick()    # 开启时立刻执行一次
+            print("[CloudSync] 云端同步已开启")
+        else:
+            self.cloud_sync_timer.stop()
+            dash.update_status("未开启")
+            print("[CloudSync] 云端同步已关闭")
+            
+            # 关闭同步时，向云端推送一个“未开启”的空包，抹除大屏上的残留旧数据
+            empty_dict = {
+                "veh_count": 0, "ldv_count": 0, "hdv_count": 0,
+                "temp": "--", "humidity": "--", "wind_speed": "--",
+                "wind_dir": "--", "pm25": "--", "pm10": "--"
+            }
+            dash.update_data(empty_dict)
+            payload = {
+                "device_id": "EDGE_NODE_01",
+                "status": "未开启",
+                "session_id": "",
+                "timestamp": time.time(),
+                **empty_dict
+            }
+            self.cloud_upload_worker = CloudUploadThread(payload)
+            self.cloud_upload_worker.start()
+
+    def process_cloud_sync_tick(self):
+        """定时器触发：收集对齐快照并上传"""
+        dash = self.view.page_cloud_sync.dashboard_page
+        
+        # 1. 状态判断
+        is_running = self.is_collecting and self.current_session_id is not None
+        status_str = "运行中" if is_running else "待命中"
+        dash.update_status(status_str)
+
+        # 2. 如果是待命中，不能直接 return，必须向云端发送待命状态空包！
+        if not is_running:
+            empty_dict = {
+                "veh_count": 0, "ldv_count": 0, "hdv_count": 0,
+                "temp": "--", "humidity": "--", "wind_speed": "--",
+                "wind_dir": "--", "pm25": "--", "pm10": "--"
+            }
+            dash.update_data(empty_dict) # 更新本地看板
+            
+            # 发送给云端，告诉网页端当前没有任务，清空九宫格
+            payload = {
+                "device_id": "EDGE_NODE_01", 
+                "status": status_str,
+                "session_id": "",
+                "timestamp": time.time(),
+                **empty_dict
+            }
+            self.cloud_upload_worker = CloudUploadThread(payload)
+            self.cloud_upload_worker.start()
+            return
+
+        # 3. 如果在运行，查询数据库组合快照
+        try:
+            db = DatabaseManager()
+            
+            # --- A. 车辆宏观数据聚合 ---
+            records = db.fetch_macro_records_by_session(self.current_session_id, limit=99999)
+            veh_count = len(records)
+            ldv_count = sum(1 for r in records if r[1] and 'LDV' in str(r[1]))
+            hdv_count = sum(1 for r in records if r[1] and 'HDV' in str(r[1]))
+
+            # --- B. 环境瞬态数据拉取 (最新一条) ---
+            c = db.conn.cursor()
+            c.execute('''
+                SELECT air_temp, humidity, wind_speed, wind_dir, pm25_raw, pm10_raw 
+                FROM Env_Raw 
+                WHERE session_id = ? 
+                ORDER BY timestamp DESC LIMIT 1
+            ''', (self.current_session_id,))
+            env_row = c.fetchone()
+            db.close()
+
+            def format_val(val):
+                return round(float(val), 1) if val is not None else "--"
+
+            temp = format_val(env_row[0]) if env_row else "--"
+            hum = format_val(env_row[1]) if env_row else "--"
+            ws = format_val(env_row[2]) if env_row else "--"
+            wd = format_val(env_row[3]) if env_row else "--"
+            pm25 = format_val(env_row[4]) if env_row else "--"
+            pm10 = format_val(env_row[5]) if env_row else "--"
+
+            # 4. 组装展示与上传字典
+            data_dict = {
+                "veh_count": veh_count,
+                "ldv_count": ldv_count,
+                "hdv_count": hdv_count,
+                "temp": temp,
+                "humidity": hum,
+                "wind_speed": ws,
+                "wind_dir": wd,
+                "pm25": pm25,
+                "pm10": pm10
+            }
+
+            dash.update_data(data_dict)
+
+            # 5. 生成 JSON 发起异步上传
+            payload = {
+                "device_id": "EDGE_NODE_01", 
+                "status": status_str,
+                "session_id": self.current_session_id,
+                "timestamp": time.time(),
+                **data_dict
+            }
+            
+            self.cloud_upload_worker = CloudUploadThread(payload)
+            self.cloud_upload_worker.start()
+
+        except Exception as e:
+            print(f"[CloudSync] 组装快照数据时发生异常: {e}")

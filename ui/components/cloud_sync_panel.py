@@ -68,6 +68,21 @@ class CloudSyncDashboard(QWidget):
         
         title_label = QLabel("云端同步")
         title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: white;")
+
+        # 状态指示 Badge
+        self.status_badge = QLabel("未开启")
+        self.status_badge.setAlignment(Qt.AlignCenter)
+        self.status_badge.setFixedHeight(24)
+        self.status_badge.setMinimumWidth(60)
+        self.status_badge.setStyleSheet("""
+            QLabel { 
+                background-color: #666666; 
+                color: white; 
+                border-radius: 4px; 
+                font-size: 12px; 
+                font-weight: bold; 
+            }
+        """)
         
         # 下拉菜单 - 上传间隔
         interval_label = QLabel("上传间隔:")
@@ -88,6 +103,8 @@ class CloudSyncDashboard(QWidget):
         self._on_toggle_sync(False) # 初始化样式
         
         control_layout.addWidget(title_label)
+        control_layout.addSpacing(10)
+        control_layout.addWidget(self.status_badge)
         control_layout.addStretch()
         control_layout.addWidget(interval_label)
         control_layout.addWidget(self.interval_combo)
@@ -180,6 +197,16 @@ class CloudSyncDashboard(QWidget):
                 QPushButton { background-color: #4CAF50; color: white; border-radius: 4px; font-weight: bold;}
                 QPushButton:hover { background-color: #388E3C; }
             """)
+
+    def update_status(self, status_str):
+        """供 Controller 调用，更新运行状态标签颜色"""
+        self.status_badge.setText(status_str)
+        if status_str == "运行中":
+            self.status_badge.setStyleSheet("QLabel { background-color: #4CAF50; color: white; border-radius: 4px; font-size: 12px; font-weight: bold; }")
+        elif status_str == "待命中":
+            self.status_badge.setStyleSheet("QLabel { background-color: #f39c12; color: white; border-radius: 4px; font-size: 12px; font-weight: bold; }")
+        else:
+            self.status_badge.setStyleSheet("QLabel { background-color: #666666; color: white; border-radius: 4px; font-size: 12px; font-weight: bold; }")
 
     def update_data(self, data_dict):
         """供外部业务逻辑调用，刷新 UI 数据"""
