@@ -126,7 +126,7 @@ class CloudSyncDashboard(QWidget):
         self.value_labels = {}
         
         # --- 交通属性 (Row 0) ---
-        self._add_card(0, 0, "车辆总数", "veh_count", "0", "辆")
+        self._add_card(0, 0, "路面温度", "ground_temp", "--", "°C")
         self._add_card(0, 1, "小型车 (LDV)", "ldv_count", "0", "辆")
         self._add_card(0, 2, "大型车 (HDV)", "hdv_count", "0", "辆")
         

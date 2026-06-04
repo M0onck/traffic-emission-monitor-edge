@@ -1572,6 +1572,7 @@ class MainController:
             
             # 关闭同步时，向云端推送一个“未开启”的空包，抹除大屏上的残留旧数据
             empty_dict = {
+                "ground_temp": "--",
                 "veh_count": 0, "ldv_count": 0, "hdv_count": 0,
                 "temp": "--", "humidity": "--", "wind_speed": "--",
                 "wind_dir": "--", "pm25": "--", "pm10": "--"
@@ -1589,25 +1590,28 @@ class MainController:
 
     def process_cloud_sync_tick(self):
         """定时器触发：收集对齐快照并上传"""
+        # 统一定义设备ID
+        DEVICE_ID = "EDGE_NODE_01" 
+        
         dash = self.view.page_cloud_sync.dashboard_page
         
         # 1. 状态判断
-        is_running = self.is_collecting and self.current_session_id is not None
+        is_running = getattr(self, 'is_collecting', False) and getattr(self, 'current_session_id', None) is not None
         status_str = "运行中" if is_running else "待命中"
         dash.update_status(status_str)
 
-        # 2. 如果是待命中，不能直接 return，必须向云端发送待命状态空包！
+        # 2. 待命状态直接发空包，不查数据库
         if not is_running:
             empty_dict = {
+                "ground_temp": "--",
                 "veh_count": 0, "ldv_count": 0, "hdv_count": 0,
                 "temp": "--", "humidity": "--", "wind_speed": "--",
                 "wind_dir": "--", "pm25": "--", "pm10": "--"
             }
-            dash.update_data(empty_dict) # 更新本地看板
+            dash.update_data(empty_dict) 
             
-            # 发送给云端，告诉网页端当前没有任务，清空九宫格
             payload = {
-                "device_id": "EDGE_NODE_01", 
+                "device_id": DEVICE_ID,
                 "status": status_str,
                 "session_id": "",
                 "timestamp": time.time(),
@@ -1617,20 +1621,50 @@ class MainController:
             self.cloud_upload_worker.start()
             return
 
-        # 3. 如果在运行，查询数据库组合快照
+        # 3. 如果在运行，查询组合快照
         try:
-            db = DatabaseManager()
+            # --- A. 车辆宏观数据聚合 (核心修复：改为获取瞬时快照) ---
+            veh_count = 0
+            ldv_count = 0
+            hdv_count = 0
             
-            # --- A. 车辆宏观数据聚合 ---
-            records = db.fetch_macro_records_by_session(self.current_session_id, limit=99999)
-            veh_count = len(records)
-            ldv_count = sum(1 for r in records if r[1] and 'LDV' in str(r[1]))
-            hdv_count = sum(1 for r in records if r[1] and 'HDV' in str(r[1]))
+            if getattr(self, 'worker', None) and getattr(self.worker, 'engine', None):
+                engine = self.worker.engine
+                registry = getattr(engine, 'registry', None)
+                
+                if registry:
+                    # 动态适配 registry 中存储活跃车辆的字典属性名
+                    active_dict = getattr(registry, 'records', None)
+                    if active_dict is None:
+                        active_dict = getattr(registry, 'tracks', {})
+                        
+                    try:
+                        # 转换 values 为 list，防止在遍历时因为跨线程(引擎后台写入)导致 RuntimeError
+                        records_snapshot = list(active_dict.values())
+                        veh_count = len(records_snapshot)
+                        
+                        for rec in records_snapshot:
+                            if not isinstance(rec, dict): continue
+                            
+                            voted_class_id = rec.get('class_id')
+                            if voted_class_id is not None and hasattr(engine, 'classifier'):
+                                # 呼叫分类器拿到最终的 LDV / HDV 解析结果
+                                _, final_type_str = engine.classifier.resolve_type(
+                                    voted_class_id, rec.get('plate_history', [])
+                                )
+                                if final_type_str:
+                                    if 'LDV' in final_type_str:
+                                        ldv_count += 1
+                                    elif 'HDV' in final_type_str:
+                                        hdv_count += 1
+                    except RuntimeError:
+                        pass # 容错处理：若刚好遇到字典被修改，直接跳过等下个周期
 
             # --- B. 环境瞬态数据拉取 (最新一条) ---
+            db = DatabaseManager()
             c = db.conn.cursor()
             c.execute('''
-                SELECT air_temp, humidity, wind_speed, wind_dir, pm25_raw, pm10_raw 
+                SELECT air_temp, humidity, wind_speed, wind_dir, pm25_raw, pm10_raw, ground_temp 
                 FROM Env_Raw 
                 WHERE session_id = ? 
                 ORDER BY timestamp DESC LIMIT 1
@@ -1647,25 +1681,21 @@ class MainController:
             wd = format_val(env_row[3]) if env_row else "--"
             pm25 = format_val(env_row[4]) if env_row else "--"
             pm10 = format_val(env_row[5]) if env_row else "--"
+            ground_temp = format_val(env_row[6]) if env_row else "--" 
 
-            # 4. 组装展示与上传字典
             data_dict = {
+                "ground_temp": ground_temp,
                 "veh_count": veh_count,
-                "ldv_count": ldv_count,
-                "hdv_count": hdv_count,
-                "temp": temp,
-                "humidity": hum,
-                "wind_speed": ws,
-                "wind_dir": wd,
-                "pm25": pm25,
-                "pm10": pm10
+                "ldv_count": ldv_count, "hdv_count": hdv_count,
+                "temp": temp, "humidity": hum, "wind_speed": ws,
+                "wind_dir": wd, "pm25": pm25, "pm10": pm10
             }
 
             dash.update_data(data_dict)
 
             # 5. 生成 JSON 发起异步上传
             payload = {
-                "device_id": "EDGE_NODE_01", 
+                "device_id": DEVICE_ID,
                 "status": status_str,
                 "session_id": self.current_session_id,
                 "timestamp": time.time(),
