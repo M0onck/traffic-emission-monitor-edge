@@ -50,6 +50,23 @@ class DatabaseManager:
         # 2. 加载查询模板 (DML)
         self.queries = self._load_queries()
 
+    # ==================================================
+    # 核心修复: 统一的安全写库函数，彻底杜绝事务泄露 (死锁)
+    # ==================================================
+    def _execute_write(self, sql: str, params: tuple = ()):
+        """
+        统一处理写操作，包含线程锁与自动回滚机制。
+        此方法可彻底杜绝因数据类型错误（如尝试写入 None）
+        而导致事务未提交、写锁未释放（database is locked）的致命问题。
+        """
+        with self.lock:
+            try:
+                self.conn.execute(sql, params)
+                self.conn.commit()
+            except Exception as e:
+                self.conn.rollback()  # 发生异常立即回滚，释放底层 SQLite 写锁！
+                raise e
+
     def _init_schema(self):
         """加载并执行 schema.sql"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -62,6 +79,7 @@ class DatabaseManager:
                 self.conn.commit()
             except sqlite3.Error as e:
                 print(f"[Database Error] Schema 初始化失败: {e}")
+                self.conn.rollback()
         else:
             print(f"[Database Warning] Schema 文件未找到: {schema_path}")
 
@@ -108,8 +126,7 @@ class DatabaseManager:
         sql = self.queries.get('insert_session')
         if sql:
             try:
-                self.conn.execute(sql, (session_id, start_time, location_desc))
-                self.conn.commit()
+                self._execute_write(sql, (session_id, start_time, location_desc))
                 print(f">>> [Database] 成功创建新采集任务: {session_id}")
             except Exception as e:
                 print(f"[Database Error] 创建任务会话失败: {e}")
@@ -123,8 +140,7 @@ class DatabaseManager:
         sql = self.queries.get('complete_session')
         if sql:
             try:
-                self.conn.execute(sql, (end_time, session_id))
-                self.conn.commit()
+                self._execute_write(sql, (end_time, session_id))
                 print(f">>> [Database] 采集任务已结束并归档: {session_id}")
             except Exception as e:
                 print(f"[Database Error] 结束任务会话失败: {e}")
@@ -158,16 +174,10 @@ class DatabaseManager:
             WHERE session_id = ?
         """
         try:
-            # 统一使用 self.conn 和线程锁，移除所有多余的 json.dumps
-            with self.lock:
-                self.conn.execute(
-                    query,
-                    (calibration_params_json, physical_priors_json, session_id)
-                )
-                self.conn.commit()
-                print(f">>> [Database] 成功更新任务 {session_id} 的标定与物理先验参数")
+            # 统一使用安全写入方法，内置线程锁与异常回滚
+            self._execute_write(query, (calibration_params_json, physical_priors_json, session_id))
+            print(f">>> [Database] 成功更新任务 {session_id} 的标定与物理先验参数")
         except Exception as e:
-            # 移除不存在的 self.logger，统一用 print
             print(f"[Database Error] 更新 Session 参数失败: {e}")
 
     def fetch_macro_records_by_session(self, session_id: str, limit: int = 50) -> List[tuple]:
@@ -184,9 +194,7 @@ class DatabaseManager:
             # 显式创建局部游标
             cursor = self.conn.cursor()
             cursor.execute(query, (session_id, limit))
-            # 从游标中获取数据
             res = cursor.fetchall()
-            # 及时关闭局部游标
             cursor.close()
             return res
         except sqlite3.Error as e:
@@ -196,30 +204,40 @@ class DatabaseManager:
     def delete_session(self, session_id: str) -> bool:
         """删除指定采集任务的所有关联数据"""
         try:
-            self.conn.execute("DELETE FROM Env_Raw WHERE session_id = ?", (session_id,))
-            self.conn.execute("DELETE FROM Veh_Raw WHERE session_id = ?", (session_id,))
-            self.conn.execute("DELETE FROM Veh_Sum WHERE session_id = ?", (session_id,))
-            self.conn.execute("DELETE FROM Aligned_Snapshots WHERE session_id = ?", (session_id,))
-            self.conn.execute("DELETE FROM Session_Task WHERE session_id = ?", (session_id,))
-            self.conn.commit()
-            print(f">>> [Database] 任务 {session_id} 数据已被彻底删除。")
-            return True
-        except sqlite3.Error as e:
+            with self.lock:
+                try:
+                    self.conn.execute("DELETE FROM Env_Raw WHERE session_id = ?", (session_id,))
+                    self.conn.execute("DELETE FROM Veh_Raw WHERE session_id = ?", (session_id,))
+                    self.conn.execute("DELETE FROM Veh_Sum WHERE session_id = ?", (session_id,))
+                    self.conn.execute("DELETE FROM Aligned_Snapshots WHERE session_id = ?", (session_id,))
+                    self.conn.execute("DELETE FROM Session_Task WHERE session_id = ?", (session_id,))
+                    self.conn.commit()
+                    print(f">>> [Database] 任务 {session_id} 数据已被彻底删除。")
+                    return True
+                except Exception as e:
+                    self.conn.rollback() # 批量删除发生意外，整体回滚
+                    raise e
+        except Exception as e:
             print(f"[Database Error] 删除任务 {session_id} 失败: {e}")
             return False
 
     def delete_all_data(self) -> bool:
         """清空数据库中的所有任务数据"""
         try:
-            self.conn.execute("DELETE FROM Env_Raw")
-            self.conn.execute("DELETE FROM Veh_Raw")
-            self.conn.execute("DELETE FROM Veh_Sum")
-            self.conn.execute("DELETE FROM Aligned_Snapshots")
-            self.conn.execute("DELETE FROM Session_Task")
-            self.conn.commit()
-            print(">>> [Database] 所有历史数据已被清空。")
-            return True
-        except sqlite3.Error as e:
+            with self.lock:
+                try:
+                    self.conn.execute("DELETE FROM Env_Raw")
+                    self.conn.execute("DELETE FROM Veh_Raw")
+                    self.conn.execute("DELETE FROM Veh_Sum")
+                    self.conn.execute("DELETE FROM Aligned_Snapshots")
+                    self.conn.execute("DELETE FROM Session_Task")
+                    self.conn.commit()
+                    print(">>> [Database] 所有历史数据已被清空。")
+                    return True
+                except Exception as e:
+                    self.conn.rollback() # 批量清空发生意外，整体回滚
+                    raise e
+        except Exception as e:
             print(f"[Database Error] 清空数据失败: {e}")
             return False
 
@@ -229,22 +247,27 @@ class DatabaseManager:
         """
         sql = self.queries.get('insert_env_raw')
         if sql:
-            # 使用 .get() 附带默认兜底值，防止传感器离线导致报错
+            # 核心修复：安全转换 float，完美兼容 env_sanitizer 输出的 None 值
+            # 同时保留原有的兜底设计，防止传感器离线导致报错
+            def safe_float(val, default=0.0):
+                if val is None: return default
+                try: return float(val)
+                except (ValueError, TypeError): return default
+                
             params = (
                 session_id,
                 timestamp,
-                float(env_data.get('pm25_raw', 0.0)),
-                float(env_data.get('pm10_raw', 0.0)),
-                float(env_data.get('wind_speed', 0.0)),
-                float(env_data.get('wind_dir', 0.0)),
-                float(env_data.get('air_temp', 0.0)),
-                float(env_data.get('humidity', 0.0)),
-                float(env_data.get('ground_temp', 0.0))
+                safe_float(env_data.get('pm25_raw')),
+                safe_float(env_data.get('pm10_raw')),
+                safe_float(env_data.get('wind_speed')),
+                safe_float(env_data.get('wind_dir')),
+                safe_float(env_data.get('air_temp')),
+                safe_float(env_data.get('humidity')),
+                safe_float(env_data.get('ground_temp'))
             )
             try:
-                with self.lock:
-                    self.conn.execute(sql, params)
-                    self.conn.commit() # 1Hz的写入频率较低，由于开启了WAL模式，直接commit保证实时性无压力
+                # 1Hz的写入频率较低，由于开启了WAL模式，直接安全写入保证实时性无压力
+                self._execute_write(sql, params)
             except Exception as e:
                 print(f"[Database Error] 插入 Env_Raw 失败: {e}")
         else:
@@ -268,9 +291,7 @@ class DatabaseManager:
                     float(exit_time),
                     trajectory_blob
                 )
-                with self.lock:
-                    self.conn.execute(sql, params)
-                    self.conn.commit() 
+                self._execute_write(sql, params) 
             except Exception as e:
                 print(f"[Database Error] 插入 Veh_Raw 失败: {e}")
         else:
@@ -300,9 +321,7 @@ class DatabaseManager:
         sql = self.queries.get('insert_veh_sum')
         if sql:
             try:
-                with self.lock:
-                    self.conn.execute(sql, params)
-                    self.conn.commit()
+                self._execute_write(sql, params)
             except Exception as e:
                 print(f"[Database Error] insert_veh_sum 失败: {e}")
         else:
@@ -314,6 +333,11 @@ class DatabaseManager:
         """
         sql = self.queries.get('insert_aligned_snapshot')
         if sql:
+            # 确保字典数据被正确格式化，防止 SQLite 因类型不匹配报错从而导致泄露
+            v_data = snapshot.get('vehicles_data', '[]')
+            if not isinstance(v_data, str): 
+                v_data = json.dumps(v_data, cls=NumpyEncoder)
+                
             # 安全提取字典，空值写入 NULL (None)
             params = (
                 snapshot['session_id'], 
@@ -325,13 +349,11 @@ class DatabaseManager:
                 snapshot.get('wind_dir'), 
                 snapshot.get('pm25'), 
                 snapshot.get('pm10'),
-                int(snapshot['active_vehicle_count']),
-                snapshot['vehicles_data'] # 直接存入 JSON 字符串
+                int(snapshot.get('active_vehicle_count', 0)),
+                v_data # 存入安全的 JSON 字符串
             )
             try:
-                with self.lock:
-                    self.conn.execute(sql, params)
-                    self.conn.commit()
+                self._execute_write(sql, params)
             except Exception as e:
                 print(f"[Database Error] 插入 Aligned_Snapshots 失败: {e}")
         else:
